@@ -1,0 +1,328 @@
+// Prisma schema for HRMS application
+// Supports multi-tenancy via tenant_id on all relevant tables
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// TENANT & AUTH
+// ============================================
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  code      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  users             User[]
+  employees         Employee[]
+  departments       Department[]
+  attendanceRecords AttendanceRecord[]
+  otRules           OtRule[]
+  leaveTypes        LeaveType[]
+  leaveBalances     LeaveBalance[]
+  leaveRequests     LeaveRequest[]
+
+  @@map("tenants")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  HR_ADMIN
+  MANAGER
+  EMPLOYEE
+}
+
+model User {
+  id           String   @id @default(uuid())
+  tenantId     String
+  email        String
+  passwordHash String
+  role         UserRole @default(EMPLOYEE)
+  employeeId   String?  @unique
+  isActive     Boolean  @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  employee Employee? @relation(fields: [employeeId], references: [id])
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("users")
+}
+
+// ============================================
+// ORGANIZATION STRUCTURE
+// ============================================
+
+model Department {
+  id               String   @id @default(uuid())
+  tenantId         String
+  name             String
+  code             String
+  parentId         String?
+  description      String?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  tenant           Tenant       @relation(fields: [tenantId], references: [id])
+  parent           Department?  @relation("DepartmentHierarchy", fields: [parentId], references: [id])
+  children         Department[] @relation("DepartmentHierarchy")
+  employees        Employee[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("departments")
+}
+
+// ============================================
+// EMPLOYEE
+// ============================================
+
+enum EmploymentType {
+  PERMANENT
+  CONTRACT
+  TEMPORARY
+  INTERN
+}
+
+enum PayType {
+  MONTHLY
+  HOURLY
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model Employee {
+  id             String         @id @default(uuid())
+  tenantId       String
+  employeeCode   String
+  firstName      String
+  lastName       String
+  email          String
+  phone          String?
+  employmentType EmploymentType @default(PERMANENT)
+  payType        PayType        @default(MONTHLY)
+  hourlyRate     Decimal?       @db.Decimal(10, 2)
+  otMultiplier   Decimal        @default(1.5) @db.Decimal(3, 2)
+  departmentId   String?
+  designation    String?
+  managerId      String?
+  joinDate       DateTime
+  exitDate       DateTime?
+  status         EmployeeStatus @default(ACTIVE)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  // Relations
+  tenant            Tenant             @relation(fields: [tenantId], references: [id])
+  department        Department?        @relation(fields: [departmentId], references: [id])
+  manager           Employee?          @relation("EmployeeManager", fields: [managerId], references: [id])
+  directReports     Employee[]         @relation("EmployeeManager")
+  user              User?
+  attendanceRecords AttendanceRecord[]
+  leaveBalances     LeaveBalance[]
+  leaveRequests     LeaveRequest[]
+  approvedRequests  LeaveRequest[]     @relation("LeaveApprover")
+
+  @@unique([tenantId, employeeCode])
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@index([departmentId])
+  @@index([managerId])
+  @@map("employees")
+}
+
+// ============================================
+// ATTENDANCE & OT
+// ============================================
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+  LEAVE
+  WFH
+  HOLIDAY
+}
+
+enum AttendanceSource {
+  WEB
+  MOBILE
+  API
+  IMPORT
+}
+
+model AttendanceRecord {
+  id                  String           @id @default(uuid())
+  tenantId            String
+  employeeId          String
+  date                DateTime         @db.Date
+  shiftId             String?
+  clockInTime         DateTime?
+  clockOutTime        DateTime?
+  breakMinutes        Int              @default(0)
+  workedMinutes       Int              @default(0)
+  standardWorkMinutes Int              @default(480) // 8 hours default
+  otMinutesCalculated Int              @default(0)
+  otMinutesApproved   Int?
+  status              AttendanceStatus @default(PRESENT)
+  source              AttendanceSource @default(WEB)
+  remarks             String?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  // Relations
+  tenant   Tenant              @relation(fields: [tenantId], references: [id])
+  employee Employee            @relation(fields: [employeeId], references: [id])
+  sessions AttendanceSession[]
+
+  @@unique([tenantId, employeeId, date])
+  @@index([tenantId])
+  @@index([employeeId])
+  @@index([date])
+  @@map("attendance_records")
+}
+
+model AttendanceSession {
+  id             String   @id @default(uuid())
+  attendanceId   String
+  inTime         DateTime
+  outTime        DateTime?
+  sessionMinutes Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  attendance AttendanceRecord @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
+
+  @@index([attendanceId])
+  @@map("attendance_sessions")
+}
+
+model OtRule {
+  id                      String          @id @default(uuid())
+  tenantId                String
+  name                    String
+  employmentType          EmploymentType?
+  dailyThresholdMinutes   Int             @default(480) // 8 hours
+  weeklyThresholdMinutes  Int?
+  roundingIntervalMinutes Int             @default(15)
+  requiresManagerApproval Boolean         @default(true)
+  maxOtPerDayMinutes      Int?
+  maxOtPerMonthMinutes    Int?
+  isActive                Boolean         @default(true)
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, employmentType])
+  @@index([tenantId])
+  @@map("ot_rules")
+}
+
+// ============================================
+// LEAVE MANAGEMENT
+// ============================================
+
+model LeaveType {
+  id              String   @id @default(uuid())
+  tenantId        String
+  name            String
+  code            String   // CL, SL, PL, LOP, etc.
+  description     String?
+  defaultDays     Int      @default(0)
+  carryForward    Boolean  @default(false)
+  maxCarryForward Int?
+  isPaid          Boolean  @default(true)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  tenant        Tenant         @relation(fields: [tenantId], references: [id])
+  leaveBalances LeaveBalance[]
+  leaveRequests LeaveRequest[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("leave_types")
+}
+
+model LeaveBalance {
+  id           String   @id @default(uuid())
+  tenantId     String
+  employeeId   String
+  leaveTypeId  String
+  year         Int
+  totalDays    Decimal  @db.Decimal(5, 2)
+  usedDays     Decimal  @default(0) @db.Decimal(5, 2)
+  pendingDays  Decimal  @default(0) @db.Decimal(5, 2)
+  carriedOver  Decimal  @default(0) @db.Decimal(5, 2)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  employee  Employee  @relation(fields: [employeeId], references: [id])
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  @@unique([tenantId, employeeId, leaveTypeId, year])
+  @@index([tenantId])
+  @@index([employeeId])
+  @@map("leave_balances")
+}
+
+enum LeaveRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+model LeaveRequest {
+  id           String             @id @default(uuid())
+  tenantId     String
+  employeeId   String
+  leaveTypeId  String
+  startDate    DateTime           @db.Date
+  endDate      DateTime           @db.Date
+  totalDays    Decimal            @db.Decimal(5, 2)
+  reason       String?
+  status       LeaveRequestStatus @default(PENDING)
+  approverId   String?
+  approverNote String?
+  approvedAt   DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  // Relations
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  employee  Employee  @relation(fields: [employeeId], references: [id])
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+  approver  Employee? @relation("LeaveApprover", fields: [approverId], references: [id])
+
+  @@index([tenantId])
+  @@index([employeeId])
+  @@index([status])
+  @@map("leave_requests")
+}
