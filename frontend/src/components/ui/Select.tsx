@@ -1,6 +1,6 @@
 'use client';
 
-import { forwardRef, SelectHTMLAttributes } from 'react';
+import { forwardRef, SelectHTMLAttributes, ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 interface SelectOption {
@@ -11,12 +11,13 @@ interface SelectOption {
 interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   label?: string;
   error?: string;
-  options: SelectOption[];
+  options?: SelectOption[];
   placeholder?: string;
+  children?: ReactNode;
 }
 
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(
-  ({ label, error, options, placeholder, className, id, ...props }, ref) => {
+  ({ label, error, options, placeholder, className, id, children, ...props }, ref) => {
     const selectId = id || label?.toLowerCase().replace(/\s+/g, '-');
 
     return (
@@ -41,14 +42,20 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
           )}
           {...props}
         >
-          {placeholder && (
-            <option value="">{placeholder}</option>
+          {children ? (
+            children
+          ) : (
+            <>
+              {placeholder && (
+                <option value="">{placeholder}</option>
+              )}
+              {options?.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </>
           )}
-          {options.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
         </select>
         {error && (
           <p className="mt-1 text-sm text-red-500">{error}</p>
@@ -57,5 +64,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
     );
   }
 );
+
+Select.displayName = 'Select';
 
 Select.displayName = 'Select';

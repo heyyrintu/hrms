@@ -107,3 +107,46 @@ export class UpdateLeaveBalanceDto {
   @Min(0)
   carriedOver?: number;
 }
+
+export class AdminLeaveRequestQueryDto {
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @IsOptional()
+  @IsString()
+  employeeId?: string;
+
+  @IsOptional()
+  @IsString()
+  leaveTypeId?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  page?: number = 1;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  limit?: number = 20;
+}
+
+export class InitializeBalancesDto {
+  @IsNumber()
+  year: number;
+
+  @IsOptional()
+  @IsString({ each: true })
+  employeeIds?: string[];
+}

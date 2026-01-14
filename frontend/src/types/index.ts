@@ -43,6 +43,42 @@ export enum LeaveRequestStatus {
 }
 
 // ============================================
+// COMPANY/TENANT TYPES
+// ============================================
+
+export interface Company {
+  id: string;
+  name: string;
+  code: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  employeeCount?: number;
+  activeEmployeeCount?: number;
+  userCount?: number;
+  departmentCount?: number;
+  leaveTypeCount?: number;
+  otRuleCount?: number;
+}
+
+export interface CreateCompanyPayload {
+  name: string;
+  code: string;
+  adminEmail: string;
+  adminPassword: string;
+  adminFirstName: string;
+  adminLastName: string;
+}
+
+export interface CompanyStats {
+  totalCompanies: number;
+  activeCompanies: number;
+  inactiveCompanies: number;
+  totalEmployees: number;
+  totalUsers: number;
+}
+
+// ============================================
 // AUTH TYPES
 // ============================================
 
@@ -276,12 +312,21 @@ export interface DashboardStats {
 // API RESPONSE TYPES
 // ============================================
 
-export interface PaginatedResponse<T> {
-  data: T[];
+export interface PaginationMeta {
   total: number;
   page: number;
   limit: number;
   totalPages: number;
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  meta: PaginationMeta;
+  // Also support flat structure for backwards compatibility
+  total?: number;
+  page?: number;
+  limit?: number;
+  totalPages?: number;
 }
 
 export interface ApiError {

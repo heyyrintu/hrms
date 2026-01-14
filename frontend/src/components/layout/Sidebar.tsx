@@ -12,6 +12,7 @@ import {
   X,
   ChevronDown,
   ChevronRight,
+  Building2,
 } from 'lucide-react';
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -56,6 +57,12 @@ const navigation: NavItem[] = [
       { name: 'OT Approvals', href: '/approvals/ot', icon: <Clock className="h-4 w-4" /> },
       { name: 'Leave Approvals', href: '/approvals/leave', icon: <Calendar className="h-4 w-4" /> },
     ]
+  },
+  { 
+    name: 'Companies', 
+    href: '/companies', 
+    icon: <Building2 className="h-5 w-5" />,
+    roles: [UserRole.SUPER_ADMIN],
   },
   { 
     name: 'Admin', 

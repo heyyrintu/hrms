@@ -7,8 +7,11 @@ import {
   IsDateString,
   IsUUID,
   Min,
+  IsBoolean,
+  MinLength,
+  ValidateIf,
 } from 'class-validator';
-import { EmploymentType, PayType, EmployeeStatus } from '@prisma/client';
+import { EmploymentType, PayType, EmployeeStatus, UserRole } from '@prisma/client';
 import { Type } from 'class-transformer';
 
 export class CreateEmployeeDto {
@@ -68,6 +71,25 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsEnum(EmployeeStatus)
   status?: EmployeeStatus;
+
+  // User account creation fields
+  @IsOptional()
+  @IsBoolean()
+  createUser?: boolean;
+
+  @ValidateIf(o => o.createUser === true)
+  @IsEmail()
+  userEmail?: string;
+
+  @ValidateIf(o => o.createUser === true)
+  @IsString()
+  @MinLength(6)
+  userPassword?: string;
+
+  @ValidateIf(o => o.createUser === true)
+  @IsOptional()
+  @IsEnum(UserRole)
+  userRole?: UserRole;
 }
 
 export class UpdateEmployeeDto {

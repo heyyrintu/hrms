@@ -12,12 +12,14 @@ import {
   LeaveRequestQueryDto,
   CreateLeaveTypeDto,
   UpdateLeaveBalanceDto,
+  AdminLeaveRequestQueryDto,
+  InitializeBalancesDto,
 } from './dto/leave.dto';
 import { Decimal } from '@prisma/client/runtime/library';
 
 @Injectable()
 export class LeaveService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) { }
 
   /**
    * Get leave balances for an employee
@@ -502,7 +504,7 @@ export class LeaveService {
 
     while (current <= endDate) {
       const dayOfWeek = current.getDay();
-      
+
       // Skip weekends
       if (dayOfWeek !== 0 && dayOfWeek !== 6) {
         const dateOnly = new Date(current.getFullYear(), current.getMonth(), current.getDate());
@@ -532,4 +534,311 @@ export class LeaveService {
       current.setDate(current.getDate() + 1);
     }
   }
+
+  // ==========================================
+  // ADMIN METHODS
+  // ==========================================
+
+  /**
+   * Update a leave type
+   */
+  async updateLeaveType(tenantId: string, id: string, dto: CreateLeaveTypeDto) {
+    const existing = await this.prisma.leaveType.findFirst({
+      where: { id, tenantId },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Leave type not found');
+    }
+
+    // Check if code is being changed and if new code exists
+    if (dto.code !== existing.code) {
+      const codeExists = await this.prisma.leaveType.findUnique({
+        where: {
+          tenantId_code: {
+            tenantId,
+            code: dto.code,
+          },
+        },
+      });
+
+      if (codeExists) {
+        throw new ConflictException('Leave type code already exists');
+      }
+    }
+
+    return this.prisma.leaveType.update({
+      where: { id },
+      data: {
+        name: dto.name,
+        code: dto.code,
+        description: dto.description,
+        defaultDays: dto.defaultDays,
+        carryForward: dto.carryForward,
+        maxCarryForward: dto.maxCarryForward,
+        isPaid: dto.isPaid,
+      },
+    });
+  }
+
+  /**
+   * Delete (deactivate) a leave type
+   */
+  async deleteLeaveType(tenantId: string, id: string) {
+    const existing = await this.prisma.leaveType.findFirst({
+      where: { id, tenantId },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Leave type not found');
+    }
+
+    return this.prisma.leaveType.update({
+      where: { id },
+      data: { isActive: false },
+    });
+  }
+
+  /**
+   * Get all employee balances (for admin)
+   */
+  async getAllBalances(tenantId: string, year?: number) {
+    const targetYear = year || new Date().getFullYear();
+
+    return this.prisma.leaveBalance.findMany({
+      where: {
+        tenantId,
+        year: targetYear,
+      },
+      include: {
+        leaveType: true,
+        employee: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            employeeCode: true,
+            department: {
+              select: { name: true },
+            },
+          },
+        },
+      },
+      orderBy: [
+        { employee: { firstName: 'asc' } },
+        { leaveType: { name: 'asc' } },
+      ],
+    });
+  }
+
+  /**
+   * Initialize balances for employees for a year
+   */
+  async initializeBalances(tenantId: string, dto: InitializeBalancesDto) {
+    const { year, employeeIds } = dto;
+
+    // Get all leave types
+    const leaveTypes = await this.prisma.leaveType.findMany({
+      where: { tenantId, isActive: true },
+    });
+
+    // Get employees
+    const employeeWhere: Record<string, unknown> = {
+      tenantId,
+      status: 'ACTIVE',
+    };
+    if (employeeIds && employeeIds.length > 0) {
+      employeeWhere.id = { in: employeeIds };
+    }
+
+    const employees = await this.prisma.employee.findMany({
+      where: employeeWhere,
+      select: { id: true },
+    });
+
+    const results = {
+      created: 0,
+      skipped: 0,
+    };
+
+    // Create balances for each employee and leave type
+    for (const employee of employees) {
+      for (const leaveType of leaveTypes) {
+        // Check if balance already exists
+        const existing = await this.prisma.leaveBalance.findFirst({
+          where: {
+            tenantId,
+            employeeId: employee.id,
+            leaveTypeId: leaveType.id,
+            year,
+          },
+        });
+
+        if (!existing) {
+          await this.prisma.leaveBalance.create({
+            data: {
+              tenantId,
+              employeeId: employee.id,
+              leaveTypeId: leaveType.id,
+              year,
+              totalDays: leaveType.defaultDays,
+              usedDays: 0,
+              pendingDays: 0,
+              carriedOver: 0,
+            },
+          });
+          results.created++;
+        } else {
+          results.skipped++;
+        }
+      }
+    }
+
+    return {
+      message: `Balance initialization complete`,
+      ...results,
+      totalEmployees: employees.length,
+      totalLeaveTypes: leaveTypes.length,
+    };
+  }
+
+  /**
+   * Get all leave requests (for admin)
+   */
+  async getAllRequests(tenantId: string, query: AdminLeaveRequestQueryDto) {
+    const { from, to, status, employeeId, leaveTypeId, page = 1, limit = 20 } = query;
+    const skip = (page - 1) * limit;
+
+    const where: Record<string, unknown> = { tenantId };
+
+    if (from && to) {
+      where.startDate = {
+        gte: new Date(from),
+        lte: new Date(to),
+      };
+    }
+
+    if (status) {
+      where.status = status;
+    }
+
+    if (employeeId) {
+      where.employeeId = employeeId;
+    }
+
+    if (leaveTypeId) {
+      where.leaveTypeId = leaveTypeId;
+    }
+
+    const [requests, total] = await Promise.all([
+      this.prisma.leaveRequest.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          leaveType: true,
+          employee: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              employeeCode: true,
+              department: true,
+            },
+          },
+          approver: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      }),
+      this.prisma.leaveRequest.count({ where }),
+    ]);
+
+    return {
+      data: requests,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Get leave analytics
+   */
+  async getAnalytics(tenantId: string, year?: number) {
+    const targetYear = year || new Date().getFullYear();
+    const startOfYear = new Date(targetYear, 0, 1);
+    const endOfYear = new Date(targetYear, 11, 31);
+
+    // Get request counts by status
+    const requestsByStatus = await this.prisma.leaveRequest.groupBy({
+      by: ['status'],
+      where: {
+        tenantId,
+        startDate: { gte: startOfYear, lte: endOfYear },
+      },
+      _count: { id: true },
+    });
+
+    // Get leave usage by type
+    const usageByType = await this.prisma.leaveRequest.groupBy({
+      by: ['leaveTypeId'],
+      where: {
+        tenantId,
+        status: 'APPROVED',
+        startDate: { gte: startOfYear, lte: endOfYear },
+      },
+      _sum: { totalDays: true },
+      _count: { id: true },
+    });
+
+    // Get leave types for labels
+    const leaveTypes = await this.prisma.leaveType.findMany({
+      where: { tenantId },
+    });
+
+    const leaveTypeMap = new Map(leaveTypes.map(lt => [lt.id, lt]));
+
+    // Get monthly leave counts
+    const monthlyRequests = await this.prisma.leaveRequest.findMany({
+      where: {
+        tenantId,
+        status: 'APPROVED',
+        startDate: { gte: startOfYear, lte: endOfYear },
+      },
+      select: {
+        startDate: true,
+        totalDays: true,
+      },
+    });
+
+    const monthlyData = Array(12).fill(0);
+    monthlyRequests.forEach(req => {
+      const month = new Date(req.startDate).getMonth();
+      monthlyData[month] += Number(req.totalDays);
+    });
+
+    return {
+      year: targetYear,
+      requestsByStatus: requestsByStatus.reduce((acc, item) => {
+        acc[item.status] = item._count.id;
+        return acc;
+      }, {} as Record<string, number>),
+      usageByType: usageByType.map(item => ({
+        leaveType: leaveTypeMap.get(item.leaveTypeId),
+        totalDays: Number(item._sum.totalDays) || 0,
+        requestCount: item._count.id,
+      })),
+      monthlyUsage: monthlyData,
+    };
+  }
 }
+

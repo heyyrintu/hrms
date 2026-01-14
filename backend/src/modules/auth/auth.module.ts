@@ -12,12 +12,19 @@ import { JwtAuthGuard } from './guards/jwt-auth.guard';
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET'),
-        signOptions: {
-          expiresIn: configService.get<string>('JWT_EXPIRES_IN', '7d'),
-        },
-      }),
+      useFactory: (configService: ConfigService) => {
+        const secret = configService.get<string>('JWT_SECRET');
+        if (!secret) {
+          throw new Error('JWT_SECRET environment variable is not set');
+        }
+        const expiresIn = configService.get('JWT_EXPIRES_IN') ?? '7d';
+        return {
+          secret,
+          signOptions: {
+            expiresIn: expiresIn as '7d',
+          },
+        };
+      },
       inject: [ConfigService],
     }),
   ],

@@ -115,6 +115,39 @@ async function main() {
   // Create employees
   const passwordHash = await bcrypt.hash('password123', 10);
 
+  // Super Admin (System-wide admin who can manage companies)
+  const superAdmin = await prisma.employee.upsert({
+    where: { tenantId_employeeCode: { tenantId: tenant.id, employeeCode: 'EMP000' } },
+    update: {},
+    create: {
+      tenantId: tenant.id,
+      employeeCode: 'EMP000',
+      firstName: 'Super',
+      lastName: 'Admin',
+      email: 'superadmin@example.com',
+      phone: '+1234567899',
+      employmentType: 'PERMANENT',
+      payType: 'MONTHLY',
+      departmentId: hr.id,
+      designation: 'System Administrator',
+      joinDate: new Date('2023-01-01'),
+      status: 'ACTIVE',
+    },
+  });
+
+  // Create Super Admin user
+  await prisma.user.upsert({
+    where: { tenantId_email: { tenantId: tenant.id, email: 'superadmin@example.com' } },
+    update: {},
+    create: {
+      tenantId: tenant.id,
+      email: 'superadmin@example.com',
+      passwordHash,
+      role: 'SUPER_ADMIN',
+      employeeId: superAdmin.id,
+    },
+  });
+
   // HR Admin
   const hrAdmin = await prisma.employee.upsert({
     where: { tenantId_employeeCode: { tenantId: tenant.id, employeeCode: 'EMP001' } },
@@ -255,7 +288,7 @@ async function main() {
     where: { tenantId: tenant.id },
   });
 
-  const employees = [hrAdmin, engManager, employee1, tempEmployee];
+  const employees = [superAdmin, hrAdmin, engManager, employee1, tempEmployee];
 
   for (const emp of employees) {
     for (const lt of allLeaveTypes) {
@@ -286,6 +319,7 @@ async function main() {
   console.log('🎉 Seed completed successfully!');
   console.log('');
   console.log('📧 Test accounts (password: password123):');
+  console.log('   - Super Admin: superadmin@example.com (Can manage companies)');
   console.log('   - HR Admin: admin@example.com');
   console.log('   - Manager: manager@example.com');
   console.log('   - Employee: employee@example.com');

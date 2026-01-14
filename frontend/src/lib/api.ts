@@ -96,6 +96,26 @@ export const leaveApi = {
     api.post(`/leave/requests/${id}/approve`, { approverNote: note }),
   rejectRequest: (id: string, note?: string) =>
     api.post(`/leave/requests/${id}/reject`, { approverNote: note }),
+
+  // Admin APIs
+  createLeaveType: (data: Record<string, unknown>) => api.post('/leave/admin/types', data),
+  updateLeaveType: (id: string, data: Record<string, unknown>) =>
+    api.put(`/leave/admin/types/${id}`, data),
+  deleteLeaveType: (id: string) => api.delete(`/leave/admin/types/${id}`),
+
+  getAllBalances: (year?: number) =>
+    api.get('/leave/admin/balances', { params: year ? { year } : {} }),
+  getEmployeeBalance: (employeeId: string, year?: number) =>
+    api.get(`/leave/admin/balances/${employeeId}`, { params: year ? { year } : {} }),
+  updateEmployeeBalance: (employeeId: string, leaveTypeId: string, year: number, data: Record<string, unknown>) =>
+    api.put(`/leave/admin/balances/${employeeId}/${leaveTypeId}?year=${year}`, data),
+  initializeBalances: (data: { year: number; employeeIds?: string[] }) =>
+    api.post('/leave/admin/balances/initialize', data),
+
+  getAllRequests: (params?: Record<string, unknown>) =>
+    api.get('/leave/admin/requests', { params }),
+  getAnalytics: (year?: number) =>
+    api.get('/leave/admin/analytics', { params: year ? { year } : {} }),
 };
 
 // Admin API

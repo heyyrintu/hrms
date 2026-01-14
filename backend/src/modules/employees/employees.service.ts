@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto, UpdateEmployeeDto, EmployeeQueryDto } from './dto/employee.dto';
+import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class EmployeesService {
@@ -29,36 +30,71 @@ export class EmployeesService {
       );
     }
 
-    return this.prisma.employee.create({
-      data: {
-        tenantId,
-        employeeCode: dto.employeeCode,
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        email: dto.email,
-        phone: dto.phone,
-        employmentType: dto.employmentType || 'PERMANENT',
-        payType: dto.payType || 'MONTHLY',
-        hourlyRate: dto.hourlyRate,
-        otMultiplier: dto.otMultiplier || 1.5,
-        departmentId: dto.departmentId,
-        designation: dto.designation,
-        managerId: dto.managerId,
-        joinDate: new Date(dto.joinDate),
-        exitDate: dto.exitDate ? new Date(dto.exitDate) : null,
-        status: dto.status || 'ACTIVE',
-      },
-      include: {
-        department: true,
-        manager: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
+    // If creating user, check if user email already exists
+    if (dto.createUser && dto.userEmail) {
+      const existingUser = await this.prisma.user.findFirst({
+        where: {
+          tenantId,
+          email: dto.userEmail,
+        },
+      });
+
+      if (existingUser) {
+        throw new ConflictException('User email already exists');
+      }
+    }
+
+    // Create employee and user in a transaction
+    return this.prisma.$transaction(async (prisma) => {
+      const employee = await prisma.employee.create({
+        data: {
+          tenantId,
+          employeeCode: dto.employeeCode,
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          email: dto.email,
+          phone: dto.phone,
+          employmentType: dto.employmentType || 'PERMANENT',
+          payType: dto.payType || 'MONTHLY',
+          hourlyRate: dto.hourlyRate,
+          otMultiplier: dto.otMultiplier || 1.5,
+          departmentId: dto.departmentId,
+          designation: dto.designation,
+          managerId: dto.managerId,
+          joinDate: new Date(dto.joinDate),
+          exitDate: dto.exitDate ? new Date(dto.exitDate) : null,
+          status: dto.status || 'ACTIVE',
+        },
+        include: {
+          department: true,
+          manager: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              email: true,
+            },
           },
         },
-      },
+      });
+
+      // Create user account if requested
+      if (dto.createUser && dto.userEmail && dto.userPassword) {
+        const passwordHash = await bcrypt.hash(dto.userPassword, 10);
+        
+        await prisma.user.create({
+          data: {
+            tenantId,
+            email: dto.userEmail,
+            passwordHash,
+            role: dto.userRole || 'EMPLOYEE',
+            employeeId: employee.id,
+            isActive: true,
+          },
+        });
+      }
+
+      return employee;
     });
   }
 

@@ -3,12 +3,27 @@
 import { useEffect, useState } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/Button';
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
+import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { leaveApi } from '@/lib/api';
-import { formatDate, getStatusColor } from '@/lib/utils';
+import { formatDate, getStatusColor, cn } from '@/lib/utils';
+import { useRouter } from 'next/navigation';
+import {
+  Calendar,
+  Plus,
+  Clock,
+  TrendingUp,
+  ChevronDown,
+  ChevronUp,
+  X,
+  FileText,
+  Filter,
+  RefreshCw,
+} from 'lucide-react';
 
 interface LeaveBalance {
   id: string;
-  leaveType: { name: string; code: string };
+  leaveType: { id: string; name: string; code: string };
   totalDays: number;
   usedDays: number;
   pendingDays: number;
@@ -23,18 +38,30 @@ interface LeaveRequest {
   totalDays: number;
   status: string;
   reason?: string;
+  approver?: { firstName: string; lastName: string };
+  approverNote?: string;
+  createdAt: string;
 }
 
 export default function LeavePage() {
+  const router = useRouter();
   const [balances, setBalances] = useState<LeaveBalance[]>([]);
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [expandedRequest, setExpandedRequest] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   useEffect(() => {
     loadData();
   }, []);
 
   const loadData = async () => {
+    setLoading(true);
+    setError(null);
     try {
       const [balancesRes, requestsRes] = await Promise.all([
         leaveApi.getMyBalances(),
@@ -42,27 +69,87 @@ export default function LeavePage() {
       ]);
       setBalances(balancesRes.data);
       setRequests(requestsRes.data.data || []);
-    } catch (error) {
-      console.error('Failed to load leave data:', error);
+    } catch (err: unknown) {
+      console.error('Failed to load leave data:', err);
+      const axiosError = err as { response?: { data?: { message?: string } } };
+      setError(axiosError.response?.data?.message || 'Failed to load leave data. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleCancel = async (id: string) => {
+  const handleCancelClick = (id: string) => {
+    setSelectedRequestId(id);
+    setCancelModalOpen(true);
+  };
+
+  const handleCancelConfirm = async () => {
+    if (!selectedRequestId) return;
+
+    setCancelling(true);
     try {
-      await leaveApi.cancelRequest(id);
+      await leaveApi.cancelRequest(selectedRequestId);
+      setCancelModalOpen(false);
+      setSelectedRequestId(null);
       await loadData();
-    } catch (error) {
-      console.error('Failed to cancel request:', error);
+    } catch (err) {
+      console.error('Failed to cancel request:', err);
+    } finally {
+      setCancelling(false);
     }
+  };
+
+  const filteredRequests = requests.filter(req =>
+    statusFilter === 'all' || req.status === statusFilter
+  );
+
+  const getLeaveTypeColor = (code: string): string => {
+    const colors: Record<string, string> = {
+      'CL': 'from-blue-500 to-blue-600',
+      'SL': 'from-red-500 to-red-600',
+      'PL': 'from-green-500 to-green-600',
+      'LOP': 'from-gray-500 to-gray-600',
+      'ML': 'from-pink-500 to-pink-600',
+      'PFL': 'from-purple-500 to-purple-600',
+    };
+    return colors[code] || 'from-indigo-500 to-indigo-600';
+  };
+
+  const getProgressPercentage = (used: number, total: number): number => {
+    if (total === 0) return 0;
+    return Math.min((used / total) * 100, 100);
   };
 
   if (loading) {
     return (
       <DashboardLayout>
-        <div className="flex h-full items-center justify-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary-600 border-t-transparent" />
+        <div className="flex h-full items-center justify-center py-20">
+          <div className="text-center">
+            <div className="h-12 w-12 animate-spin rounded-full border-4 border-primary-600 border-t-transparent mx-auto" />
+            <p className="mt-4 text-gray-600">Loading leave information...</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (error) {
+    return (
+      <DashboardLayout>
+        <div className="flex h-full items-center justify-center py-20">
+          <Card className="max-w-md text-center">
+            <CardContent className="py-8">
+              <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                <X className="w-8 h-8 text-red-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">Unable to Load Leave Data</h3>
+              <p className="text-gray-600 mb-4">{error}</p>
+              <Button onClick={loadData}>
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Try Again
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </DashboardLayout>
     );
@@ -71,117 +158,274 @@ export default function LeavePage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
+        {/* Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Leave Management</h1>
-            <p className="text-gray-600">View your leave balances and requests</p>
+            <p className="text-gray-600 mt-1">Track your leave balances and requests</p>
           </div>
-          <Button onClick={() => window.location.href = '/leave/request'}>
-            Request Leave
-          </Button>
+          <div className="flex gap-3">
+            <Button
+              variant="secondary"
+              onClick={loadData}
+              disabled={loading}
+            >
+              <RefreshCw className={cn('w-4 h-4 mr-2', loading && 'animate-spin')} />
+              Refresh
+            </Button>
+            <Button onClick={() => router.push('/leave/request')}>
+              <Plus className="w-4 h-4 mr-2" />
+              Request Leave
+            </Button>
+          </div>
         </div>
 
         {/* Leave Balances */}
         <div>
-          <h2 className="mb-4 text-lg font-semibold">Leave Balances</h2>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-primary-600" />
+            Leave Balances
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {balances.map((balance) => {
-              const available = balance.totalDays + balance.carriedOver - balance.usedDays - balance.pendingDays;
+              const total = balance.totalDays + balance.carriedOver;
+              const used = balance.usedDays;
+              const pending = balance.pendingDays;
+              const available = total - used - pending;
+              const usedPercent = getProgressPercentage(used, total);
+              const pendingPercent = getProgressPercentage(pending, total);
+
               return (
-                <div key={balance.id} className="card p-4">
-                  <h3 className="font-medium text-gray-900">{balance.leaveType.name}</h3>
-                  <p className="text-sm text-gray-500">{balance.leaveType.code}</p>
-                  <div className="mt-3 space-y-1 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Total:</span>
-                      <span>{balance.totalDays + balance.carriedOver}</span>
+                <Card key={balance.id} className="overflow-hidden">
+                  <div className={cn(
+                    'h-2 bg-gradient-to-r',
+                    getLeaveTypeColor(balance.leaveType.code)
+                  )} />
+                  <CardContent className="pt-4">
+                    <div className="flex items-start justify-between mb-4">
+                      <div>
+                        <h3 className="font-semibold text-gray-900">{balance.leaveType.name}</h3>
+                        <span className={cn(
+                          'inline-block px-2 py-0.5 text-xs font-medium rounded mt-1 bg-gradient-to-r text-white',
+                          getLeaveTypeColor(balance.leaveType.code)
+                        )}>
+                          {balance.leaveType.code}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-2xl font-bold text-gray-900">{available}</div>
+                        <div className="text-xs text-gray-500">available</div>
+                      </div>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Used:</span>
-                      <span>{balance.usedDays}</span>
+
+                    {/* Progress Bar */}
+                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden mb-3">
+                      <div className="h-full flex">
+                        <div
+                          className="bg-gray-400 transition-all"
+                          style={{ width: `${usedPercent}%` }}
+                        />
+                        <div
+                          className="bg-yellow-400 transition-all"
+                          style={{ width: `${pendingPercent}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Pending:</span>
-                      <span className="text-yellow-600">{balance.pendingDays}</span>
+
+                    {/* Stats */}
+                    <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                      <div className="p-2 bg-gray-50 rounded">
+                        <div className="text-gray-500">Total</div>
+                        <div className="font-semibold text-gray-900">{total}</div>
+                      </div>
+                      <div className="p-2 bg-gray-50 rounded">
+                        <div className="text-gray-500">Used</div>
+                        <div className="font-semibold text-gray-600">{used}</div>
+                      </div>
+                      <div className="p-2 bg-yellow-50 rounded">
+                        <div className="text-yellow-600">Pending</div>
+                        <div className="font-semibold text-yellow-700">{pending}</div>
+                      </div>
                     </div>
-                    <div className="flex justify-between border-t pt-1 font-medium">
-                      <span>Available:</span>
-                      <span className="text-green-600">{available}</span>
-                    </div>
-                  </div>
-                </div>
+                  </CardContent>
+                </Card>
               );
             })}
+
+            {balances.length === 0 && (
+              <Card className="col-span-full">
+                <CardContent className="py-12 text-center text-gray-500">
+                  <Calendar className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                  <p>No leave balances found for this year.</p>
+                  <p className="text-sm mt-1">Contact HR to set up your leave allocation.</p>
+                </CardContent>
+              </Card>
+            )}
           </div>
         </div>
 
         {/* Leave Requests */}
         <div>
-          <h2 className="mb-4 text-lg font-semibold">My Requests</h2>
-          <div className="card overflow-hidden">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Type
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Dates
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Days
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200 bg-white">
-                {requests.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
-                      No leave requests found
-                    </td>
-                  </tr>
-                ) : (
-                  requests.map((request) => (
-                    <tr key={request.id}>
-                      <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-900">
-                        {request.leaveType.name}
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
-                        {formatDate(request.startDate)} - {formatDate(request.endDate)}
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-4 text-sm text-gray-500">
-                        {request.totalDays}
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-4">
-                        <span className={`badge ${getStatusColor(request.status)}`}>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <Clock className="w-5 h-5 text-primary-600" />
+              My Requests
+            </h2>
+
+            <div className="flex items-center gap-2">
+              <Filter className="w-4 h-4 text-gray-400" />
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              >
+                <option value="all">All Status</option>
+                <option value="PENDING">Pending</option>
+                <option value="APPROVED">Approved</option>
+                <option value="REJECTED">Rejected</option>
+                <option value="CANCELLED">Cancelled</option>
+              </select>
+            </div>
+          </div>
+
+          <Card padding="none">
+            <div className="divide-y divide-gray-100">
+              {filteredRequests.length === 0 ? (
+                <div className="py-12 text-center text-gray-500">
+                  <FileText className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                  <p>No leave requests found.</p>
+                  <Button
+                    variant="ghost"
+                    className="mt-4"
+                    onClick={() => router.push('/leave/request')}
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Submit your first request
+                  </Button>
+                </div>
+              ) : (
+                filteredRequests.map((request) => (
+                  <div key={request.id} className="p-4 hover:bg-gray-50 transition-colors">
+                    <div
+                      className="flex items-center justify-between cursor-pointer"
+                      onClick={() => setExpandedRequest(
+                        expandedRequest === request.id ? null : request.id
+                      )}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className={cn(
+                          'w-10 h-10 rounded-lg flex items-center justify-center text-white text-sm font-bold bg-gradient-to-r',
+                          getLeaveTypeColor(request.leaveType.code)
+                        )}>
+                          {request.leaveType.code}
+                        </div>
+                        <div>
+                          <div className="font-medium text-gray-900">
+                            {request.leaveType.name}
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            {formatDate(request.startDate)} — {formatDate(request.endDate)}
+                            <span className="ml-2 text-gray-400">
+                              ({request.totalDays} day{request.totalDays > 1 ? 's' : ''})
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <span className={cn('badge', getStatusColor(request.status))}>
                           {request.status}
                         </span>
-                      </td>
-                      <td className="whitespace-nowrap px-6 py-4 text-sm">
-                        {request.status === 'PENDING' && (
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            onClick={() => handleCancel(request.id)}
-                          >
-                            Cancel
-                          </Button>
+                        {expandedRequest === request.id ? (
+                          <ChevronUp className="w-5 h-5 text-gray-400" />
+                        ) : (
+                          <ChevronDown className="w-5 h-5 text-gray-400" />
                         )}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                      </div>
+                    </div>
+
+                    {/* Expanded Details */}
+                    {expandedRequest === request.id && (
+                      <div className="mt-4 pt-4 border-t border-gray-100">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                          {request.reason && (
+                            <div>
+                              <span className="text-gray-500">Reason:</span>
+                              <p className="text-gray-900 mt-1">{request.reason}</p>
+                            </div>
+                          )}
+                          <div>
+                            <span className="text-gray-500">Submitted on:</span>
+                            <p className="text-gray-900 mt-1">{formatDate(request.createdAt)}</p>
+                          </div>
+                          {request.approver && (
+                            <div>
+                              <span className="text-gray-500">Approver:</span>
+                              <p className="text-gray-900 mt-1">
+                                {request.approver.firstName} {request.approver.lastName}
+                              </p>
+                            </div>
+                          )}
+                          {request.approverNote && (
+                            <div>
+                              <span className="text-gray-500">Approver Note:</span>
+                              <p className="text-gray-900 mt-1">{request.approverNote}</p>
+                            </div>
+                          )}
+                        </div>
+
+                        {request.status === 'PENDING' && (
+                          <div className="mt-4 pt-4 border-t border-gray-100 flex justify-end">
+                            <Button
+                              variant="danger"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleCancelClick(request.id);
+                              }}
+                            >
+                              <X className="w-4 h-4 mr-1" />
+                              Cancel Request
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </Card>
         </div>
       </div>
+
+      {/* Cancel Confirmation Modal */}
+      <Modal
+        isOpen={cancelModalOpen}
+        onClose={() => setCancelModalOpen(false)}
+        title="Cancel Leave Request"
+        size="sm"
+      >
+        <p className="text-gray-600">
+          Are you sure you want to cancel this leave request? This action cannot be undone.
+        </p>
+        <ModalFooter>
+          <Button
+            variant="secondary"
+            onClick={() => setCancelModalOpen(false)}
+            disabled={cancelling}
+          >
+            Keep Request
+          </Button>
+          <Button
+            variant="danger"
+            onClick={handleCancelConfirm}
+            loading={cancelling}
+          >
+            Cancel Request
+          </Button>
+        </ModalFooter>
+      </Modal>
     </DashboardLayout>
   );
 }

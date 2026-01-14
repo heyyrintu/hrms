@@ -43,16 +43,16 @@ enum UserRole {
 }
 
 model User {
-  id           String   @id @default(uuid())
+  id           String    @id @default(uuid())
   tenantId     String
   email        String
   passwordHash String
-  role         UserRole @default(EMPLOYEE)
-  employeeId   String?  @unique
-  isActive     Boolean  @default(true)
+  role         UserRole  @default(EMPLOYEE)
+  employeeId   String?   @unique
+  isActive     Boolean   @default(true)
   lastLoginAt  DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   // Relations
   tenant   Tenant    @relation(fields: [tenantId], references: [id])
@@ -68,21 +68,21 @@ model User {
 // ============================================
 
 model Department {
-  id               String   @id @default(uuid())
-  tenantId         String
-  name             String
-  code             String
-  parentId         String?
-  description      String?
-  isActive         Boolean  @default(true)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  code        String
+  parentId    String?
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   // Relations
-  tenant           Tenant       @relation(fields: [tenantId], references: [id])
-  parent           Department?  @relation("DepartmentHierarchy", fields: [parentId], references: [id])
-  children         Department[] @relation("DepartmentHierarchy")
-  employees        Employee[]
+  tenant    Tenant       @relation(fields: [tenantId], references: [id])
+  parent    Department?  @relation("DepartmentHierarchy", fields: [parentId], references: [id])
+  children  Department[] @relation("DepartmentHierarchy")
+  employees Employee[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -202,13 +202,13 @@ model AttendanceRecord {
 }
 
 model AttendanceSession {
-  id             String   @id @default(uuid())
+  id             String    @id @default(uuid())
   attendanceId   String
   inTime         DateTime
   outTime        DateTime?
-  sessionMinutes Int      @default(0)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  sessionMinutes Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   // Relations
   attendance AttendanceRecord @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
@@ -248,7 +248,7 @@ model LeaveType {
   id              String   @id @default(uuid())
   tenantId        String
   name            String
-  code            String   // CL, SL, PL, LOP, etc.
+  code            String // CL, SL, PL, LOP, etc.
   description     String?
   defaultDays     Int      @default(0)
   carryForward    Boolean  @default(false)
@@ -269,17 +269,17 @@ model LeaveType {
 }
 
 model LeaveBalance {
-  id           String   @id @default(uuid())
-  tenantId     String
-  employeeId   String
-  leaveTypeId  String
-  year         Int
-  totalDays    Decimal  @db.Decimal(5, 2)
-  usedDays     Decimal  @default(0) @db.Decimal(5, 2)
-  pendingDays  Decimal  @default(0) @db.Decimal(5, 2)
-  carriedOver  Decimal  @default(0) @db.Decimal(5, 2)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id          String   @id @default(uuid())
+  tenantId    String
+  employeeId  String
+  leaveTypeId String
+  year        Int
+  totalDays   Decimal  @db.Decimal(5, 2)
+  usedDays    Decimal  @default(0) @db.Decimal(5, 2)
+  pendingDays Decimal  @default(0) @db.Decimal(5, 2)
+  carriedOver Decimal  @default(0) @db.Decimal(5, 2)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   // Relations
   tenant    Tenant    @relation(fields: [tenantId], references: [id])

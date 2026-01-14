@@ -14,6 +14,7 @@ interface AuthContextType {
   hasRole: (...roles: UserRole[]) => boolean;
   isManager: boolean;
   isAdmin: boolean;
+  isSuperAdmin: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -96,6 +97,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const isAdmin = user?.role === UserRole.HR_ADMIN || 
                   user?.role === UserRole.SUPER_ADMIN;
 
+  const isSuperAdmin = user?.role === UserRole.SUPER_ADMIN;
+
   const value: AuthContextType = {
     user,
     token,
@@ -106,6 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     hasRole,
     isManager,
     isAdmin,
+    isSuperAdmin,
   };
 
   return (
