@@ -11,7 +11,7 @@ import {
   Search, Plus, Eye, Edit2, Trash2, Building2, Users, 
   UserCheck, Power, PowerOff, Shield, Mail, Key, User
 } from 'lucide-react';
-import apiClient from '@/lib/api-client';
+import { api } from '@/lib/api';
 import { Company, CompanyStats, CreateCompanyPayload, UserRole } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -77,8 +77,8 @@ export default function CompaniesPage() {
       if (search) params.search = search;
       if (statusFilter) params.isActive = statusFilter;
 
-      const data = await apiClient.get<Company[]>('/companies', params);
-      setCompanies(data || []);
+      const response = await api.get<Company[]>('/companies', { params });
+      setCompanies(response.data || []);
     } catch (error) {
       console.error('Failed to load companies:', error);
       setCompanies([]);
@@ -89,8 +89,8 @@ export default function CompaniesPage() {
 
   const loadStats = async () => {
     try {
-      const data = await apiClient.get<CompanyStats>('/companies/stats');
-      setStats(data);
+      const response = await api.get<CompanyStats>('/companies/stats');
+      setStats(response.data);
     } catch (error) {
       console.error('Failed to load stats:', error);
     }
@@ -98,8 +98,8 @@ export default function CompaniesPage() {
 
   const handleViewCompany = async (company: Company) => {
     try {
-      const fullCompany = await apiClient.get<Company>(`/companies/${company.id}`);
-      setSelectedCompany(fullCompany);
+      const response = await api.get<Company>(`/companies/${company.id}`);
+      setSelectedCompany(response.data);
       setIsViewModalOpen(true);
     } catch (error) {
       console.error('Failed to load company details:', error);
@@ -190,7 +190,7 @@ export default function CompaniesPage() {
         adminLastName: formData.adminLastName,
       };
 
-      await apiClient.post('/companies', payload);
+      await api.post('/companies', payload);
       setFormSuccess('Company created successfully!');
       
       setTimeout(() => {
@@ -207,7 +207,7 @@ export default function CompaniesPage() {
 
   const handleToggleStatus = async (company: Company) => {
     try {
-      await apiClient.put(`/companies/${company.id}/toggle-status`, {});
+      await api.put(`/companies/${company.id}/toggle-status`, {});
       loadCompanies();
       loadStats();
     } catch (error: any) {
@@ -222,7 +222,7 @@ export default function CompaniesPage() {
     setFormError('');
 
     try {
-      await apiClient.delete(`/companies/${selectedCompany.id}`);
+      await api.delete(`/companies/${selectedCompany.id}`);
       setIsDeleteModalOpen(false);
       loadCompanies();
       loadStats();

@@ -10,7 +10,7 @@ import {
   ArrowLeft, ArrowRight, Save, CheckCircle2, User, Briefcase, 
   DollarSign, FileText, Users
 } from 'lucide-react';
-import apiClient from '@/lib/api-client';
+import { employeesApi, departmentsApi } from '@/lib/api';
 import { Department, Employee, EmploymentType, EmployeeStatus, PayType } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -97,7 +97,8 @@ export default function EditEmployeePage() {
 
   const loadEmployee = async () => {
     try {
-      const employee = await apiClient.get<Employee>(`/employees/${employeeId}`);
+      const response = await employeesApi.getById(employeeId);
+      const employee = response.data;
       
       setFormData({
         employeeCode: employee.employeeCode,
@@ -144,8 +145,8 @@ export default function EditEmployeePage() {
 
   const loadDepartments = async () => {
     try {
-      const data = await apiClient.get<Department[]>('/departments');
-      setDepartments(data || []);
+      const response = await departmentsApi.getAll();
+      setDepartments(response.data || []);
     } catch (error) {
       console.error('Failed to load departments:', error);
     }
@@ -153,8 +154,8 @@ export default function EditEmployeePage() {
 
   const loadManagers = async () => {
     try {
-      const data = await apiClient.get<any>('/employees', { limit: 1000 });
-      setManagers(data.data || []);
+      const response = await employeesApi.getAll({ limit: 1000 });
+      setManagers(response.data.data || []);
     } catch (error) {
       console.error('Failed to load managers:', error);
     }
@@ -231,7 +232,7 @@ export default function EditEmployeePage() {
         status: formData.status,
       };
 
-      await apiClient.put(`/employees/${employeeId}`, payload);
+      await employeesApi.update(employeeId, payload);
       setFormSuccess('Employee updated successfully!');
       
       setTimeout(() => {

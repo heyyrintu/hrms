@@ -10,13 +10,16 @@ import {
   PayableHoursQueryDto,
   ManualAttendanceDto,
 } from './dto/attendance.dto';
-import { AttendanceStatus, AttendanceSource } from '@prisma/client';
+import { AttendanceStatus, AttendanceSource, UserRole, NotificationType } from '@prisma/client';
+import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class AttendanceService {
   constructor(
     private prisma: PrismaService,
     private otCalculation: OtCalculationService,
+    private notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -347,6 +350,49 @@ export class AttendanceService {
   }
 
   /**
+   * Get pending OT approvals
+   * - Managers see their direct reports only
+   * - HR_ADMIN and SUPER_ADMIN see all
+   */
+  async getPendingOtApprovals(user: AuthenticatedUser) {
+    const whereClause: any = {
+      tenantId: user.tenantId,
+      otMinutesCalculated: { gt: 0 },
+      otMinutesApproved: null,
+      clockOutTime: { not: null }, // Only completed attendance records
+    };
+
+    // Managers can only see their direct reports
+    if (user.role === UserRole.MANAGER && user.employeeId) {
+      whereClause.employee = {
+        managerId: user.employeeId,
+      };
+    }
+
+    return this.prisma.attendanceRecord.findMany({
+      where: whereClause,
+      include: {
+        employee: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            employeeCode: true,
+            department: { select: { name: true } },
+          },
+        },
+        sessions: {
+          orderBy: { inTime: 'asc' },
+        },
+      },
+      orderBy: [
+        { date: 'desc' },
+        { clockInTime: 'desc' },
+      ],
+    });
+  }
+
+  /**
    * Approve OT for an attendance record
    */
   async approveOt(tenantId: string, id: string, dto: ApproveOtDto) {
@@ -359,7 +405,7 @@ export class AttendanceService {
       );
     }
 
-    return this.prisma.attendanceRecord.update({
+    const updated = await this.prisma.attendanceRecord.update({
       where: { id },
       data: {
         otMinutesApproved: dto.otMinutesApproved,
@@ -377,6 +423,21 @@ export class AttendanceService {
         sessions: true,
       },
     });
+
+    // Notify the employee
+    const hours = Math.floor(dto.otMinutesApproved / 60);
+    const mins = dto.otMinutesApproved % 60;
+    const otDisplay = mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+    this.notificationsService.notifyEmployee(
+      tenantId,
+      attendance.employeeId,
+      NotificationType.OT_APPROVED,
+      'OT Approved',
+      `Your overtime of ${otDisplay} for ${new Date(attendance.date).toLocaleDateString()} has been approved.`,
+      '/attendance',
+    ).catch(() => {}); // Fire and forget
+
+    return updated;
   }
 
   /**

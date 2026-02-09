@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { 
+import {
   Card, CardHeader, CardTitle, CardContent,
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableEmptyState, TableLoadingState,
   Badge, getStatusBadgeVariant, Select, Button
 } from '@/components/ui';
-import { ChevronLeft, ChevronRight, Download } from 'lucide-react';
-import apiClient from '@/lib/api-client';
+import { ChevronLeft, ChevronRight, Download, LogIn, LogOut, Clock } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { api, attendanceApi, employeesApi, departmentsApi } from '@/lib/api';
 import { formatDate, formatTime, formatMinutesToHoursMinutes, formatDateForApi, getMonthYear, getDaysInMonth } from '@/lib/date-utils';
 import { AttendanceRecord, Employee, Department } from '@/types';
 
@@ -25,8 +26,16 @@ export default function AttendancePage() {
   const [selectedEmployee, setSelectedEmployee] = useState('');
   const [selectedDepartment, setSelectedDepartment] = useState('');
 
+  // Clock in/out state
+  const [clockedIn, setClockedIn] = useState(false);
+  const [canClockIn, setCanClockIn] = useState(false);
+  const [canClockOut, setCanClockOut] = useState(false);
+  const [clockingIn, setClockingIn] = useState(false);
+  const [clockingOut, setClockingOut] = useState(false);
+
   useEffect(() => {
     loadAttendance();
+    loadTodayStatus();
   }, [currentMonth, viewMode, selectedEmployee, selectedDepartment]);
 
   useEffect(() => {
@@ -35,14 +44,62 @@ export default function AttendancePage() {
     }
   }, [isManager, isAdmin, viewMode]);
 
+  const loadTodayStatus = async () => {
+    try {
+      const response = await attendanceApi.getTodayStatus();
+      const data = response.data;
+      const isClockedIn = data.clockedIn || false;
+      const hasClockInTime = !!data.clockInTime;
+      const hasClockOutTime = !!data.clockOutTime;
+      setClockedIn(isClockedIn);
+      setCanClockIn(data.canClockIn ?? (!hasClockInTime || (!isClockedIn && hasClockOutTime)));
+      setCanClockOut(data.canClockOut ?? isClockedIn);
+    } catch {
+      // If no attendance today, user can clock in
+      setCanClockIn(true);
+      setCanClockOut(false);
+      setClockedIn(false);
+    }
+  };
+
+  const handleClockIn = async () => {
+    try {
+      setClockingIn(true);
+      await attendanceApi.clockIn();
+      toast.success('Clocked in successfully!');
+      await loadTodayStatus();
+      await loadAttendance();
+    } catch (error: any) {
+      const message = error.response?.data?.message || 'Failed to clock in';
+      toast.error(message);
+    } finally {
+      setClockingIn(false);
+    }
+  };
+
+  const handleClockOut = async () => {
+    try {
+      setClockingOut(true);
+      await attendanceApi.clockOut();
+      toast.success('Clocked out successfully!');
+      await loadTodayStatus();
+      await loadAttendance();
+    } catch (error: any) {
+      const message = error.response?.data?.message || 'Failed to clock out';
+      toast.error(message);
+    } finally {
+      setClockingOut(false);
+    }
+  };
+
   const loadFilters = async () => {
     try {
       const [empData, deptData] = await Promise.all([
-        apiClient.get<{ data: Employee[] }>('/employees', { limit: 100 }),
-        apiClient.get<Department[]>('/departments'),
+        employeesApi.getAll({ limit: 100 }),
+        departmentsApi.getAll(),
       ]);
-      setEmployees(empData.data || []);
-      setDepartments(deptData || []);
+      setEmployees(empData.data.data || []);
+      setDepartments(deptData.data || []);
     } catch (error) {
       console.error('Failed to load filters:', error);
     }
@@ -67,7 +124,8 @@ export default function AttendancePage() {
         if (selectedDepartment) params.departmentId = selectedDepartment;
       }
 
-      const data = await apiClient.get<AttendanceRecord[] | { data: AttendanceRecord[] }>(endpoint, params);
+      const response = await api.get<AttendanceRecord[] | { data: AttendanceRecord[] }>(endpoint, { params });
+      const data = response.data;
       setRecords(Array.isArray(data) ? data : data.data || []);
     } catch (error) {
       console.error('Failed to load attendance:', error);
@@ -142,6 +200,39 @@ export default function AttendancePage() {
           </div>
         )}
       </div>
+
+      {/* Clock In/Out Card */}
+      {viewMode === 'personal' && (
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Clock className="h-5 w-5 text-primary-600" />
+                <div>
+                  <p className="font-medium text-gray-900">Today&apos;s Attendance</p>
+                  <p className="text-sm text-gray-500">
+                    {clockedIn ? 'You are currently clocked in' : canClockIn ? 'You have not clocked in yet' : 'Shift complete for today'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                {canClockIn && (
+                  <Button onClick={handleClockIn} loading={clockingIn} className="flex items-center gap-2">
+                    <LogIn className="h-4 w-4" />
+                    Clock In
+                  </Button>
+                )}
+                {canClockOut && (
+                  <Button onClick={handleClockOut} loading={clockingOut} variant="secondary" className="flex items-center gap-2">
+                    <LogOut className="h-4 w-4" />
+                    Clock Out
+                  </Button>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Month Navigation */}
       <Card>

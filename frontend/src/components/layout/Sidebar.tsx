@@ -13,6 +13,19 @@ import {
   ChevronDown,
   ChevronRight,
   Building2,
+  CalendarDays,
+  Timer,
+  UserCircle,
+  FileText,
+  GitPullRequest,
+  Bell,
+  Megaphone,
+  FileSpreadsheet,
+  DollarSign,
+  Receipt,
+  Wallet,
+  Tags,
+  ClipboardList,
 } from 'lucide-react';
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -44,10 +57,47 @@ const navigation: NavItem[] = [
     icon: <Users className="h-5 w-5" />, 
     roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] 
   },
-  { 
-    name: 'Leave', 
-    href: '/leave', 
-    icon: <Calendar className="h-5 w-5" /> 
+  {
+    name: 'Leave',
+    href: '/leave',
+    icon: <Calendar className="h-5 w-5" />
+  },
+  {
+    name: 'Payroll',
+    href: '/payroll',
+    icon: <DollarSign className="h-5 w-5" />,
+    roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN],
+  },
+  {
+    name: 'My Payslips',
+    href: '/my-payslips',
+    icon: <Receipt className="h-5 w-5" />
+  },
+  {
+    name: 'Expenses',
+    href: '/expenses',
+    icon: <Wallet className="h-5 w-5" />
+  },
+  {
+    name: 'Onboarding',
+    href: '/onboarding',
+    icon: <ClipboardList className="h-5 w-5" />,
+    roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN],
+  },
+  {
+    name: 'My Onboarding',
+    href: '/onboarding/my-tasks',
+    icon: <ClipboardList className="h-5 w-5" />
+  },
+  {
+    name: 'Notifications',
+    href: '/notifications',
+    icon: <Bell className="h-5 w-5" />
+  },
+  {
+    name: 'My Profile',
+    href: '/my-profile',
+    icon: <UserCircle className="h-5 w-5" />
   },
   { 
     name: 'Approvals', 
@@ -56,11 +106,19 @@ const navigation: NavItem[] = [
     children: [
       { name: 'OT Approvals', href: '/approvals/ot', icon: <Clock className="h-4 w-4" /> },
       { name: 'Leave Approvals', href: '/approvals/leave', icon: <Calendar className="h-4 w-4" /> },
+      { name: 'Change Requests', href: '/approvals/change-requests', icon: <GitPullRequest className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
+      { name: 'Expense Claims', href: '/approvals/expenses', icon: <Wallet className="h-4 w-4" /> },
     ]
   },
-  { 
-    name: 'Companies', 
-    href: '/companies', 
+  {
+    name: 'Reports',
+    href: '/reports',
+    icon: <FileSpreadsheet className="h-5 w-5" />,
+    roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER],
+  },
+  {
+    name: 'Companies',
+    href: '/companies',
     icon: <Building2 className="h-5 w-5" />,
     roles: [UserRole.SUPER_ADMIN],
   },
@@ -70,6 +128,11 @@ const navigation: NavItem[] = [
     roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN],
     children: [
       { name: 'OT Rules', href: '/admin/ot-rules', icon: <Clock className="h-4 w-4" /> },
+      { name: 'Holidays', href: '/admin/holidays', icon: <CalendarDays className="h-4 w-4" /> },
+      { name: 'Shifts', href: '/admin/shifts', icon: <Timer className="h-4 w-4" /> },
+      { name: 'Announcements', href: '/admin/announcements', icon: <Megaphone className="h-4 w-4" /> },
+      { name: 'Expense Categories', href: '/admin/expense-categories', icon: <Tags className="h-4 w-4" /> },
+      { name: 'Onboarding Templates', href: '/admin/onboarding-templates', icon: <ClipboardList className="h-4 w-4" /> },
     ]
   },
 ];

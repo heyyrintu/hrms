@@ -48,4 +48,12 @@ dist
 
 # Next.js
 .next
+
+# Reserved filenames (Windows)
+NUL
+nul
+.claude/
 out
+
+# Uploads
+backend/uploads/

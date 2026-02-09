@@ -10,7 +10,7 @@ import {
   ArrowLeft, ArrowRight, Save, CheckCircle2, User, Phone, Users,
   GraduationCap, Building2, DollarSign
 } from 'lucide-react';
-import apiClient from '@/lib/api-client';
+import { employeesApi, departmentsApi } from '@/lib/api';
 import { Department, Employee, EmploymentType, EmployeeStatus, PayType } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -166,7 +166,7 @@ const steps = [
 
 export default function NewEmployeePage() {
   const router = useRouter();
-  const { tenant } = useAuth();
+  const { user } = useAuth();
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState<EmployeeFormData>(initialFormData);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -183,8 +183,8 @@ export default function NewEmployeePage() {
 
   const fetchDepartments = async () => {
     try {
-      const data = await apiClient.get<Department[]>('/departments');
-      setDepartments(data);
+      const response = await departmentsApi.getAll();
+      setDepartments(response.data);
     } catch (err) {
       console.error('Failed to fetch departments:', err);
     }
@@ -192,8 +192,9 @@ export default function NewEmployeePage() {
 
   const fetchManagers = async () => {
     try {
-      const data = await apiClient.get<Employee[]>('/employees');
-      setManagers(data.filter(emp => emp.id !== formData.managerId));
+      const response = await employeesApi.getAll();
+      const employees: Employee[] = response.data.data || response.data;
+      setManagers(employees.filter((emp: Employee) => emp.id !== formData.managerId));
     } catch (err) {
       console.error('Failed to fetch managers:', err);
     }
@@ -201,8 +202,9 @@ export default function NewEmployeePage() {
 
   const generateEmployeeCode = async () => {
     try {
-      const employees = await apiClient.get<Employee[]>('/employees');
-      const lastEmployee = employees.sort((a, b) => 
+      const response = await employeesApi.getAll();
+      const employees: Employee[] = response.data.data || response.data;
+      const lastEmployee = employees.sort((a: Employee, b: Employee) =>
         parseInt(b.employeeCode.replace(/\D/g, '')) - parseInt(a.employeeCode.replace(/\D/g, ''))
       )[0];
       
@@ -386,8 +388,9 @@ export default function NewEmployeePage() {
         firstName: formData.firstName,
         lastName: formData.lastName,
         employeeCode: formData.employeeCode,
+        email: formData.workEmail,
         gender: formData.gender,
-        dateOfBirth: new Date(formData.dateOfBirth),
+        dateOfBirth: formData.dateOfBirth ? new Date(formData.dateOfBirth) : undefined,
         fatherName: formData.fatherName || undefined,
         aadhaarNumber: formData.aadhaarNumber || undefined,
         maritalStatus: formData.maritalStatus || undefined,
@@ -425,8 +428,8 @@ export default function NewEmployeePage() {
         userRole: formData.createUser ? formData.userRole : undefined,
       };
 
-      await apiClient.post('/employees', payload);
-      
+      await employeesApi.create(payload);
+
       const successMessage = formData.createUser 
         ? 'Employee and user account created successfully!' 
         : 'Employee created successfully!';
@@ -577,8 +580,6 @@ export default function NewEmployeePage() {
                 >
                   <option value={EmployeeStatus.ACTIVE}>Active</option>
                   <option value={EmployeeStatus.INACTIVE}>Inactive</option>
-                  <option value={EmployeeStatus.ON_LEAVE}>On Leave</option>
-                  <option value={EmployeeStatus.TERMINATED}>Terminated</option>
                 </Select>
               </FormRow>
             </FormGrid>
@@ -841,9 +842,9 @@ export default function NewEmployeePage() {
             </h3>
             
             <FormGrid cols={2}>
-              <FormRow label="Company" required>
+              <FormRow label="Company">
                 <Input
-                  value={tenant?.name || ''}
+                  value={user?.tenantId || ''}
                   disabled
                   className="bg-gray-50"
                 />
@@ -1389,7 +1390,7 @@ export default function NewEmployeePage() {
           <div className="flex justify-between pt-6 mt-6 border-t">
             <Button
               type="button"
-              variant="outline"
+              variant="secondary"
               onClick={handlePrevious}
               disabled={currentStep === 1 || loading}
             >

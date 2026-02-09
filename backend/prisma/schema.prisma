@@ -31,6 +31,24 @@ model Tenant {
   leaveTypes        LeaveType[]
   leaveBalances     LeaveBalance[]
   leaveRequests     LeaveRequest[]
+  uploads           Upload[]
+  holidays          Holiday[]
+  shifts            Shift[]
+  shiftAssignments    ShiftAssignment[]
+  employeeDocuments   EmployeeDocument[]
+  employeeChangeReqs  EmployeeChangeRequest[]
+  notifications       Notification[]
+  announcements       Announcement[]
+  salaryStructures    SalaryStructure[]
+  employeeSalaries    EmployeeSalary[]
+  payrollRuns         PayrollRun[]
+  payslips            Payslip[]
+  expenseCategories   ExpenseCategory[]
+  expenseClaims       ExpenseClaim[]
+  onboardingTemplates OnboardingTemplate[]
+  onboardingProcesses OnboardingProcess[]
+  onboardingTasks     OnboardingTask[]
+  auditLogs           AuditLog[]
 
   @@map("tenants")
 }
@@ -55,8 +73,9 @@ model User {
   updatedAt    DateTime  @updatedAt
 
   // Relations
-  tenant   Tenant    @relation(fields: [tenantId], references: [id])
-  employee Employee? @relation(fields: [employeeId], references: [id])
+  tenant        Tenant         @relation(fields: [tenantId], references: [id])
+  employee      Employee?      @relation(fields: [employeeId], references: [id])
+  notifications Notification[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -118,6 +137,30 @@ model Employee {
   lastName       String
   email          String
   phone          String?
+  salutation     String?
+  gender         String?
+  dateOfBirth    DateTime?
+  fatherName     String?
+  aadhaarNumber  String?
+  maritalStatus  String?
+  bloodGroup     String?
+  mobileNumber   String?
+  workEmail      String?
+  personalEmail  String?
+  currentAddress   String?
+  currentCity      String?
+  currentState     String?
+  currentZipCode   String?
+  currentCountry   String?
+  permanentAddress String?
+  permanentCity    String?
+  permanentState   String?
+  permanentZipCode String?
+  permanentCountry String?
+  emergencyContactName     String?
+  emergencyContactNumber   String?
+  emergencyContactRelation String?
+  monthlySalary  Decimal?       @db.Decimal(12, 2)
   employmentType EmploymentType @default(PERMANENT)
   payType        PayType        @default(MONTHLY)
   hourlyRate     Decimal?       @db.Decimal(10, 2)
@@ -137,10 +180,21 @@ model Employee {
   manager           Employee?          @relation("EmployeeManager", fields: [managerId], references: [id])
   directReports     Employee[]         @relation("EmployeeManager")
   user              User?
-  attendanceRecords AttendanceRecord[]
-  leaveBalances     LeaveBalance[]
-  leaveRequests     LeaveRequest[]
-  approvedRequests  LeaveRequest[]     @relation("LeaveApprover")
+  attendanceRecords  AttendanceRecord[]
+  leaveBalances      LeaveBalance[]
+  leaveRequests      LeaveRequest[]
+  approvedRequests   LeaveRequest[]      @relation("LeaveApprover")
+  shiftAssignments   ShiftAssignment[]
+  documents          EmployeeDocument[]
+  changeRequests     EmployeeChangeRequest[]  @relation("ChangeRequestEmployee")
+  reviewedChanges    EmployeeChangeRequest[]  @relation("ChangeRequestReviewer")
+  announcements      Announcement[]
+  employeeSalaries   EmployeeSalary[]
+  payslips           Payslip[]
+  expenseClaims      ExpenseClaim[]
+  approvedExpenses   ExpenseClaim[]   @relation("ExpenseApprover")
+  onboardingProcesses OnboardingProcess[]
+  assignedTasks       OnboardingTask[]    @relation("TaskAssignee")
 
   @@unique([tenantId, employeeCode])
   @@unique([tenantId, email])
@@ -192,6 +246,7 @@ model AttendanceRecord {
   // Relations
   tenant   Tenant              @relation(fields: [tenantId], references: [id])
   employee Employee            @relation(fields: [employeeId], references: [id])
+  shift    Shift?              @relation(fields: [shiftId], references: [id])
   sessions AttendanceSession[]
 
   @@unique([tenantId, employeeId, date])
@@ -325,4 +380,581 @@ model LeaveRequest {
   @@index([employeeId])
   @@index([status])
   @@map("leave_requests")
+}
+
+// ============================================
+// FILE UPLOADS
+// ============================================
+
+model Upload {
+  id         String   @id @default(uuid())
+  tenantId   String
+  key        String   @unique
+  fileName   String
+  mimeType   String
+  size       Int
+  uploadedBy String
+  entityType String?
+  entityId   String?
+  createdAt  DateTime @default(now())
+
+  // Relations
+  tenant       Tenant             @relation(fields: [tenantId], references: [id])
+  documents    EmployeeDocument[]
+  expenseClaims ExpenseClaim[]
+
+  @@index([tenantId])
+  @@index([entityType, entityId])
+  @@map("uploads")
+}
+
+// ============================================
+// HOLIDAY CALENDAR
+// ============================================
+
+enum HolidayType {
+  NATIONAL
+  REGIONAL
+  COMPANY
+  OPTIONAL
+}
+
+model Holiday {
+  id          String      @id @default(uuid())
+  tenantId    String
+  name        String
+  date        DateTime    @db.Date
+  type        HolidayType @default(COMPANY)
+  region      String?
+  isOptional  Boolean     @default(false)
+  description String?
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, date, name])
+  @@index([tenantId])
+  @@index([date])
+  @@map("holidays")
+}
+
+// ============================================
+// SHIFT MANAGEMENT
+// ============================================
+
+model Shift {
+  id                  String   @id @default(uuid())
+  tenantId            String
+  name                String
+  code                String
+  startTime           String   // "09:00" HH:mm format
+  endTime             String   // "17:00"
+  breakMinutes        Int      @default(60)
+  standardWorkMinutes Int      @default(480)
+  graceMinutes        Int      @default(15)
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  // Relations
+  tenant            Tenant              @relation(fields: [tenantId], references: [id])
+  assignments       ShiftAssignment[]
+  attendanceRecords AttendanceRecord[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("shifts")
+}
+
+model ShiftAssignment {
+  id         String    @id @default(uuid())
+  tenantId   String
+  employeeId String
+  shiftId    String
+  startDate  DateTime  @db.Date
+  endDate    DateTime? @db.Date
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  // Relations
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
+  shift    Shift    @relation(fields: [shiftId], references: [id])
+
+  @@index([tenantId])
+  @@index([employeeId])
+  @@index([shiftId])
+  @@map("shift_assignments")
+}
+
+// ============================================
+// EMPLOYEE DOCUMENTS
+// ============================================
+
+enum DocumentCategory {
+  ID_PROOF
+  ADDRESS_PROOF
+  EDUCATION
+  EMPLOYMENT
+  CONTRACT
+  CERTIFICATE
+  TAX
+  OTHER
+}
+
+model EmployeeDocument {
+  id             String           @id @default(uuid())
+  tenantId       String
+  employeeId     String
+  uploadId       String
+  name           String
+  category       DocumentCategory @default(OTHER)
+  documentDate   DateTime?        @db.Date
+  expiryDate     DateTime?        @db.Date
+  isVerified     Boolean          @default(false)
+  verifiedBy     String?
+  verifiedAt     DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  // Relations
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
+  upload   Upload   @relation(fields: [uploadId], references: [id])
+
+  @@index([tenantId])
+  @@index([employeeId])
+  @@index([category])
+  @@map("employee_documents")
+}
+
+// ============================================
+// EMPLOYEE CHANGE REQUESTS (Self-Service)
+// ============================================
+
+enum ChangeRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model EmployeeChangeRequest {
+  id          String              @id @default(uuid())
+  tenantId    String
+  employeeId  String
+  fieldName   String
+  oldValue    String?
+  newValue    String
+  reason      String?
+  status      ChangeRequestStatus @default(PENDING)
+  reviewedBy  String?
+  reviewNote  String?
+  reviewedAt  DateTime?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  // Relations
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  employee Employee  @relation("ChangeRequestEmployee", fields: [employeeId], references: [id])
+  reviewer Employee? @relation("ChangeRequestReviewer", fields: [reviewedBy], references: [id])
+
+  @@index([tenantId])
+  @@index([employeeId])
+  @@index([status])
+  @@map("employee_change_requests")
+}
+
+// ============================================
+// NOTIFICATIONS
+// ============================================
+
+enum NotificationType {
+  LEAVE_APPROVED
+  LEAVE_REJECTED
+  OT_APPROVED
+  OT_REJECTED
+  CHANGE_REQUEST_APPROVED
+  CHANGE_REQUEST_REJECTED
+  DOCUMENT_VERIFIED
+  SHIFT_ASSIGNED
+  ANNOUNCEMENT
+  EXPENSE_APPROVED
+  EXPENSE_REJECTED
+  EXPENSE_REIMBURSED
+  ONBOARDING_TASK_ASSIGNED
+  ONBOARDING_COMPLETED
+  GENERAL
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  tenantId  String
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  link      String?
+  isRead    Boolean          @default(false)
+  metadata  Json?
+  createdAt DateTime         @default(now())
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([tenantId])
+  @@index([userId, isRead])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+// ============================================
+// ANNOUNCEMENTS
+// ============================================
+
+enum AnnouncementPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model Announcement {
+  id          String               @id @default(uuid())
+  tenantId    String
+  title       String
+  content     String
+  priority    AnnouncementPriority @default(NORMAL)
+  isPublished Boolean              @default(false)
+  publishedAt DateTime?
+  expiresAt   DateTime?
+  authorId    String
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  // Relations
+  tenant Tenant   @relation(fields: [tenantId], references: [id])
+  author Employee @relation(fields: [authorId], references: [id])
+
+  @@index([tenantId])
+  @@index([tenantId, isPublished])
+  @@map("announcements")
+}
+
+// ============================================
+// PAYROLL
+// ============================================
+
+enum PayrollRunStatus {
+  DRAFT
+  PROCESSING
+  COMPUTED
+  APPROVED
+  PAID
+}
+
+model SalaryStructure {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  description String?
+  components  Json     @default("[]") // [{name, type: "earning"|"deduction", calcType: "fixed"|"percentage", value}]
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant           Tenant           @relation(fields: [tenantId], references: [id])
+  employeeSalaries EmployeeSalary[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("salary_structures")
+}
+
+model EmployeeSalary {
+  id                 String    @id @default(uuid())
+  tenantId           String
+  employeeId         String
+  salaryStructureId  String
+  basePay            Decimal   @db.Decimal(12, 2)
+  effectiveFrom      DateTime  @db.Date
+  effectiveTo        DateTime? @db.Date
+  isActive           Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  // Relations
+  tenant          Tenant          @relation(fields: [tenantId], references: [id])
+  employee        Employee        @relation(fields: [employeeId], references: [id])
+  salaryStructure SalaryStructure @relation(fields: [salaryStructureId], references: [id])
+
+  @@index([tenantId])
+  @@index([employeeId])
+  @@index([salaryStructureId])
+  @@map("employee_salaries")
+}
+
+model PayrollRun {
+  id              String           @id @default(uuid())
+  tenantId        String
+  month           Int
+  year            Int
+  status          PayrollRunStatus @default(DRAFT)
+  totalGross      Decimal          @default(0) @db.Decimal(14, 2)
+  totalDeductions Decimal          @default(0) @db.Decimal(14, 2)
+  totalNet        Decimal          @default(0) @db.Decimal(14, 2)
+  processedCount  Int              @default(0)
+  remarks         String?
+  processedAt     DateTime?
+  approvedAt      DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  // Relations
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  payslips Payslip[]
+
+  @@unique([tenantId, month, year])
+  @@index([tenantId])
+  @@map("payroll_runs")
+}
+
+model Payslip {
+  id              String   @id @default(uuid())
+  tenantId        String
+  payrollRunId    String
+  employeeId      String
+  workingDays     Int      @default(0)
+  presentDays     Int      @default(0)
+  leaveDays       Int      @default(0)
+  lopDays         Int      @default(0)
+  otHours         Decimal  @default(0) @db.Decimal(6, 2)
+  basePay         Decimal  @default(0) @db.Decimal(12, 2)
+  earnings        Json     @default("[]") // [{name, amount}]
+  deductions      Json     @default("[]") // [{name, amount}]
+  grossPay        Decimal  @default(0) @db.Decimal(12, 2)
+  totalDeductions Decimal  @default(0) @db.Decimal(12, 2)
+  netPay          Decimal  @default(0) @db.Decimal(12, 2)
+  otPay           Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  tenant     Tenant     @relation(fields: [tenantId], references: [id])
+  payrollRun PayrollRun @relation(fields: [payrollRunId], references: [id])
+  employee   Employee   @relation(fields: [employeeId], references: [id])
+
+  @@unique([payrollRunId, employeeId])
+  @@index([tenantId])
+  @@index([payrollRunId])
+  @@index([employeeId])
+  @@map("payslips")
+}
+
+// ==========================================
+// Expense Management
+// ==========================================
+
+enum ExpenseClaimStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  REIMBURSED
+}
+
+model ExpenseCategory {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  code        String
+  description String?
+  maxAmount   Decimal? @db.Decimal(12, 2)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant Tenant         @relation(fields: [tenantId], references: [id])
+  claims ExpenseClaim[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("expense_categories")
+}
+
+model ExpenseClaim {
+  id           String             @id @default(uuid())
+  tenantId     String
+  employeeId   String
+  categoryId   String
+  amount       Decimal            @db.Decimal(12, 2)
+  description  String
+  expenseDate  DateTime           @db.Date
+  receiptId    String?
+  status       ExpenseClaimStatus @default(DRAFT)
+  approverId   String?
+  approverNote String?
+  approvedAt   DateTime?
+  reimbursedAt DateTime?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  // Relations
+  tenant   Tenant          @relation(fields: [tenantId], references: [id])
+  employee Employee        @relation(fields: [employeeId], references: [id])
+  category ExpenseCategory @relation(fields: [categoryId], references: [id])
+  receipt  Upload?         @relation(fields: [receiptId], references: [id])
+  approver Employee?       @relation("ExpenseApprover", fields: [approverId], references: [id])
+
+  @@index([tenantId])
+  @@index([employeeId])
+  @@index([status])
+  @@map("expense_claims")
+}
+
+// ==========================================
+// Onboarding / Offboarding
+// ==========================================
+
+enum OnboardingType {
+  ONBOARDING
+  OFFBOARDING
+}
+
+enum OnboardingProcessStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum OnboardingTaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
+}
+
+enum OnboardingTaskCategory {
+  IT_SETUP
+  HR_PAPERWORK
+  TRAINING
+  COMPLIANCE
+  FACILITIES
+  GENERAL
+}
+
+model OnboardingTemplate {
+  id          String         @id @default(uuid())
+  tenantId    String
+  name        String
+  type        OnboardingType @default(ONBOARDING)
+  description String?
+  tasks       Json           @default("[]")
+  isActive    Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  // Relations
+  tenant    Tenant              @relation(fields: [tenantId], references: [id])
+  processes OnboardingProcess[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("onboarding_templates")
+}
+
+model OnboardingProcess {
+  id          String                  @id @default(uuid())
+  tenantId    String
+  employeeId  String
+  templateId  String
+  type        OnboardingType          @default(ONBOARDING)
+  status      OnboardingProcessStatus @default(NOT_STARTED)
+  startDate   DateTime?               @db.Date
+  targetDate  DateTime?               @db.Date
+  completedAt DateTime?
+  notes       String?
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+
+  // Relations
+  tenant   Tenant             @relation(fields: [tenantId], references: [id])
+  employee Employee           @relation(fields: [employeeId], references: [id])
+  template OnboardingTemplate @relation(fields: [templateId], references: [id])
+  tasks    OnboardingTask[]
+
+  @@index([tenantId])
+  @@index([employeeId])
+  @@index([status])
+  @@map("onboarding_processes")
+}
+
+model OnboardingTask {
+  id          String                 @id @default(uuid())
+  tenantId    String
+  processId   String
+  title       String
+  description String?
+  category    OnboardingTaskCategory @default(GENERAL)
+  assigneeId  String?
+  status      OnboardingTaskStatus   @default(PENDING)
+  dueDate     DateTime?              @db.Date
+  completedAt DateTime?
+  sortOrder   Int                    @default(0)
+  notes       String?
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+
+  // Relations
+  tenant   Tenant            @relation(fields: [tenantId], references: [id])
+  process  OnboardingProcess @relation(fields: [processId], references: [id], onDelete: Cascade)
+  assignee Employee?         @relation("TaskAssignee", fields: [assigneeId], references: [id])
+
+  @@index([tenantId])
+  @@index([processId])
+  @@index([assigneeId])
+  @@index([status])
+  @@map("onboarding_tasks")
+}
+
+// ============================================
+// AUDIT TRAIL
+// ============================================
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+}
+
+model AuditLog {
+  id         String      @id @default(uuid())
+  tenantId   String
+  userId     String?
+  action     AuditAction
+  entityType String
+  entityId   String?
+  oldValues  Json?
+  newValues  Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime    @default(now())
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
 }

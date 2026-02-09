@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import toast from 'react-hot-toast';
 
 import { ApprovalCard } from '@/components/leave/ApprovalCard';
+import { BulkApprovalBar } from '@/components/leave/BulkApprovalBar';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { leaveApi } from '@/lib/api';
@@ -41,6 +43,9 @@ export default function LeaveApprovalsPage() {
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [leaveTypeFilter, setLeaveTypeFilter] = useState('all');
+    const [dateRangeFilter, setDateRangeFilter] = useState<'all' | 'week' | 'month'>('all');
+    const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [bulkActionLoading, setBulkActionLoading] = useState(false);
     const [stats, setStats] = useState({
         pending: 0,
         approvedToday: 0,
@@ -72,13 +77,67 @@ export default function LeaveApprovalsPage() {
     };
 
     const handleApprove = async (id: string, note?: string) => {
-        await leaveApi.approveRequest(id, note);
-        await loadData();
+        try {
+            await leaveApi.approveRequest(id, note);
+            toast.success('Leave request approved');
+            await loadData();
+        } catch (error: any) {
+            const message = error.response?.data?.message || 'Failed to approve leave request';
+            toast.error(message);
+        }
     };
 
     const handleReject = async (id: string, note?: string) => {
-        await leaveApi.rejectRequest(id, note);
-        await loadData();
+        try {
+            await leaveApi.rejectRequest(id, note);
+            toast.success('Leave request rejected');
+            await loadData();
+        } catch (error: any) {
+            const message = error.response?.data?.message || 'Failed to reject leave request';
+            toast.error(message);
+        }
+    };
+
+    const handleToggleSelect = (id: string) => {
+        setSelectedIds(prev =>
+            prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+        );
+    };
+
+    const handleSelectAll = () => {
+        if (selectedIds.length === filteredRequests.length) {
+            setSelectedIds([]);
+        } else {
+            setSelectedIds(filteredRequests.map(r => r.id));
+        }
+    };
+
+    const handleBulkApprove = async () => {
+        setBulkActionLoading(true);
+        try {
+            await Promise.all(selectedIds.map(id => leaveApi.approveRequest(id)));
+            toast.success(`${selectedIds.length} request${selectedIds.length > 1 ? 's' : ''} approved`);
+            setSelectedIds([]);
+            await loadData();
+        } catch (error) {
+            toast.error('Failed to approve some requests');
+        } finally {
+            setBulkActionLoading(false);
+        }
+    };
+
+    const handleBulkReject = async () => {
+        setBulkActionLoading(true);
+        try {
+            await Promise.all(selectedIds.map(id => leaveApi.rejectRequest(id)));
+            toast.success(`${selectedIds.length} request${selectedIds.length > 1 ? 's' : ''} rejected`);
+            setSelectedIds([]);
+            await loadData();
+        } catch (error) {
+            toast.error('Failed to reject some requests');
+        } finally {
+            setBulkActionLoading(false);
+        }
     };
 
     // Get unique leave types for filter
@@ -93,7 +152,25 @@ export default function LeaveApprovalsPage() {
 
         const matchesType = leaveTypeFilter === 'all' || req.leaveType.code === leaveTypeFilter;
 
-        return matchesSearch && matchesType;
+        // Date range filter
+        let matchesDateRange = true;
+        if (dateRangeFilter !== 'all') {
+            const startDate = new Date(req.startDate);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            if (dateRangeFilter === 'week') {
+                const weekFromNow = new Date(today);
+                weekFromNow.setDate(today.getDate() + 7);
+                matchesDateRange = startDate >= today && startDate <= weekFromNow;
+            } else if (dateRangeFilter === 'month') {
+                const monthFromNow = new Date(today);
+                monthFromNow.setMonth(today.getMonth() + 1);
+                matchesDateRange = startDate >= today && startDate <= monthFromNow;
+            }
+        }
+
+        return matchesSearch && matchesType && matchesDateRange;
     });
 
     return (
@@ -180,8 +257,32 @@ export default function LeaveApprovalsPage() {
                             <option key={type} value={type}>{type}</option>
                         ))}
                     </select>
+                    <select
+                        value={dateRangeFilter}
+                        onChange={(e) => setDateRangeFilter(e.target.value as any)}
+                        className="border border-gray-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                    >
+                        <option value="all">All Dates</option>
+                        <option value="week">Next 7 Days</option>
+                        <option value="month">Next 30 Days</option>
+                    </select>
                 </div>
             </div>
+
+            {/* Select All */}
+            {filteredRequests.length > 0 && (
+                <div className="flex items-center gap-2 px-2">
+                    <input
+                        type="checkbox"
+                        checked={selectedIds.length === filteredRequests.length && filteredRequests.length > 0}
+                        onChange={handleSelectAll}
+                        className="w-4 h-4 rounded border-gray-300 text-primary-600 focus:ring-2 focus:ring-primary-500 cursor-pointer"
+                    />
+                    <label className="text-sm text-gray-700 cursor-pointer" onClick={handleSelectAll}>
+                        Select all {filteredRequests.length} request{filteredRequests.length > 1 ? 's' : ''}
+                    </label>
+                </div>
+            )}
 
             {/* Approval Cards */}
             {loading ? (
@@ -206,16 +307,30 @@ export default function LeaveApprovalsPage() {
                     </CardContent>
                 </Card>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {filteredRequests.map((request) => (
-                        <ApprovalCard
-                            key={request.id}
-                            request={request}
-                            onApprove={handleApprove}
-                            onReject={handleReject}
-                        />
-                    ))}
-                </div>
+                <>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {filteredRequests.map((request) => (
+                            <ApprovalCard
+                                key={request.id}
+                                request={request}
+                                onApprove={handleApprove}
+                                onReject={handleReject}
+                                isSelected={selectedIds.includes(request.id)}
+                                onToggleSelect={handleToggleSelect}
+                                showUrgency={true}
+                            />
+                        ))}
+                    </div>
+
+                    {/* Bulk Approval Bar */}
+                    <BulkApprovalBar
+                        selectedCount={selectedIds.length}
+                        onApproveSelected={handleBulkApprove}
+                        onRejectSelected={handleBulkReject}
+                        onClearSelection={() => setSelectedIds([])}
+                        loading={bulkActionLoading}
+                    />
+                </>
             )}
         </div>
     );

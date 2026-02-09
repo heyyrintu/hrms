@@ -10,6 +10,7 @@ import {
   IsBoolean,
   MinLength,
   ValidateIf,
+  IsNotEmpty,
 } from 'class-validator';
 import { EmploymentType, PayType, EmployeeStatus, UserRole } from '@prisma/client';
 import { Type } from 'class-transformer';
@@ -24,12 +25,110 @@ export class CreateEmployeeDto {
   @IsString()
   lastName: string;
 
+  @IsOptional()
   @IsEmail()
-  email: string;
+  email?: string;
 
   @IsOptional()
   @IsString()
   phone?: string;
+
+  @IsOptional()
+  @IsString()
+  salutation?: string;
+
+  @IsOptional()
+  @IsString()
+  gender?: string;
+
+  @IsOptional()
+  @Type(() => Date)
+  dateOfBirth?: Date | string;
+
+  @IsOptional()
+  @IsString()
+  fatherName?: string;
+
+  @IsOptional()
+  @IsString()
+  aadhaarNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  maritalStatus?: string;
+
+  @IsOptional()
+  @IsString()
+  bloodGroup?: string;
+
+  @IsOptional()
+  @IsString()
+  mobileNumber?: string;
+
+  @IsOptional()
+  @IsEmail()
+  workEmail?: string;
+
+  @IsOptional()
+  @IsEmail()
+  personalEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  currentAddress?: string;
+
+  @IsOptional()
+  @IsString()
+  currentCity?: string;
+
+  @IsOptional()
+  @IsString()
+  currentState?: string;
+
+  @IsOptional()
+  @IsString()
+  currentZipCode?: string;
+
+  @IsOptional()
+  @IsString()
+  currentCountry?: string;
+
+  @IsOptional()
+  @IsString()
+  permanentAddress?: string;
+
+  @IsOptional()
+  @IsString()
+  permanentCity?: string;
+
+  @IsOptional()
+  @IsString()
+  permanentState?: string;
+
+  @IsOptional()
+  @IsString()
+  permanentZipCode?: string;
+
+  @IsOptional()
+  @IsString()
+  permanentCountry?: string;
+
+  @IsOptional()
+  @IsString()
+  emergencyContactName?: string;
+
+  @IsOptional()
+  @IsString()
+  emergencyContactNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  emergencyContactRelation?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  monthlySalary?: number;
 
   @IsOptional()
   @IsEnum(EmploymentType)
@@ -61,12 +160,13 @@ export class CreateEmployeeDto {
   @IsUUID()
   managerId?: string;
 
-  @IsDateString()
-  joinDate: string;
+  @IsNotEmpty()
+  @Type(() => Date)
+  joinDate: Date | string;
 
   @IsOptional()
-  @IsDateString()
-  exitDate?: string;
+  @Type(() => Date)
+  exitDate?: Date | string;
 
   @IsOptional()
   @IsEnum(EmployeeStatus)
@@ -108,6 +208,103 @@ export class UpdateEmployeeDto {
   @IsOptional()
   @IsString()
   phone?: string;
+
+  @IsOptional()
+  @IsString()
+  salutation?: string;
+
+  @IsOptional()
+  @IsString()
+  gender?: string;
+
+  @IsOptional()
+  @Type(() => Date)
+  dateOfBirth?: Date | string;
+
+  @IsOptional()
+  @IsString()
+  fatherName?: string;
+
+  @IsOptional()
+  @IsString()
+  aadhaarNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  maritalStatus?: string;
+
+  @IsOptional()
+  @IsString()
+  bloodGroup?: string;
+
+  @IsOptional()
+  @IsString()
+  mobileNumber?: string;
+
+  @IsOptional()
+  @IsEmail()
+  workEmail?: string;
+
+  @IsOptional()
+  @IsEmail()
+  personalEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  currentAddress?: string;
+
+  @IsOptional()
+  @IsString()
+  currentCity?: string;
+
+  @IsOptional()
+  @IsString()
+  currentState?: string;
+
+  @IsOptional()
+  @IsString()
+  currentZipCode?: string;
+
+  @IsOptional()
+  @IsString()
+  currentCountry?: string;
+
+  @IsOptional()
+  @IsString()
+  permanentAddress?: string;
+
+  @IsOptional()
+  @IsString()
+  permanentCity?: string;
+
+  @IsOptional()
+  @IsString()
+  permanentState?: string;
+
+  @IsOptional()
+  @IsString()
+  permanentZipCode?: string;
+
+  @IsOptional()
+  @IsString()
+  permanentCountry?: string;
+
+  @IsOptional()
+  @IsString()
+  emergencyContactName?: string;
+
+  @IsOptional()
+  @IsString()
+  emergencyContactNumber?: string;
+
+  @IsOptional()
+  @IsString()
+  emergencyContactRelation?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  monthlySalary?: number;
 
   @IsOptional()
   @IsEnum(EmploymentType)

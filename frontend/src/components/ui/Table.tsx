@@ -63,7 +63,7 @@ export function TableRow({ children, className, onClick }: TableRowProps) {
 }
 
 interface TableHeadProps {
-  children: ReactNode;
+  children?: ReactNode;
   className?: string;
 }
 

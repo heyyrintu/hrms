@@ -9,7 +9,7 @@ import {
   Modal, ModalFooter, FormRow, FormGrid, FormError, FormSuccess
 } from '@/components/ui';
 import { Search, Plus, Eye, Edit2, Trash2, UserPlus, Phone, Mail, Calendar, Building2, Users, Download, Filter, X, ChevronDown, ChevronUp } from 'lucide-react';
-import apiClient from '@/lib/api-client';
+import { employeesApi, departmentsApi } from '@/lib/api';
 import { Employee, Department, EmploymentType, EmployeeStatus, PayType, PaginatedResponse, UserRole } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -107,8 +107,8 @@ export default function EmployeesPage() {
 
   const loadDepartments = async () => {
     try {
-      const data = await apiClient.get<Department[]>('/departments');
-      setDepartments(data || []);
+      const response = await departmentsApi.getAll();
+      setDepartments(response.data || []);
     } catch (error) {
       console.error('Failed to load departments:', error);
     }
@@ -116,8 +116,8 @@ export default function EmployeesPage() {
 
   const loadAllEmployees = async () => {
     try {
-      const data = await apiClient.get<PaginatedResponse<Employee>>('/employees', { limit: 1000 });
-      setAllEmployees(data.data || []);
+      const response = await employeesApi.getAll({ limit: 1000 });
+      setAllEmployees(response.data.data || []);
     } catch (error) {
       console.error('Failed to load all employees:', error);
     }
@@ -136,7 +136,8 @@ export default function EmployeesPage() {
       if (selectedEmploymentType) params.employmentType = selectedEmploymentType;
       if (selectedStatus) params.status = selectedStatus;
 
-      const data = await apiClient.get<PaginatedResponse<Employee>>('/employees', params);
+      const response = await employeesApi.getAll(params);
+      const data = response.data;
       setEmployees(data.data || []);
       // Handle both meta object and flat structure
       setTotal(data.meta?.total ?? data.total ?? 0);
@@ -219,6 +220,18 @@ export default function EmployeesPage() {
       setFormError('Join date is required');
       return false;
     }
+    if (formData.exitDate && formData.exitDate < formData.joinDate) {
+      setFormError('Exit date must be after join date');
+      return false;
+    }
+    if (formData.hourlyRate && parseFloat(formData.hourlyRate) < 0) {
+      setFormError('Hourly rate cannot be negative');
+      return false;
+    }
+    if (formData.otMultiplier && parseFloat(formData.otMultiplier) < 0) {
+      setFormError('OT multiplier cannot be negative');
+      return false;
+    }
     return true;
   };
 
@@ -247,7 +260,7 @@ export default function EmployeesPage() {
         status: formData.status,
       };
 
-      await apiClient.post('/employees', payload);
+      await employeesApi.create(payload);
       setFormSuccess('Employee created successfully!');
       
       setTimeout(() => {
@@ -286,7 +299,7 @@ export default function EmployeesPage() {
         status: formData.status,
       };
 
-      await apiClient.put(`/employees/${selectedEmployee.id}`, payload);
+      await employeesApi.update(selectedEmployee.id, payload);
       setFormSuccess('Employee updated successfully!');
       
       setTimeout(() => {
@@ -308,7 +321,7 @@ export default function EmployeesPage() {
     setFormError('');
 
     try {
-      await apiClient.delete(`/employees/${selectedEmployee.id}`);
+      await employeesApi.delete(selectedEmployee.id);
       setIsDeleteModalOpen(false);
       loadEmployees();
       loadAllEmployees();

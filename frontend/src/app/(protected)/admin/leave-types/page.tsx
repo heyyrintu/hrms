@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { DashboardLayout } from '@/components/layout/DashboardLayout';
+
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
@@ -136,7 +136,7 @@ export default function LeaveTypesAdminPage() {
     };
 
     return (
-        <DashboardLayout>
+        <>
             <div className="space-y-6">
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -393,6 +393,6 @@ export default function LeaveTypesAdminPage() {
                     </Button>
                 </ModalFooter>
             </Modal>
-        </DashboardLayout>
+        </>
     );
 }

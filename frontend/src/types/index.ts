@@ -296,6 +296,130 @@ export interface CreateLeaveRequest {
 }
 
 // ============================================
+// HOLIDAY TYPES
+// ============================================
+
+export enum HolidayType {
+  NATIONAL = 'NATIONAL',
+  REGIONAL = 'REGIONAL',
+  COMPANY = 'COMPANY',
+  OPTIONAL = 'OPTIONAL',
+}
+
+export interface Holiday {
+  id: string;
+  tenantId: string;
+  name: string;
+  date: string;
+  type: HolidayType;
+  region?: string;
+  isOptional: boolean;
+  description?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ============================================
+// SHIFT TYPES
+// ============================================
+
+export interface Shift {
+  id: string;
+  tenantId: string;
+  name: string;
+  code: string;
+  startTime: string;
+  endTime: string;
+  breakMinutes: number;
+  standardWorkMinutes: number;
+  graceMinutes: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ShiftAssignment {
+  id: string;
+  tenantId: string;
+  employeeId: string;
+  shiftId: string;
+  startDate: string;
+  endDate?: string;
+  isActive: boolean;
+  employee?: { firstName: string; lastName: string; employeeCode: string };
+  shift?: { name: string; code: string; startTime?: string; endTime?: string };
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ============================================
+// DOCUMENT TYPES
+// ============================================
+
+export enum DocumentCategory {
+  ID_PROOF = 'ID_PROOF',
+  ADDRESS_PROOF = 'ADDRESS_PROOF',
+  EDUCATION = 'EDUCATION',
+  EMPLOYMENT = 'EMPLOYMENT',
+  CONTRACT = 'CONTRACT',
+  CERTIFICATE = 'CERTIFICATE',
+  TAX = 'TAX',
+  OTHER = 'OTHER',
+}
+
+export interface EmployeeDocument {
+  id: string;
+  tenantId: string;
+  employeeId: string;
+  uploadId: string;
+  name: string;
+  category: DocumentCategory;
+  documentDate?: string;
+  expiryDate?: string;
+  isVerified: boolean;
+  verifiedBy?: string;
+  verifiedAt?: string;
+  upload: {
+    fileName: string;
+    mimeType: string;
+    size: number;
+    key: string;
+  };
+  employee?: { firstName: string; lastName: string; employeeCode: string };
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ============================================
+// CHANGE REQUEST TYPES
+// ============================================
+
+export enum ChangeRequestStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+}
+
+export interface EmployeeChangeRequest {
+  id: string;
+  tenantId: string;
+  employeeId: string;
+  fieldName: string;
+  oldValue?: string;
+  newValue: string;
+  reason?: string;
+  status: ChangeRequestStatus;
+  reviewedBy?: string;
+  reviewNote?: string;
+  reviewedAt?: string;
+  employee?: { firstName: string; lastName: string; employeeCode: string };
+  reviewer?: { firstName: string; lastName: string };
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ============================================
 // DASHBOARD TYPES
 // ============================================
 
@@ -333,4 +457,326 @@ export interface ApiError {
   message: string;
   statusCode: number;
   error?: string;
+}
+
+// ============================================
+// NOTIFICATION TYPES
+// ============================================
+
+export enum NotificationType {
+  LEAVE_APPROVED = 'LEAVE_APPROVED',
+  LEAVE_REJECTED = 'LEAVE_REJECTED',
+  OT_APPROVED = 'OT_APPROVED',
+  OT_REJECTED = 'OT_REJECTED',
+  CHANGE_REQUEST_APPROVED = 'CHANGE_REQUEST_APPROVED',
+  CHANGE_REQUEST_REJECTED = 'CHANGE_REQUEST_REJECTED',
+  DOCUMENT_VERIFIED = 'DOCUMENT_VERIFIED',
+  SHIFT_ASSIGNED = 'SHIFT_ASSIGNED',
+  ANNOUNCEMENT = 'ANNOUNCEMENT',
+  GENERAL = 'GENERAL',
+}
+
+export interface Notification {
+  id: string;
+  tenantId: string;
+  userId: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  link?: string;
+  isRead: boolean;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
+// ============================================
+// ANNOUNCEMENT TYPES
+// ============================================
+
+export enum AnnouncementPriority {
+  LOW = 'LOW',
+  NORMAL = 'NORMAL',
+  HIGH = 'HIGH',
+  URGENT = 'URGENT',
+}
+
+export interface Announcement {
+  id: string;
+  tenantId: string;
+  title: string;
+  content: string;
+  priority: AnnouncementPriority;
+  isPublished: boolean;
+  publishedAt?: string;
+  expiresAt?: string;
+  authorId: string;
+  author?: { firstName: string; lastName: string };
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ============================================
+// REPORT TYPES
+// ============================================
+
+export enum ReportFormat {
+  CSV = 'csv',
+  XLSX = 'xlsx',
+}
+
+export enum ReportType {
+  ATTENDANCE = 'attendance',
+  LEAVE = 'leave',
+  EMPLOYEE = 'employee',
+}
+
+export interface AttendanceReportParams {
+  from: string;
+  to: string;
+  departmentId?: string;
+  employeeId?: string;
+  format?: ReportFormat;
+}
+
+export interface LeaveReportParams {
+  year?: string;
+  departmentId?: string;
+  employeeId?: string;
+  format?: ReportFormat;
+}
+
+export interface EmployeeReportParams {
+  departmentId?: string;
+  status?: string;
+  employmentType?: string;
+  format?: ReportFormat;
+}
+
+// ============================================
+// PAYROLL TYPES
+// ============================================
+
+export enum PayrollRunStatus {
+  DRAFT = 'DRAFT',
+  PROCESSING = 'PROCESSING',
+  COMPUTED = 'COMPUTED',
+  APPROVED = 'APPROVED',
+  PAID = 'PAID',
+}
+
+export interface SalaryComponent {
+  name: string;
+  type: 'earning' | 'deduction';
+  calcType: 'fixed' | 'percentage';
+  value: number;
+}
+
+export interface SalaryStructure {
+  id: string;
+  tenantId: string;
+  name: string;
+  description?: string;
+  components: SalaryComponent[];
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  _count?: { employeeSalaries: number };
+}
+
+export interface EmployeeSalary {
+  id: string;
+  tenantId: string;
+  employeeId: string;
+  salaryStructureId: string;
+  basePay: number;
+  effectiveFrom: string;
+  effectiveTo?: string;
+  isActive: boolean;
+  salaryStructure?: { id: string; name: string; components?: SalaryComponent[] };
+  employee?: { id: string; employeeCode: string; firstName: string; lastName: string };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PayrollRun {
+  id: string;
+  tenantId: string;
+  month: number;
+  year: number;
+  status: PayrollRunStatus;
+  totalGross: number;
+  totalDeductions: number;
+  totalNet: number;
+  processedCount: number;
+  remarks?: string;
+  processedAt?: string;
+  approvedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  _count?: { payslips: number };
+  payslips?: Payslip[];
+}
+
+export interface PayslipLineItem {
+  name: string;
+  amount: number;
+}
+
+export interface Payslip {
+  id: string;
+  tenantId: string;
+  payrollRunId: string;
+  employeeId: string;
+  workingDays: number;
+  presentDays: number;
+  leaveDays: number;
+  lopDays: number;
+  otHours: number;
+  basePay: number;
+  earnings: PayslipLineItem[];
+  deductions: PayslipLineItem[];
+  grossPay: number;
+  totalDeductions: number;
+  netPay: number;
+  otPay: number;
+  employee?: {
+    id: string;
+    employeeCode: string;
+    firstName: string;
+    lastName: string;
+    email?: string;
+    designation?: string;
+    department?: { name: string };
+    joinDate?: string;
+  };
+  payrollRun?: { month: number; year: number; status: PayrollRunStatus };
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ==========================================
+// Expense Management
+// ==========================================
+
+export type ExpenseClaimStatus = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'REIMBURSED';
+
+export interface ExpenseCategory {
+  id: string;
+  tenantId: string;
+  name: string;
+  code: string;
+  description?: string;
+  maxAmount?: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExpenseClaim {
+  id: string;
+  tenantId: string;
+  employeeId: string;
+  categoryId: string;
+  amount: number;
+  description: string;
+  expenseDate: string;
+  receiptId?: string;
+  status: ExpenseClaimStatus;
+  approverId?: string;
+  approverNote?: string;
+  approvedAt?: string;
+  reimbursedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  category?: { id: string; name: string; code: string };
+  employee?: {
+    id: string;
+    employeeCode: string;
+    firstName: string;
+    lastName: string;
+    designation?: string;
+    department?: { name: string };
+  };
+}
+
+// ==========================================
+// Onboarding / Offboarding
+// ==========================================
+
+export type OnboardingType = 'ONBOARDING' | 'OFFBOARDING';
+export type OnboardingProcessStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+export type OnboardingTaskStatus = 'PENDING' | 'IN_PROGRESS' | 'COMPLETED' | 'SKIPPED';
+export type OnboardingTaskCategory = 'IT_SETUP' | 'HR_PAPERWORK' | 'TRAINING' | 'COMPLIANCE' | 'FACILITIES' | 'GENERAL';
+
+export interface TaskDefinition {
+  title: string;
+  description?: string;
+  category: string;
+  defaultAssigneeRole?: string;
+  daysAfterStart?: number;
+  sortOrder: number;
+}
+
+export interface OnboardingTemplate {
+  id: string;
+  tenantId: string;
+  name: string;
+  type: OnboardingType;
+  description?: string;
+  tasks: TaskDefinition[];
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  _count?: { processes: number };
+}
+
+export interface OnboardingProcess {
+  id: string;
+  tenantId: string;
+  employeeId: string;
+  templateId: string;
+  type: OnboardingType;
+  status: OnboardingProcessStatus;
+  startDate?: string;
+  targetDate?: string;
+  completedAt?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  employee?: {
+    id: string;
+    employeeCode: string;
+    firstName: string;
+    lastName: string;
+    designation?: string;
+    department?: { name: string };
+  };
+  template?: { id: string; name: string; type: OnboardingType };
+  tasks?: OnboardingTask[];
+  _count?: { tasks: number };
+  completedTaskCount?: number;
+}
+
+export interface OnboardingTask {
+  id: string;
+  tenantId: string;
+  processId: string;
+  title: string;
+  description?: string;
+  category: OnboardingTaskCategory;
+  assigneeId?: string;
+  status: OnboardingTaskStatus;
+  dueDate?: string;
+  completedAt?: string;
+  sortOrder: number;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  assignee?: { id: string; firstName: string; lastName: string; employeeCode: string };
+  process?: {
+    id: string;
+    type: OnboardingType;
+    status: OnboardingProcessStatus;
+    employee?: { firstName: string; lastName: string };
+  };
 }

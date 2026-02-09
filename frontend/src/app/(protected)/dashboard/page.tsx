@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardHeader, CardTitle, CardContent, Button, Badge, getStatusBadgeVariant } from '@/components/ui';
 import { Clock, Calendar, Users, ClipboardCheck, TrendingUp, LogIn, LogOut } from 'lucide-react';
-import apiClient from '@/lib/api-client';
+import toast from 'react-hot-toast';
+import { api, attendanceApi, adminApi } from '@/lib/api';
 import { formatMinutesToHoursMinutes, formatTime, formatDateForApi, getStartOfMonth } from '@/lib/date-utils';
 import { AttendanceRecord, AttendanceSummary, DashboardStats, TodayAttendance } from '@/types';
 
@@ -38,6 +40,7 @@ function StatCard({ title, value, icon, description }: StatCardProps) {
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
   const { user, isManager, isAdmin } = useAuth();
   const [todayAttendance, setTodayAttendance] = useState<TodayAttendance | null>(null);
   const [monthlySummary, setMonthlySummary] = useState<AttendanceSummary | null>(null);
@@ -57,11 +60,30 @@ export default function DashboardPage() {
       // Load today's attendance
       const today = formatDateForApi(new Date());
       try {
-        const todayData = await apiClient.get<{ record?: AttendanceRecord; canClockIn: boolean; canClockOut: boolean }>('/attendance/today');
-        setTodayAttendance(todayData);
+        const todayData = await attendanceApi.getTodayStatus();
+        const data = todayData.data;
+        // Map backend response to frontend TodayAttendance format
+        // Backend returns: { status, clockedIn, clockInTime, clockOutTime, workedMinutes, ... }
+        // Frontend expects: { record, canClockIn, canClockOut }
+        const isClockedIn = data.clockedIn || false;
+        const hasClockInTime = !!data.clockInTime;
+        const hasClockOutTime = !!data.clockOutTime;
+        setTodayAttendance({
+          record: data.record || (hasClockInTime ? {
+            status: data.status,
+            clockInTime: data.clockInTime,
+            clockOutTime: data.clockOutTime,
+            workedMinutes: data.workedMinutes || 0,
+            otMinutesCalculated: data.otMinutesCalculated || 0,
+            otMinutesApproved: data.otMinutesApproved,
+          } as AttendanceRecord : undefined),
+          canClockIn: data.canClockIn ?? (!hasClockInTime || (!isClockedIn && hasClockOutTime)),
+          canClockOut: data.canClockOut ?? isClockedIn,
+        });
       } catch {
         // If endpoint doesn't exist, try getting attendance for today
-        const records = await apiClient.get<AttendanceRecord[]>('/attendance/me', { from: today, to: today });
+        const response = await attendanceApi.getMyAttendance(today, today);
+        const records = response.data;
         const record = records[0];
         setTodayAttendance({
           record,
@@ -73,19 +95,20 @@ export default function DashboardPage() {
       // Load monthly summary
       const startOfMonth = formatDateForApi(getStartOfMonth());
       try {
-        const summary = await apiClient.get<AttendanceSummary>('/attendance/summary', { from: startOfMonth, to: today });
-        setMonthlySummary(summary);
+        const summary = await attendanceApi.getSummary({ from: startOfMonth, to: today });
+        setMonthlySummary(summary.data);
       } catch {
         // Calculate from records if summary endpoint doesn't exist
-        const records = await apiClient.get<AttendanceRecord[]>('/attendance/me', { from: startOfMonth, to: today });
+        const response = await attendanceApi.getMyAttendance(startOfMonth, today);
+        const records: AttendanceRecord[] = response.data;
         const summary: AttendanceSummary = {
-          presentDays: records.filter(r => r.status === 'PRESENT').length,
-          absentDays: records.filter(r => r.status === 'ABSENT').length,
-          leaveDays: records.filter(r => r.status === 'LEAVE').length,
-          wfhDays: records.filter(r => r.status === 'WFH').length,
-          totalWorkedMinutes: records.reduce((sum, r) => sum + r.workedMinutes, 0),
-          totalOtMinutes: records.reduce((sum, r) => sum + r.otMinutesCalculated, 0),
-          totalApprovedOtMinutes: records.reduce((sum, r) => sum + (r.otMinutesApproved || 0), 0),
+          presentDays: records.filter((r: AttendanceRecord) => r.status === 'PRESENT').length,
+          absentDays: records.filter((r: AttendanceRecord) => r.status === 'ABSENT').length,
+          leaveDays: records.filter((r: AttendanceRecord) => r.status === 'LEAVE').length,
+          wfhDays: records.filter((r: AttendanceRecord) => r.status === 'WFH').length,
+          totalWorkedMinutes: records.reduce((sum: number, r: AttendanceRecord) => sum + r.workedMinutes, 0),
+          totalOtMinutes: records.reduce((sum: number, r: AttendanceRecord) => sum + r.otMinutesCalculated, 0),
+          totalApprovedOtMinutes: records.reduce((sum: number, r: AttendanceRecord) => sum + (r.otMinutesApproved || 0), 0),
         };
         setMonthlySummary(summary);
       }
@@ -93,8 +116,8 @@ export default function DashboardPage() {
       // Load dashboard stats for managers/admins
       if (isManager || isAdmin) {
         try {
-          const stats = await apiClient.get<DashboardStats>('/admin/dashboard');
-          setDashboardStats(stats);
+          const stats = await adminApi.getDashboard();
+          setDashboardStats(stats.data);
         } catch {
           // Stats endpoint might not exist
         }
@@ -109,11 +132,12 @@ export default function DashboardPage() {
   const handleClockIn = async () => {
     try {
       setClockingIn(true);
-      await apiClient.post('/attendance/clock-in');
+      await attendanceApi.clockIn();
+      toast.success('Clocked in successfully');
       await loadDashboardData();
-    } catch (error) {
-      console.error('Clock in failed:', error);
-      alert('Failed to clock in. Please try again.');
+    } catch (error: any) {
+      const message = error.response?.data?.message || 'Failed to clock in. Please try again.';
+      toast.error(message);
     } finally {
       setClockingIn(false);
     }
@@ -122,11 +146,12 @@ export default function DashboardPage() {
   const handleClockOut = async () => {
     try {
       setClockingOut(true);
-      await apiClient.post('/attendance/clock-out');
+      await attendanceApi.clockOut();
+      toast.success('Clocked out successfully');
       await loadDashboardData();
-    } catch (error) {
-      console.error('Clock out failed:', error);
-      alert('Failed to clock out. Please try again.');
+    } catch (error: any) {
+      const message = error.response?.data?.message || 'Failed to clock out. Please try again.';
+      toast.error(message);
     } finally {
       setClockingOut(false);
     }
@@ -288,12 +313,12 @@ export default function DashboardPage() {
               <CardContent className="p-4">
                 <div className="flex flex-wrap gap-3">
                   {dashboardStats.pendingLeaveRequests > 0 && (
-                    <Button variant="secondary" onClick={() => window.location.href = '/approvals/leave'}>
+                    <Button variant="secondary" onClick={() => router.push('/approvals/leave')}>
                       Review {dashboardStats.pendingLeaveRequests} Leave Request{dashboardStats.pendingLeaveRequests > 1 ? 's' : ''}
                     </Button>
                   )}
                   {dashboardStats.pendingOtApprovals > 0 && (
-                    <Button variant="secondary" onClick={() => window.location.href = '/approvals/ot'}>
+                    <Button variant="secondary" onClick={() => router.push('/approvals/ot')}>
                       Review {dashboardStats.pendingOtApprovals} OT Approval{dashboardStats.pendingOtApprovals > 1 ? 's' : ''}
                     </Button>
                   )}

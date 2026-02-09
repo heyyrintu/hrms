@@ -8,6 +8,10 @@ export class LoginDto {
   @IsString()
   @MinLength(6)
   password: string;
+
+  @IsOptional()
+  @IsString()
+  tenantId?: string;
 }
 
 export class RegisterDto {

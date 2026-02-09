@@ -10,6 +10,7 @@ import {
   UseGuards,
   BadRequestException,
 } from '@nestjs/common';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { LeaveService } from './leave.service';
 import {
   CreateLeaveRequestDto,
@@ -29,6 +30,8 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { UserRole } from '@prisma/client';
 
+@ApiTags('leave')
+@ApiBearerAuth()
 @Controller('leave')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class LeaveController {
@@ -130,7 +133,7 @@ export class LeaveController {
     if (!user.employeeId) {
       throw new BadRequestException('User is not linked to an employee');
     }
-    return this.leaveService.approveRequest(user.tenantId, id, user.employeeId, dto);
+    return this.leaveService.approveRequest(user.tenantId, id, user.employeeId, user.role, dto);
   }
 
   /**
@@ -147,7 +150,7 @@ export class LeaveController {
     if (!user.employeeId) {
       throw new BadRequestException('User is not linked to an employee');
     }
-    return this.leaveService.rejectRequest(user.tenantId, id, user.employeeId, dto);
+    return this.leaveService.rejectRequest(user.tenantId, id, user.employeeId, user.role, dto);
   }
 
   // ==========================================

@@ -37,12 +37,27 @@ interface ApprovalCardProps {
     request: LeaveRequest;
     onApprove: (id: string, note?: string) => Promise<void>;
     onReject: (id: string, note?: string) => Promise<void>;
+    isSelected?: boolean;
+    onToggleSelect?: (id: string) => void;
+    showUrgency?: boolean;
 }
 
-export function ApprovalCard({ request, onApprove, onReject }: ApprovalCardProps) {
+export function ApprovalCard({ request, onApprove, onReject, isSelected, onToggleSelect, showUrgency }: ApprovalCardProps) {
     const [modalType, setModalType] = useState<'approve' | 'reject' | null>(null);
     const [note, setNote] = useState('');
     const [loading, setLoading] = useState(false);
+
+    // Calculate days until leave starts
+    const getDaysUntilStart = (): number => {
+        const start = new Date(request.startDate);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const diffTime = start.getTime() - today.getTime();
+        return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    };
+
+    const daysUntil = getDaysUntilStart();
+    const isUrgent = showUrgency && daysUntil >= 0 && daysUntil <= 3;
 
     const handleAction = async () => {
         setLoading(true);
@@ -73,7 +88,10 @@ export function ApprovalCard({ request, onApprove, onReject }: ApprovalCardProps
 
     return (
         <>
-            <Card className="hover:shadow-md transition-shadow">
+            <Card className={cn(
+                'hover:shadow-md transition-shadow',
+                isSelected && 'ring-2 ring-primary-500'
+            )}>
                 <CardContent className="p-0">
                     {/* Header - Leave Type */}
                     <div className={cn(
@@ -81,10 +99,28 @@ export function ApprovalCard({ request, onApprove, onReject }: ApprovalCardProps
                         getLeaveTypeColor(request.leaveType.code)
                     )}>
                         <div className="flex items-center justify-between">
-                            <span className="font-semibold">{request.leaveType.name}</span>
-                            <span className={cn('badge', getStatusColor(request.status))}>
-                                {request.status}
-                            </span>
+                            <div className="flex items-center gap-2">
+                                {onToggleSelect && (
+                                    <input
+                                        type="checkbox"
+                                        checked={isSelected}
+                                        onChange={() => onToggleSelect(request.id)}
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="w-4 h-4 rounded border-white/30 bg-white/20 text-primary-600 focus:ring-2 focus:ring-white/50 cursor-pointer"
+                                    />
+                                )}
+                                <span className="font-semibold">{request.leaveType.name}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                {isUrgent && (
+                                    <span className="px-2 py-1 text-xs bg-red-100 text-red-700 rounded font-medium">
+                                        Starts in {daysUntil} day{daysUntil !== 1 ? 's' : ''}
+                                    </span>
+                                )}
+                                <span className={cn('badge', getStatusColor(request.status))}>
+                                    {request.status}
+                                </span>
+                            </div>
                         </div>
                     </div>
 

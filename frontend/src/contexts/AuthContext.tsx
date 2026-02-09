@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User, AuthResponse, LoginCredentials, UserRole } from '@/types';
-import apiClient from '@/lib/api-client';
+import { api, authApi } from '@/lib/api';
 
 interface AuthContextType {
   user: User | null;
@@ -34,20 +34,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (storedToken && storedUser) {
           setToken(storedToken);
           setUser(JSON.parse(storedUser));
-          apiClient.setToken(storedToken);
 
           // Optionally verify token with backend
           try {
-            const freshUser = await apiClient.get<User>('/auth/me');
-            setUser(freshUser);
-            localStorage.setItem('hrms_user', JSON.stringify(freshUser));
+            const response = await authApi.getProfile();
+            setUser(response.data);
+            localStorage.setItem('hrms_user', JSON.stringify(response.data));
           } catch {
             // Token invalid, clear auth state
             localStorage.removeItem('hrms_token');
             localStorage.removeItem('hrms_user');
             setToken(null);
             setUser(null);
-            apiClient.setToken(null);
           }
         }
       } catch (error) {
@@ -61,20 +59,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const login = useCallback(async (credentials: LoginCredentials) => {
-    const response = await apiClient.post<AuthResponse>('/auth/login', credentials);
-    
-    const { accessToken, user: userData } = response;
-    
+    const response = await authApi.login(credentials.email, credentials.password);
+
+    const { accessToken, user: userData } = response.data;
+
     // Store in state
     setToken(accessToken);
     setUser(userData);
-    
+
     // Store in localStorage
     localStorage.setItem('hrms_token', accessToken);
     localStorage.setItem('hrms_user', JSON.stringify(userData));
-    
-    // Set token in API client
-    apiClient.setToken(accessToken);
   }, []);
 
   const logout = useCallback(() => {
@@ -82,7 +77,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     localStorage.removeItem('hrms_token');
     localStorage.removeItem('hrms_user');
-    apiClient.setToken(null);
   }, []);
 
   const hasRole = useCallback((...roles: UserRole[]) => {

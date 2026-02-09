@@ -4,11 +4,21 @@ import { cn } from '@/lib/utils';
 interface FormRowProps {
   children: ReactNode;
   className?: string;
+  label?: string;
+  required?: boolean;
+  colSpan?: number;
 }
 
-export function FormRow({ children, className }: FormRowProps) {
+export function FormRow({ children, className, label, required, colSpan }: FormRowProps) {
+  const colSpanClass = colSpan ? `md:col-span-${colSpan}` : '';
   return (
-    <div className={cn('mb-4', className)}>
+    <div className={cn('mb-4', colSpanClass, className)}>
+      {label && (
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          {label}
+          {required && <span className="text-red-500 ml-1">*</span>}
+        </label>
+      )}
       {children}
     </div>
   );

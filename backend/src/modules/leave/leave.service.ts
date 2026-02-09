@@ -3,8 +3,11 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '@prisma/client';
 import {
   CreateLeaveRequestDto,
   ApproveLeaveDto,
@@ -19,7 +22,10 @@ import { Decimal } from '@prisma/client/runtime/library';
 
 @Injectable()
 export class LeaveService {
-  constructor(private prisma: PrismaService) { }
+  constructor(
+    private prisma: PrismaService,
+    private notificationsService: NotificationsService,
+  ) {}
 
   /**
    * Get leave balances for an employee
@@ -239,15 +245,34 @@ export class LeaveService {
     tenantId: string,
     requestId: string,
     approverId: string,
+    approverRole: string,
     dto: ApproveLeaveDto,
   ) {
     const request = await this.prisma.leaveRequest.findFirst({
       where: { id: requestId, tenantId, status: 'PENDING' },
+      include: {
+        employee: {
+          select: {
+            id: true,
+            managerId: true,
+          },
+        },
+      },
     });
 
     if (!request) {
       throw new NotFoundException('Leave request not found or already processed');
     }
+
+    // Authorization check: Managers can only approve their direct reports' leaves
+    if (approverRole === 'MANAGER') {
+      if (request.employee.managerId !== approverId) {
+        throw new ForbiddenException(
+          'You can only approve leave requests for your direct reports',
+        );
+      }
+    }
+    // SUPER_ADMIN and HR_ADMIN can approve any leave request
 
     // Update request
     const updated = await this.prisma.leaveRequest.update({
@@ -287,6 +312,16 @@ export class LeaveService {
     // Mark attendance as LEAVE for the leave dates
     await this.markAttendanceAsLeave(tenantId, request.employeeId, request.startDate, request.endDate);
 
+    // Notify the employee
+    this.notificationsService.notifyEmployee(
+      tenantId,
+      request.employeeId,
+      NotificationType.LEAVE_APPROVED,
+      'Leave Request Approved',
+      `Your ${updated.leaveType.name} leave (${updated.totalDays} day(s)) has been approved.`,
+      '/leave',
+    ).catch(() => {}); // Fire and forget
+
     return updated;
   }
 
@@ -297,15 +332,34 @@ export class LeaveService {
     tenantId: string,
     requestId: string,
     approverId: string,
+    approverRole: string,
     dto: RejectLeaveDto,
   ) {
     const request = await this.prisma.leaveRequest.findFirst({
       where: { id: requestId, tenantId, status: 'PENDING' },
+      include: {
+        employee: {
+          select: {
+            id: true,
+            managerId: true,
+          },
+        },
+      },
     });
 
     if (!request) {
       throw new NotFoundException('Leave request not found or already processed');
     }
+
+    // Authorization check: Managers can only reject their direct reports' leaves
+    if (approverRole === 'MANAGER') {
+      if (request.employee.managerId !== approverId) {
+        throw new ForbiddenException(
+          'You can only reject leave requests for your direct reports',
+        );
+      }
+    }
+    // SUPER_ADMIN and HR_ADMIN can reject any leave request
 
     // Update request
     const updated = await this.prisma.leaveRequest.update({
@@ -339,6 +393,16 @@ export class LeaveService {
         },
       });
     }
+
+    // Notify the employee
+    this.notificationsService.notifyEmployee(
+      tenantId,
+      request.employeeId,
+      NotificationType.LEAVE_REJECTED,
+      'Leave Request Rejected',
+      `Your ${updated.leaveType.name} leave (${updated.totalDays} day(s)) has been rejected.${dto.approverNote ? ' Note: ' + dto.approverNote : ''}`,
+      '/leave',
+    ).catch(() => {}); // Fire and forget
 
     return updated;
   }

@@ -87,10 +87,18 @@ export class AuthService {
    * Login with email and password
    */
   async login(dto: LoginDto): Promise<AuthResponseDto> {
-    // Find user by email (need to check across tenants in dev mode)
+    // Determine tenant ID - use provided tenantId or default
+    const tenantId = dto.tenantId || this.configService.get<string>('DEFAULT_TENANT_ID');
+
+    if (!tenantId) {
+      throw new UnauthorizedException('Tenant ID is required');
+    }
+
+    // Find user by email and tenantId for proper tenant isolation
     const user = await this.prisma.user.findFirst({
       where: {
         email: dto.email,
+        tenantId: tenantId,
         isActive: true,
       },
     });

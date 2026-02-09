@@ -77,8 +77,9 @@ export const attendanceApi = {
     api.get('/attendance/summary', { params }),
   getPayableHours: (employeeId: string, from: string, to: string) =>
     api.get(`/attendance/${employeeId}/payable`, { params: { from, to } }),
-  approveOt: (id: string, otMinutesApproved: number) =>
-    api.post(`/attendance/${id}/approve-ot`, { otMinutesApproved }),
+  getPendingOtApprovals: () => api.get('/attendance/pending-ot-approvals'),
+  approveOt: (id: string, otMinutesApproved: number, remarks?: string) =>
+    api.post(`/attendance/${id}/approve-ot`, { otMinutesApproved, remarks }),
   createManual: (data: Record<string, unknown>) => api.post('/attendance/manual', data),
 };
 
@@ -118,6 +119,91 @@ export const leaveApi = {
     api.get('/leave/admin/analytics', { params: year ? { year } : {} }),
 };
 
+// Holidays API
+export const holidaysApi = {
+  getAll: (params?: Record<string, unknown>) => api.get('/holidays', { params }),
+  getUpcoming: (limit?: number) =>
+    api.get('/holidays/upcoming', { params: limit ? { limit } : {} }),
+  getById: (id: string) => api.get(`/holidays/${id}`),
+  create: (data: Record<string, unknown>) => api.post('/holidays', data),
+  bulkCreate: (holidays: Record<string, unknown>[]) =>
+    api.post('/holidays/bulk', { holidays }),
+  update: (id: string, data: Record<string, unknown>) => api.put(`/holidays/${id}`, data),
+  delete: (id: string) => api.delete(`/holidays/${id}`),
+};
+
+// Shifts API
+export const shiftsApi = {
+  getAll: () => api.get('/shifts'),
+  getById: (id: string) => api.get(`/shifts/${id}`),
+  create: (data: Record<string, unknown>) => api.post('/shifts', data),
+  update: (id: string, data: Record<string, unknown>) => api.put(`/shifts/${id}`, data),
+  delete: (id: string) => api.delete(`/shifts/${id}`),
+  getAssignments: (activeOnly?: boolean) =>
+    api.get('/shifts/assignments/list', { params: { activeOnly } }),
+  assignShift: (data: Record<string, unknown>) => api.post('/shifts/assignments', data),
+  bulkAssignShift: (data: Record<string, unknown>) => api.post('/shifts/assignments/bulk', data),
+  getEmployeeShiftHistory: (employeeId: string) =>
+    api.get(`/shifts/assignments/employee/${employeeId}`),
+};
+
+// Documents API
+export const documentsApi = {
+  getByEmployee: (employeeId: string, params?: Record<string, unknown>) =>
+    api.get(`/employees/${employeeId}/documents`, { params }),
+  upload: (employeeId: string, formData: FormData) =>
+    api.post(`/employees/${employeeId}/documents`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  getById: (employeeId: string, docId: string) =>
+    api.get(`/employees/${employeeId}/documents/${docId}`),
+  download: (employeeId: string, docId: string) =>
+    api.get(`/employees/${employeeId}/documents/${docId}/download`, {
+      responseType: 'blob',
+    }),
+  verify: (employeeId: string, docId: string) =>
+    api.post(`/employees/${employeeId}/documents/${docId}/verify`),
+  delete: (employeeId: string, docId: string) =>
+    api.delete(`/employees/${employeeId}/documents/${docId}`),
+};
+
+// Self-Service API
+export const selfServiceApi = {
+  getProfile: () => api.get('/self-service/profile'),
+  createChangeRequest: (data: Record<string, unknown>) =>
+    api.post('/self-service/change-requests', data),
+  getMyChangeRequests: () => api.get('/self-service/change-requests'),
+
+  // Admin
+  getPendingReviews: () => api.get('/self-service/admin/change-requests/pending'),
+  getAllChangeRequests: (params?: Record<string, unknown>) =>
+    api.get('/self-service/admin/change-requests', { params }),
+  reviewChangeRequest: (id: string, data: Record<string, unknown>) =>
+    api.post(`/self-service/admin/change-requests/${id}/review`, data),
+};
+
+// Notifications API
+export const notificationsApi = {
+  getAll: (params?: Record<string, unknown>) =>
+    api.get('/notifications', { params }),
+  getUnreadCount: () => api.get('/notifications/unread-count'),
+  markAsRead: (id: string) => api.post(`/notifications/${id}/read`),
+  markAllAsRead: () => api.post('/notifications/read-all'),
+  delete: (id: string) => api.delete(`/notifications/${id}`),
+};
+
+// Announcements API
+export const announcementsApi = {
+  getActive: () => api.get('/announcements/active'),
+  getAll: (params?: Record<string, unknown>) =>
+    api.get('/announcements', { params }),
+  getById: (id: string) => api.get(`/announcements/${id}`),
+  create: (data: Record<string, unknown>) => api.post('/announcements', data),
+  update: (id: string, data: Record<string, unknown>) =>
+    api.put(`/announcements/${id}`, data),
+  delete: (id: string) => api.delete(`/announcements/${id}`),
+};
+
 // Admin API
 export const adminApi = {
   getDashboard: () => api.get('/admin/dashboard'),
@@ -127,4 +213,95 @@ export const adminApi = {
   updateOtRule: (id: string, data: Record<string, unknown>) =>
     api.put(`/admin/settings/ot-rules/${id}`, data),
   deleteOtRule: (id: string) => api.delete(`/admin/settings/ot-rules/${id}`),
+};
+
+// Payroll API
+export const payrollApi = {
+  // Salary Structures
+  getStructures: () => api.get('/payroll/structures'),
+  getStructure: (id: string) => api.get(`/payroll/structures/${id}`),
+  createStructure: (data: Record<string, unknown>) => api.post('/payroll/structures', data),
+  updateStructure: (id: string, data: Record<string, unknown>) =>
+    api.put(`/payroll/structures/${id}`, data),
+  deleteStructure: (id: string) => api.delete(`/payroll/structures/${id}`),
+
+  // Employee Salary
+  getEmployeeSalary: (employeeId: string) =>
+    api.get(`/payroll/employees/${employeeId}/salary`),
+  assignSalary: (employeeId: string, data: Record<string, unknown>) =>
+    api.post(`/payroll/employees/${employeeId}/salary`, data),
+
+  // Payroll Runs
+  getRuns: (params?: Record<string, unknown>) => api.get('/payroll/runs', { params }),
+  getRun: (id: string) => api.get(`/payroll/runs/${id}`),
+  createRun: (data: Record<string, unknown>) => api.post('/payroll/runs', data),
+  processRun: (id: string) => api.post(`/payroll/runs/${id}/process`),
+  approveRun: (id: string) => api.post(`/payroll/runs/${id}/approve`),
+  markAsPaid: (id: string) => api.post(`/payroll/runs/${id}/pay`),
+  deleteRun: (id: string) => api.delete(`/payroll/runs/${id}`),
+
+  // Payslips
+  getPayslipsForRun: (runId: string, params?: Record<string, unknown>) =>
+    api.get(`/payroll/runs/${runId}/payslips`, { params }),
+  getMyPayslips: () => api.get('/payroll/my-payslips'),
+  getPayslip: (id: string) => api.get(`/payroll/payslips/${id}`),
+};
+
+// Reports API
+export const reportsApi = {
+  generateAttendance: (data: Record<string, unknown>) =>
+    api.post('/reports/attendance', data, { responseType: 'blob' }),
+  generateLeave: (data: Record<string, unknown>) =>
+    api.post('/reports/leave', data, { responseType: 'blob' }),
+  generateEmployees: (data: Record<string, unknown>) =>
+    api.post('/reports/employees', data, { responseType: 'blob' }),
+};
+
+// Expenses API
+export const expensesApi = {
+  // Categories (Admin)
+  getCategories: () => api.get('/expenses/categories'),
+  createCategory: (data: Record<string, unknown>) => api.post('/expenses/categories', data),
+  updateCategory: (id: string, data: Record<string, unknown>) => api.put(`/expenses/categories/${id}`, data),
+  deleteCategory: (id: string) => api.delete(`/expenses/categories/${id}`),
+
+  // My Claims
+  getMyClaims: (params?: Record<string, string>) => api.get('/expenses/my-claims', { params }),
+  createClaim: (data: Record<string, unknown>) => api.post('/expenses/claims', data),
+  updateClaim: (id: string, data: Record<string, unknown>) => api.put(`/expenses/claims/${id}`, data),
+  submitClaim: (id: string) => api.post(`/expenses/claims/${id}/submit`),
+  deleteClaim: (id: string) => api.delete(`/expenses/claims/${id}`),
+
+  // Approvals
+  getPendingApprovals: (params?: Record<string, string>) => api.get('/expenses/pending-approvals', { params }),
+  getAllClaims: (params?: Record<string, string>) => api.get('/expenses/all-claims', { params }),
+  approveClaim: (id: string, data?: Record<string, unknown>) => api.post(`/expenses/claims/${id}/approve`, data),
+  rejectClaim: (id: string, data?: Record<string, unknown>) => api.post(`/expenses/claims/${id}/reject`, data),
+  markReimbursed: (id: string) => api.post(`/expenses/claims/${id}/reimburse`),
+};
+
+// Onboarding API
+export const onboardingApi = {
+  // Templates (Admin)
+  getTemplates: () => api.get('/onboarding/templates'),
+  getTemplate: (id: string) => api.get(`/onboarding/templates/${id}`),
+  createTemplate: (data: Record<string, unknown>) => api.post('/onboarding/templates', data),
+  updateTemplate: (id: string, data: Record<string, unknown>) =>
+    api.put(`/onboarding/templates/${id}`, data),
+  deleteTemplate: (id: string) => api.delete(`/onboarding/templates/${id}`),
+
+  // Processes (Admin)
+  getProcesses: (params?: Record<string, string>) =>
+    api.get('/onboarding/processes', { params }),
+  getProcess: (id: string) => api.get(`/onboarding/processes/${id}`),
+  createProcess: (data: Record<string, unknown>) => api.post('/onboarding/processes', data),
+  cancelProcess: (id: string) => api.post(`/onboarding/processes/${id}/cancel`),
+  deleteProcess: (id: string) => api.delete(`/onboarding/processes/${id}`),
+
+  // Tasks
+  getMyTasks: (params?: Record<string, string>) =>
+    api.get('/onboarding/my-tasks', { params }),
+  updateTask: (id: string, data: Record<string, unknown>) =>
+    api.put(`/onboarding/tasks/${id}`, data),
+  completeTask: (id: string) => api.post(`/onboarding/tasks/${id}/complete`),
 };
