@@ -9,7 +9,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AttendanceService } from './attendance.service';
 import {
   ClockInDto,
@@ -43,6 +43,9 @@ export class AttendanceController {
    * POST /api/attendance/clock-in
    */
   @Post('clock-in')
+  @ApiOperation({ summary: 'Clock in for employee' })
+  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async clockIn(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: ClockInDto,
@@ -58,6 +61,9 @@ export class AttendanceController {
    * POST /api/attendance/clock-out
    */
   @Post('clock-out')
+  @ApiOperation({ summary: 'Clock out for employee' })
+  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async clockOut(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: ClockOutDto,
@@ -73,6 +79,9 @@ export class AttendanceController {
    * GET /api/attendance/today
    */
   @Get('today')
+  @ApiOperation({ summary: 'Get today attendance status' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getTodayStatus(@CurrentUser() user: AuthenticatedUser) {
     if (!user.employeeId) {
       throw new BadRequestException('User is not linked to an employee');
@@ -85,6 +94,9 @@ export class AttendanceController {
    * GET /api/attendance/me
    */
   @Get('me')
+  @ApiOperation({ summary: 'Get my attendance records' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getMyAttendance(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: AttendanceQueryDto,
@@ -100,6 +112,10 @@ export class AttendanceController {
    * GET /api/attendance/summary
    */
   @Get('summary')
+  @ApiOperation({ summary: 'Get attendance summary' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
   async getAttendanceSummary(
     @CurrentUser() user: AuthenticatedUser,
@@ -113,6 +129,10 @@ export class AttendanceController {
    * POST /api/attendance/manual
    */
   @Post('manual')
+  @ApiOperation({ summary: 'Create manual attendance entry' })
+  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async createManualAttendance(
     @CurrentUser() user: AuthenticatedUser,
@@ -126,6 +146,11 @@ export class AttendanceController {
    * GET /api/attendance/:employeeId
    */
   @Get(':employeeId')
+  @ApiOperation({ summary: 'Get employee attendance records' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
   async getEmployeeAttendance(
     @CurrentUser() user: AuthenticatedUser,
@@ -161,6 +186,11 @@ export class AttendanceController {
    * GET /api/attendance/:employeeId/payable
    */
   @Get(':employeeId/payable')
+  @ApiOperation({ summary: 'Get employee payable hours' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
   async getPayableHours(
     @CurrentUser() user: AuthenticatedUser,
@@ -196,6 +226,10 @@ export class AttendanceController {
    * GET /api/attendance/pending-ot-approvals
    */
   @Get('pending-ot-approvals')
+  @ApiOperation({ summary: 'Get pending OT approvals' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
   async getPendingOtApprovals(@CurrentUser() user: AuthenticatedUser) {
     return this.attendanceService.getPendingOtApprovals(user);
@@ -206,6 +240,11 @@ export class AttendanceController {
    * POST /api/attendance/:id/approve-ot
    */
   @Post(':id/approve-ot')
+  @ApiOperation({ summary: 'Approve overtime for attendance' })
+  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
   async approveOt(
     @CurrentUser() user: AuthenticatedUser,

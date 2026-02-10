@@ -37,7 +37,7 @@ export default function LoginPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary-600 border-t-transparent" />
+        <div className="h-8 w-8 animate-spin rounded-full border-[3px] border-primary-500 border-t-transparent" />
       </div>
     );
   }
@@ -46,20 +46,22 @@ export default function LoginPage() {
     <div className="w-full max-w-md space-y-8">
       {/* Logo & Title */}
       <div className="text-center">
-        <div className="mx-auto h-12 w-12 rounded-xl bg-primary-600 flex items-center justify-center">
-          <span className="text-white font-bold text-2xl">H</span>
-        </div>
-        <h2 className="mt-6 text-3xl font-bold tracking-tight text-gray-900">
-          Sign in to HRMS
+        <img
+          src="/logo.png"
+          alt="Drona Logitech"
+          className="mx-auto h-16 w-auto object-contain"
+        />
+        <h2 className="mt-6 text-3xl font-bold text-warm-900">
+          Welcome back
         </h2>
-        <p className="mt-2 text-sm text-gray-600">
-          Enter your credentials to access your account
+        <p className="mt-2 text-sm text-warm-500">
+          Sign in to your HRMS workspace
         </p>
       </div>
 
       {/* Login Form */}
-      <div className="bg-white py-8 px-6 shadow-lg rounded-lg">
-        <form onSubmit={handleSubmit} className="space-y-6">
+      <div className="bg-white py-8 px-7 shadow-elevated rounded-2xl border border-warm-200">
+        <form onSubmit={handleSubmit} className="space-y-5">
           {error && <FormError message={error} />}
 
           <Input
@@ -77,14 +79,14 @@ export default function LoginPage() {
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="••••••••"
+            placeholder="Enter your password"
             required
             autoComplete="current-password"
           />
 
           <Button
             type="submit"
-            className="w-full"
+            className="w-full h-11"
             loading={submitting}
             disabled={submitting}
           >
@@ -93,25 +95,26 @@ export default function LoginPage() {
         </form>
 
         {/* Demo accounts info */}
-        <div className="mt-6 pt-6 border-t border-gray-200">
-          <p className="text-xs text-gray-500 text-center mb-3">Demo accounts (password: password123)</p>
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="bg-gray-50 p-2 rounded">
-              <p className="font-medium text-gray-700">HR Admin</p>
-              <p className="text-gray-500">admin@example.com</p>
-            </div>
-            <div className="bg-gray-50 p-2 rounded">
-              <p className="font-medium text-gray-700">Manager</p>
-              <p className="text-gray-500">manager@example.com</p>
-            </div>
-            <div className="bg-gray-50 p-2 rounded">
-              <p className="font-medium text-gray-700">Employee</p>
-              <p className="text-gray-500">employee@example.com</p>
-            </div>
-            <div className="bg-gray-50 p-2 rounded">
-              <p className="font-medium text-gray-700">Contractor</p>
-              <p className="text-gray-500">contractor@example.com</p>
-            </div>
+        <div className="mt-7 pt-6 border-t border-warm-200">
+          <p className="text-xs text-warm-400 text-center mb-3 font-medium uppercase tracking-wider">Demo accounts</p>
+          <p className="text-[11px] text-warm-400 text-center mb-3">password: password123</p>
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { role: 'HR Admin', email: 'admin@example.com' },
+              { role: 'Manager', email: 'manager@example.com' },
+              { role: 'Employee', email: 'employee@example.com' },
+              { role: 'Contractor', email: 'contractor@example.com' },
+            ].map((account) => (
+              <button
+                key={account.email}
+                type="button"
+                onClick={() => setEmail(account.email)}
+                className="bg-warm-50 hover:bg-warm-100 border border-warm-200 p-2.5 rounded-lg text-left transition-colors group"
+              >
+                <p className="font-semibold text-xs text-warm-700 group-hover:text-warm-900">{account.role}</p>
+                <p className="text-[11px] text-warm-400 truncate">{account.email}</p>
+              </button>
+            ))}
           </div>
         </div>
       </div>

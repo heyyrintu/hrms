@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #059669; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+    .content { padding: 20px; background: #f9fafb; border: 1px solid #e5e7eb; }
+    .badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 14px; font-weight: 600; }
+    .badge-approved { background: #d1fae5; color: #065f46; }
+    .badge-rejected { background: #fee2e2; color: #991b1b; }
+    .footer { padding: 15px; text-align: center; font-size: 12px; color: #6b7280; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Leave Request {{status}}</h1>
+    </div>
+    <div class="content">
+      <p>Hi {{employeeName}},</p>
+      <p>Your leave request has been <span class="badge badge-{{statusClass}}">{{status}}</span>.</p>
+      <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+        <tr><td style="padding: 8px; font-weight: bold;">Leave Type:</td><td style="padding: 8px;">{{leaveType}}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">From:</td><td style="padding: 8px;">{{startDate}}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">To:</td><td style="padding: 8px;">{{endDate}}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">Days:</td><td style="padding: 8px;">{{totalDays}}</td></tr>
+        {{#if approverNote}}
+        <tr><td style="padding: 8px; font-weight: bold;">Note:</td><td style="padding: 8px;">{{approverNote}}</td></tr>
+        {{/if}}
+      </table>
+      <p>Best regards,<br>HR Team</p>
+    </div>
+    <div class="footer">
+      <p>This is an automated message from HRMS.</p>
+    </div>
+  </div>
+</body>
+</html>

@@ -10,7 +10,7 @@ import {
   UseGuards,
   BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { LeaveService } from './leave.service';
 import {
   CreateLeaveRequestDto,
@@ -42,6 +42,9 @@ export class LeaveController {
    * GET /api/leave/types
    */
   @Get('types')
+  @ApiOperation({ summary: 'Get leave types' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getLeaveTypes(@CurrentUser() user: AuthenticatedUser) {
     return this.leaveService.getLeaveTypes(user.tenantId);
   }
@@ -51,6 +54,9 @@ export class LeaveController {
    * GET /api/leave/balances/me
    */
   @Get('balances/me')
+  @ApiOperation({ summary: 'Get my leave balances' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getMyBalances(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: LeaveBalanceQueryDto,
@@ -66,6 +72,9 @@ export class LeaveController {
    * GET /api/leave/requests/me
    */
   @Get('requests/me')
+  @ApiOperation({ summary: 'Get my leave requests' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getMyRequests(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: LeaveRequestQueryDto,
@@ -81,6 +90,10 @@ export class LeaveController {
    * GET /api/leave/requests/pending-approvals
    */
   @Get('requests/pending-approvals')
+  @ApiOperation({ summary: 'Get pending leave approvals' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
   async getPendingApprovals(@CurrentUser() user: AuthenticatedUser) {
     if (!user.employeeId) {
@@ -94,6 +107,9 @@ export class LeaveController {
    * POST /api/leave/requests
    */
   @Post('requests')
+  @ApiOperation({ summary: 'Create leave request' })
+  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async createRequest(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateLeaveRequestDto,
@@ -109,6 +125,10 @@ export class LeaveController {
    * POST /api/leave/requests/:id/cancel
    */
   @Post('requests/:id/cancel')
+  @ApiOperation({ summary: 'Cancel leave request' })
+  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   async cancelRequest(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
@@ -124,6 +144,11 @@ export class LeaveController {
    * POST /api/leave/requests/:id/approve
    */
   @Post('requests/:id/approve')
+  @ApiOperation({ summary: 'Approve leave request' })
+  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
   async approveRequest(
     @CurrentUser() user: AuthenticatedUser,
@@ -141,6 +166,11 @@ export class LeaveController {
    * POST /api/leave/requests/:id/reject
    */
   @Post('requests/:id/reject')
+  @ApiOperation({ summary: 'Reject leave request' })
+  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
   async rejectRequest(
     @CurrentUser() user: AuthenticatedUser,
@@ -162,6 +192,10 @@ export class LeaveController {
    * POST /api/leave/admin/types
    */
   @Post('admin/types')
+  @ApiOperation({ summary: 'Create leave type' })
+  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async createLeaveType(
     @CurrentUser() user: AuthenticatedUser,
@@ -175,6 +209,11 @@ export class LeaveController {
    * PUT /api/leave/admin/types/:id
    */
   @Put('admin/types/:id')
+  @ApiOperation({ summary: 'Update leave type' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async updateLeaveType(
     @CurrentUser() user: AuthenticatedUser,
@@ -189,6 +228,11 @@ export class LeaveController {
    * DELETE /api/leave/admin/types/:id
    */
   @Delete('admin/types/:id')
+  @ApiOperation({ summary: 'Delete leave type' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async deleteLeaveType(
     @CurrentUser() user: AuthenticatedUser,
@@ -202,6 +246,10 @@ export class LeaveController {
    * GET /api/leave/admin/balances
    */
   @Get('admin/balances')
+  @ApiOperation({ summary: 'Get all employee balances' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async getAllBalances(
     @CurrentUser() user: AuthenticatedUser,
@@ -215,6 +263,11 @@ export class LeaveController {
    * GET /api/leave/admin/balances/:employeeId
    */
   @Get('admin/balances/:employeeId')
+  @ApiOperation({ summary: 'Get employee leave balance' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
   async getEmployeeBalance(
     @CurrentUser() user: AuthenticatedUser,
@@ -229,6 +282,11 @@ export class LeaveController {
    * PUT /api/leave/admin/balances/:employeeId/:leaveTypeId
    */
   @Put('admin/balances/:employeeId/:leaveTypeId')
+  @ApiOperation({ summary: 'Update employee leave balance' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async updateEmployeeBalance(
     @CurrentUser() user: AuthenticatedUser,
@@ -251,6 +309,10 @@ export class LeaveController {
    * POST /api/leave/admin/balances/initialize
    */
   @Post('admin/balances/initialize')
+  @ApiOperation({ summary: 'Initialize employee leave balances' })
+  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async initializeBalances(
     @CurrentUser() user: AuthenticatedUser,
@@ -264,6 +326,10 @@ export class LeaveController {
    * GET /api/leave/admin/requests
    */
   @Get('admin/requests')
+  @ApiOperation({ summary: 'Get all leave requests' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async getAllRequests(
     @CurrentUser() user: AuthenticatedUser,
@@ -277,6 +343,10 @@ export class LeaveController {
    * GET /api/leave/admin/analytics
    */
   @Get('admin/analytics')
+  @ApiOperation({ summary: 'Get leave analytics' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async getAnalytics(
     @CurrentUser() user: AuthenticatedUser,

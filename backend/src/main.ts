@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -13,6 +14,9 @@ async function bootstrap() {
   app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));
 
   const logger = new Logger('Bootstrap');
+
+  // Security headers
+  app.use(helmet());
 
   // Enable CORS from environment variable
   const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:3000';
@@ -50,6 +54,19 @@ async function bootstrap() {
       .addTag('leave', 'Leave management')
       .addTag('admin', 'Admin operations')
       .addTag('companies', 'Company/Tenant management')
+      .addTag('announcements', 'Company announcements')
+      .addTag('audit', 'Audit logging')
+      .addTag('documents', 'Document management')
+      .addTag('expenses', 'Expense management')
+      .addTag('holidays', 'Holiday management')
+      .addTag('notifications', 'Notification system')
+      .addTag('onboarding', 'Employee onboarding')
+      .addTag('payroll', 'Payroll processing')
+      .addTag('performance', 'Performance reviews')
+      .addTag('reports', 'Report generation')
+      .addTag('self-service', 'Employee self-service')
+      .addTag('shifts', 'Shift management')
+      .addTag('uploads', 'File uploads')
       .build();
 
     const document = SwaggerModule.createDocument(app, config);

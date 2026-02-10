@@ -10,18 +10,18 @@ interface BadgeProps {
 }
 
 const variantClasses: Record<BadgeVariant, string> = {
-  default: 'bg-primary-100 text-primary-800',
-  success: 'bg-green-100 text-green-800',
-  warning: 'bg-yellow-100 text-yellow-800',
-  danger: 'bg-red-100 text-red-800',
-  info: 'bg-blue-100 text-blue-800',
-  gray: 'bg-gray-100 text-gray-800',
+  default: 'bg-primary-50 text-primary-700 ring-1 ring-inset ring-primary-200',
+  success: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+  warning: 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
+  danger: 'bg-red-50 text-red-700 ring-1 ring-inset ring-red-200',
+  info: 'bg-sky-50 text-sky-700 ring-1 ring-inset ring-sky-200',
+  gray: 'bg-warm-100 text-warm-600 ring-1 ring-inset ring-warm-200',
 };
 
 export function Badge({ children, variant = 'default', className }: BadgeProps) {
   return (
     <span className={cn(
-      'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium',
+      'inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold',
       variantClasses[variant],
       className
     )}>
@@ -33,7 +33,7 @@ export function Badge({ children, variant = 'default', className }: BadgeProps) 
 // Helper function to get badge variant from status
 export function getStatusBadgeVariant(status: string): BadgeVariant {
   const statusLower = status.toLowerCase();
-  
+
   if (['present', 'approved', 'active', 'success'].includes(statusLower)) {
     return 'success';
   }

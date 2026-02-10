@@ -23,7 +23,7 @@ export function Button({
     primary: 'btn-primary',
     secondary: 'btn-secondary',
     danger: 'btn-danger',
-    ghost: 'hover:bg-gray-100 text-gray-700',
+    ghost: 'hover:bg-warm-100 text-warm-600 hover:text-warm-900',
   };
 
   const sizes = {
@@ -32,6 +32,7 @@ export function Button({
     lg: 'btn-lg',
   };
 
+  // Don't pass loading to DOM element - it's handled via disabled and icon display
   return (
     <button
       className={cn('btn', variants[variant], sizes[size], className)}

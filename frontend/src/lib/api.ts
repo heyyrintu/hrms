@@ -305,3 +305,51 @@ export const onboardingApi = {
     api.put(`/onboarding/tasks/${id}`, data),
   completeTask: (id: string) => api.post(`/onboarding/tasks/${id}/complete`),
 };
+
+// ============================================
+// AUDIT
+// ============================================
+export const auditApi = {
+  getLogs: (params?: Record<string, string>) =>
+    api.get('/audit', { params }),
+  getEntityHistory: (entityType: string, entityId: string) =>
+    api.get(`/audit/entity/${entityType}/${entityId}`),
+};
+
+// ============================================
+// PERFORMANCE MANAGEMENT
+// ============================================
+export const performanceApi = {
+  // Cycles (Admin)
+  getCycles: (params?: Record<string, string>) =>
+    api.get('/performance/cycles', { params }),
+  getCycle: (id: string) => api.get(`/performance/cycles/${id}`),
+  createCycle: (data: Record<string, unknown>) =>
+    api.post('/performance/cycles', data),
+  updateCycle: (id: string, data: Record<string, unknown>) =>
+    api.put(`/performance/cycles/${id}`, data),
+  deleteCycle: (id: string) => api.delete(`/performance/cycles/${id}`),
+  launchCycle: (id: string) => api.post(`/performance/cycles/${id}/launch`),
+  completeCycle: (id: string) => api.post(`/performance/cycles/${id}/complete`),
+
+  // My Reviews
+  getMyReviews: (params?: Record<string, string>) =>
+    api.get('/performance/my-reviews', { params }),
+  getReview: (id: string) => api.get(`/performance/reviews/${id}`),
+  submitSelfReview: (id: string, data: Record<string, unknown>) =>
+    api.post(`/performance/reviews/${id}/self-review`, data),
+
+  // Team Reviews (Manager/HR)
+  getTeamReviews: (params?: Record<string, string>) =>
+    api.get('/performance/team-reviews', { params }),
+  submitManagerReview: (id: string, data: Record<string, unknown>) =>
+    api.post(`/performance/reviews/${id}/manager-review`, data),
+
+  // Goals
+  getMyGoals: () => api.get('/performance/my-goals'),
+  createGoal: (data: Record<string, unknown>) =>
+    api.post('/performance/goals', data),
+  updateGoal: (id: string, data: Record<string, unknown>) =>
+    api.put(`/performance/goals/${id}`, data),
+  deleteGoal: (id: string) => api.delete(`/performance/goals/${id}`),
+};

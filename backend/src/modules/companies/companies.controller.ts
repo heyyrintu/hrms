@@ -9,7 +9,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { CompaniesService } from './companies.service';
 import { CreateCompanyDto, UpdateCompanyDto, CompanyQueryDto } from './dto/company.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -30,6 +30,10 @@ export class CompaniesController {
    * POST /api/companies
    */
   @Post()
+  @ApiOperation({ summary: 'Create new company' })
+  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   async create(@Body() dto: CreateCompanyDto) {
     return this.companiesService.create(dto);
   }
@@ -39,6 +43,10 @@ export class CompaniesController {
    * GET /api/companies
    */
   @Get()
+  @ApiOperation({ summary: 'Get all companies' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   async findAll(@Query() query: CompanyQueryDto) {
     return this.companiesService.findAll(query);
   }
@@ -48,6 +56,10 @@ export class CompaniesController {
    * GET /api/companies/stats
    */
   @Get('stats')
+  @ApiOperation({ summary: 'Get company statistics' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   async getStats() {
     return this.companiesService.getStatsSummary();
   }
@@ -57,6 +69,11 @@ export class CompaniesController {
    * GET /api/companies/:id
    */
   @Get(':id')
+  @ApiOperation({ summary: 'Get company by ID' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   async findOne(@Param('id') id: string) {
     return this.companiesService.findOne(id);
   }
@@ -66,6 +83,11 @@ export class CompaniesController {
    * PUT /api/companies/:id
    */
   @Put(':id')
+  @ApiOperation({ summary: 'Update company' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   async update(@Param('id') id: string, @Body() dto: UpdateCompanyDto) {
     return this.companiesService.update(id, dto);
   }
@@ -75,6 +97,11 @@ export class CompaniesController {
    * PUT /api/companies/:id/toggle-status
    */
   @Put(':id/toggle-status')
+  @ApiOperation({ summary: 'Toggle company status' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   async toggleStatus(@Param('id') id: string) {
     return this.companiesService.toggleStatus(id);
   }
@@ -84,6 +111,11 @@ export class CompaniesController {
    * DELETE /api/companies/:id
    */
   @Delete(':id')
+  @ApiOperation({ summary: 'Delete company' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   async remove(@Param('id') id: string) {
     return this.companiesService.remove(id);
   }

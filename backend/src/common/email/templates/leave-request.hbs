@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #f59e0b; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+    .content { padding: 20px; background: #f9fafb; border: 1px solid #e5e7eb; }
+    .footer { padding: 15px; text-align: center; font-size: 12px; color: #6b7280; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>New Leave Request</h1>
+    </div>
+    <div class="content">
+      <p>Hi {{approverName}},</p>
+      <p><strong>{{employeeName}}</strong> has submitted a leave request that requires your approval.</p>
+      <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+        <tr><td style="padding: 8px; font-weight: bold;">Leave Type:</td><td style="padding: 8px;">{{leaveType}}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">From:</td><td style="padding: 8px;">{{startDate}}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">To:</td><td style="padding: 8px;">{{endDate}}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">Days:</td><td style="padding: 8px;">{{totalDays}}</td></tr>
+        {{#if reason}}
+        <tr><td style="padding: 8px; font-weight: bold;">Reason:</td><td style="padding: 8px;">{{reason}}</td></tr>
+        {{/if}}
+      </table>
+      <p>Please log in to the HRMS to approve or reject this request.</p>
+      <p>Best regards,<br>HRMS System</p>
+    </div>
+    <div class="footer">
+      <p>This is an automated message from HRMS.</p>
+    </div>
+  </div>
+</body>
+</html>

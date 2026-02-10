@@ -14,9 +14,9 @@ export function FormRow({ children, className, label, required, colSpan }: FormR
   return (
     <div className={cn('mb-4', colSpanClass, className)}>
       {label && (
-        <label className="block text-sm font-medium text-gray-700 mb-1">
+        <label className="block text-sm font-medium text-warm-700 mb-1.5">
           {label}
-          {required && <span className="text-red-500 ml-1">*</span>}
+          {required && <span className="text-primary-500 ml-1">*</span>}
         </label>
       )}
       {children}
@@ -52,7 +52,7 @@ interface FormActionsProps {
 
 export function FormActions({ children, className }: FormActionsProps) {
   return (
-    <div className={cn('flex justify-end gap-3 mt-6', className)}>
+    <div className={cn('flex justify-end gap-3 mt-6 pt-4 border-t border-warm-100', className)}>
       {children}
     </div>
   );
@@ -65,10 +65,10 @@ interface FormErrorProps {
 
 export function FormError({ message, className }: FormErrorProps) {
   if (!message) return null;
-  
+
   return (
-    <div className={cn('p-3 rounded-md bg-red-50 border border-red-200', className)}>
-      <p className="text-sm text-red-600">{message}</p>
+    <div className={cn('p-3 rounded-lg bg-red-50 border border-red-200', className)}>
+      <p className="text-sm text-red-700">{message}</p>
     </div>
   );
 }
@@ -80,10 +80,10 @@ interface FormSuccessProps {
 
 export function FormSuccess({ message, className }: FormSuccessProps) {
   if (!message) return null;
-  
+
   return (
-    <div className={cn('p-3 rounded-md bg-green-50 border border-green-200', className)}>
-      <p className="text-sm text-green-600">{message}</p>
+    <div className={cn('p-3 rounded-lg bg-emerald-50 border border-emerald-200', className)}>
+      <p className="text-sm text-emerald-700">{message}</p>
     </div>
   );
 }

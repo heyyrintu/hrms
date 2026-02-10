@@ -26,6 +26,9 @@ import {
   Wallet,
   Tags,
   ClipboardList,
+  Shield,
+  Target,
+  Star,
 } from 'lucide-react';
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -41,67 +44,76 @@ interface NavItem {
 }
 
 const navigation: NavItem[] = [
-  { 
-    name: 'Dashboard', 
-    href: '/dashboard', 
-    icon: <LayoutDashboard className="h-5 w-5" /> 
+  {
+    name: 'Dashboard',
+    href: '/dashboard',
+    icon: <LayoutDashboard className="h-[18px] w-[18px]" />
   },
-  { 
-    name: 'Attendance', 
-    href: '/attendance', 
-    icon: <Clock className="h-5 w-5" /> 
+  {
+    name: 'Attendance',
+    href: '/attendance',
+    icon: <Clock className="h-[18px] w-[18px]" />
   },
-  { 
-    name: 'Employees', 
-    href: '/employees', 
-    icon: <Users className="h-5 w-5" />, 
-    roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] 
+  {
+    name: 'Employees',
+    href: '/employees',
+    icon: <Users className="h-[18px] w-[18px]" />,
+    roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER]
   },
   {
     name: 'Leave',
     href: '/leave',
-    icon: <Calendar className="h-5 w-5" />
+    icon: <Calendar className="h-[18px] w-[18px]" />
   },
   {
     name: 'Payroll',
     href: '/payroll',
-    icon: <DollarSign className="h-5 w-5" />,
+    icon: <DollarSign className="h-[18px] w-[18px]" />,
     roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN],
   },
   {
     name: 'My Payslips',
     href: '/my-payslips',
-    icon: <Receipt className="h-5 w-5" />
+    icon: <Receipt className="h-[18px] w-[18px]" />
   },
   {
     name: 'Expenses',
     href: '/expenses',
-    icon: <Wallet className="h-5 w-5" />
+    icon: <Wallet className="h-[18px] w-[18px]" />
   },
   {
     name: 'Onboarding',
     href: '/onboarding',
-    icon: <ClipboardList className="h-5 w-5" />,
+    icon: <ClipboardList className="h-[18px] w-[18px]" />,
     roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN],
   },
   {
     name: 'My Onboarding',
     href: '/onboarding/my-tasks',
-    icon: <ClipboardList className="h-5 w-5" />
+    icon: <ClipboardList className="h-[18px] w-[18px]" />
   },
   {
     name: 'Notifications',
     href: '/notifications',
-    icon: <Bell className="h-5 w-5" />
+    icon: <Bell className="h-[18px] w-[18px]" />
   },
   {
     name: 'My Profile',
     href: '/my-profile',
-    icon: <UserCircle className="h-5 w-5" />
+    icon: <UserCircle className="h-[18px] w-[18px]" />
   },
-  { 
-    name: 'Approvals', 
-    icon: <ClipboardCheck className="h-5 w-5" />,
+  {
+    name: 'Performance',
+    icon: <Target className="h-[18px] w-[18px]" />,
+    children: [
+      { name: 'My Reviews', href: '/performance', icon: <Star className="h-4 w-4" /> },
+      { name: 'Team Reviews', href: '/performance/team', icon: <Users className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
+      { name: 'Review Cycles', href: '/performance/cycles', icon: <Target className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
+    ],
+  },
+  {
+    name: 'Approvals',
+    icon: <ClipboardCheck className="h-[18px] w-[18px]" />,
     roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER],
     children: [
       { name: 'OT Approvals', href: '/approvals/ot', icon: <Clock className="h-4 w-4" /> },
@@ -113,18 +125,18 @@ const navigation: NavItem[] = [
   {
     name: 'Reports',
     href: '/reports',
-    icon: <FileSpreadsheet className="h-5 w-5" />,
+    icon: <FileSpreadsheet className="h-[18px] w-[18px]" />,
     roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER],
   },
   {
     name: 'Companies',
     href: '/companies',
-    icon: <Building2 className="h-5 w-5" />,
+    icon: <Building2 className="h-[18px] w-[18px]" />,
     roles: [UserRole.SUPER_ADMIN],
   },
-  { 
-    name: 'Admin', 
-    icon: <Settings className="h-5 w-5" />, 
+  {
+    name: 'Admin',
+    icon: <Settings className="h-[18px] w-[18px]" />,
     roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN],
     children: [
       { name: 'OT Rules', href: '/admin/ot-rules', icon: <Clock className="h-4 w-4" /> },
@@ -133,6 +145,7 @@ const navigation: NavItem[] = [
       { name: 'Announcements', href: '/admin/announcements', icon: <Megaphone className="h-4 w-4" /> },
       { name: 'Expense Categories', href: '/admin/expense-categories', icon: <Tags className="h-4 w-4" /> },
       { name: 'Onboarding Templates', href: '/admin/onboarding-templates', icon: <ClipboardList className="h-4 w-4" /> },
+      { name: 'Audit Logs', href: '/admin/audit', icon: <Shield className="h-4 w-4" /> },
     ]
   },
 ];
@@ -145,11 +158,11 @@ interface SidebarProps {
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
   const { user, hasRole } = useAuth();
-  const [expandedItems, setExpandedItems] = useState<string[]>(['Approvals', 'Admin']);
+  const [expandedItems, setExpandedItems] = useState<string[]>(['Performance', 'Approvals', 'Admin']);
 
   const toggleExpand = (name: string) => {
-    setExpandedItems(prev => 
-      prev.includes(name) 
+    setExpandedItems(prev =>
+      prev.includes(name)
         ? prev.filter(item => item !== name)
         : [...prev, name]
     );
@@ -182,22 +195,22 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           <button
             onClick={() => toggleExpand(item.name)}
             className={cn(
-              'flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-              'text-gray-300 hover:bg-gray-800 hover:text-white'
+              'flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-all duration-150',
+              'text-warm-600 hover:bg-warm-100 hover:text-warm-900'
             )}
           >
             <div className="flex items-center gap-3">
-              {item.icon}
+              <span className="text-warm-400">{item.icon}</span>
               {item.name}
             </div>
             {isExpanded ? (
-              <ChevronDown className="h-4 w-4" />
+              <ChevronDown className="h-3.5 w-3.5 text-warm-400" />
             ) : (
-              <ChevronRight className="h-4 w-4" />
+              <ChevronRight className="h-3.5 w-3.5 text-warm-400" />
             )}
           </button>
           {isExpanded && filteredChildren && (
-            <div className="ml-4 mt-1 space-y-1">
+            <div className="ml-3 mt-0.5 space-y-0.5 border-l-2 border-warm-200 pl-3">
               {filteredChildren.map(child => renderNavItem(child, true))}
             </div>
           )}
@@ -215,15 +228,22 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           }
         }}
         className={cn(
-          'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+          'flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-all duration-150',
           active
-            ? 'bg-primary-600 text-white'
-            : 'text-gray-300 hover:bg-gray-800 hover:text-white',
-          isChild && 'text-sm'
+            ? 'bg-primary-50 text-primary-700 shadow-soft'
+            : 'text-warm-600 hover:bg-warm-100 hover:text-warm-900',
+          isChild && 'text-[13px] py-1.5'
         )}
       >
-        {item.icon}
+        <span className={cn(
+          active ? 'text-primary-500' : 'text-warm-400'
+        )}>
+          {item.icon}
+        </span>
         {item.name}
+        {active && (
+          <span className="ml-auto h-1.5 w-1.5 rounded-full bg-primary-500" />
+        )}
       </Link>
     );
   };
@@ -233,7 +253,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       {/* Mobile overlay */}
       {isOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black bg-opacity-50 lg:hidden"
+          className="fixed inset-0 z-40 bg-warm-900/30 backdrop-blur-sm lg:hidden"
           onClick={onClose}
         />
       )}
@@ -241,42 +261,44 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       {/* Sidebar */}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 flex w-64 flex-col bg-gray-900 transition-transform duration-300 lg:static lg:translate-x-0',
+          'fixed inset-y-0 left-0 z-50 flex w-[260px] flex-col bg-white border-r border-warm-200',
+          'transition-transform duration-300 ease-out lg:static lg:translate-x-0',
           isOpen ? 'translate-x-0' : '-translate-x-full'
         )}
       >
         {/* Logo */}
-        <div className="flex h-16 items-center justify-between border-b border-gray-800 px-4">
-          <Link href="/dashboard" className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-primary-600 flex items-center justify-center">
-              <span className="text-white font-bold text-lg">H</span>
-            </div>
-            <span className="text-xl font-bold text-white">HRMS</span>
+        <div className="flex h-16 items-center justify-between border-b border-warm-200 px-4">
+          <Link href="/dashboard" className="flex items-center">
+            <img
+              src="/logo.png"
+              alt="Drona Logitech"
+              className="h-10 w-auto object-contain"
+            />
           </Link>
           <button
             onClick={onClose}
-            className="lg:hidden p-1 rounded-md text-gray-400 hover:text-white hover:bg-gray-800"
+            className="lg:hidden p-1.5 rounded-lg text-warm-400 hover:text-warm-600 hover:bg-warm-100 transition-colors"
           >
-            <X className="h-5 w-5" />
+            <X className="h-4 w-4" />
           </button>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+        <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4">
           {filteredNavigation.map(item => renderNavItem(item))}
         </nav>
 
         {/* User info */}
-        <div className="border-t border-gray-800 p-4">
+        <div className="border-t border-warm-200 p-4">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-full bg-primary-600 flex items-center justify-center">
-              <span className="text-white font-medium">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-primary-100 to-accent-100 ring-2 ring-white shadow-soft">
+              <span className="text-primary-700 font-semibold text-sm">
                 {user?.email?.charAt(0).toUpperCase()}
               </span>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-white truncate">{user?.email}</p>
-              <p className="text-xs text-gray-400">{user?.role?.replace('_', ' ')}</p>
+              <p className="text-sm font-semibold text-warm-800 truncate">{user?.email}</p>
+              <p className="text-xs text-warm-400 font-medium">{user?.role?.replace('_', ' ')}</p>
             </div>
           </div>
         </div>

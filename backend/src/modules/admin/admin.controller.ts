@@ -8,7 +8,7 @@ import {
   Param,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AdminService } from './admin.service';
 import { CreateOtRuleDto, UpdateOtRuleDto } from './dto/admin.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -30,6 +30,10 @@ export class AdminController {
    * GET /api/admin/dashboard
    */
   @Get('dashboard')
+  @ApiOperation({ summary: 'Get dashboard statistics' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
   async getDashboardStats(@CurrentUser() user: AuthenticatedUser) {
     if (user.role === UserRole.MANAGER && user.employeeId) {
@@ -43,6 +47,10 @@ export class AdminController {
    * GET /api/admin/settings/ot-rules
    */
   @Get('settings/ot-rules')
+  @ApiOperation({ summary: 'Get all OT rules' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async getOtRules(@CurrentUser() user: AuthenticatedUser) {
     return this.adminService.getOtRules(user.tenantId);
@@ -53,6 +61,11 @@ export class AdminController {
    * GET /api/admin/settings/ot-rules/:id
    */
   @Get('settings/ot-rules/:id')
+  @ApiOperation({ summary: 'Get OT rule by ID' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async getOtRule(
     @CurrentUser() user: AuthenticatedUser,
@@ -66,6 +79,10 @@ export class AdminController {
    * POST /api/admin/settings/ot-rules
    */
   @Post('settings/ot-rules')
+  @ApiOperation({ summary: 'Create OT rule' })
+  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async createOtRule(
     @CurrentUser() user: AuthenticatedUser,
@@ -79,6 +96,11 @@ export class AdminController {
    * PUT /api/admin/settings/ot-rules/:id
    */
   @Put('settings/ot-rules/:id')
+  @ApiOperation({ summary: 'Update OT rule' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async updateOtRule(
     @CurrentUser() user: AuthenticatedUser,
@@ -93,6 +115,11 @@ export class AdminController {
    * DELETE /api/admin/settings/ot-rules/:id
    */
   @Delete('settings/ot-rules/:id')
+  @ApiOperation({ summary: 'Delete OT rule' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async deleteOtRule(
     @CurrentUser() user: AuthenticatedUser,

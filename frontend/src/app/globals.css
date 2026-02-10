@@ -4,100 +4,120 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 40 20% 98%;
+    --foreground: 20 12% 9%;
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 20 12% 9%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
-    --radius: 0.5rem;
+    --popover-foreground: 20 12% 9%;
+    --primary: 0 72% 51%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 30 12% 95%;
+    --secondary-foreground: 20 10% 18%;
+    --muted: 30 10% 94%;
+    --muted-foreground: 20 6% 45%;
+    --accent: 25 87% 57%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 30 12% 90%;
+    --input: 30 12% 88%;
+    --ring: 0 72% 51%;
+    --radius: 0.625rem;
   }
 }
 
 @layer base {
   * {
-    @apply border-gray-200;
+    @apply border-warm-200;
   }
   body {
-    @apply bg-gray-50 text-gray-900;
+    @apply bg-warm-50 text-warm-900 antialiased;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    @apply tracking-tight text-warm-900;
   }
 }
 
 @layer components {
+  /* ─── Buttons ──────────────────────────────────── */
   .btn {
-    @apply inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:opacity-50 disabled:pointer-events-none;
+    @apply inline-flex items-center justify-center rounded-lg text-sm font-semibold
+           transition-all duration-150 ease-out
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500
+           focus-visible:ring-offset-2 focus-visible:ring-offset-warm-50
+           disabled:opacity-50 disabled:pointer-events-none
+           active:scale-[0.98];
   }
-  
+
   .btn-primary {
-    @apply bg-primary-600 text-white hover:bg-primary-700;
+    @apply bg-primary-600 text-white shadow-soft
+           hover:bg-primary-700 hover:shadow-card;
   }
-  
+
   .btn-secondary {
-    @apply bg-gray-100 text-gray-900 hover:bg-gray-200;
+    @apply bg-warm-100 text-warm-800 border border-warm-200
+           hover:bg-warm-200 hover:border-warm-300;
   }
-  
+
   .btn-danger {
-    @apply bg-red-600 text-white hover:bg-red-700;
+    @apply bg-red-600 text-white shadow-soft
+           hover:bg-red-700;
   }
-  
+
   .btn-sm {
-    @apply h-8 px-3 text-xs;
+    @apply h-8 px-3 text-xs rounded-md;
   }
-  
+
   .btn-md {
     @apply h-10 px-4;
   }
-  
+
   .btn-lg {
     @apply h-12 px-6 text-base;
   }
-  
+
+  /* ─── Form Elements ────────────────────────────── */
   .input {
-    @apply flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:cursor-not-allowed disabled:opacity-50;
+    @apply flex h-10 w-full rounded-lg border border-warm-300 bg-white
+           px-3.5 py-2 text-sm text-warm-900
+           placeholder:text-warm-400
+           focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500
+           disabled:cursor-not-allowed disabled:opacity-50
+           transition-colors duration-150;
   }
-  
+
   .label {
-    @apply text-sm font-medium text-gray-700;
+    @apply text-sm font-medium text-warm-700;
   }
-  
+
+  /* ─── Cards ────────────────────────────────────── */
   .card {
-    @apply bg-white rounded-lg border border-gray-200 shadow-sm;
+    @apply bg-white rounded-xl border border-warm-200 shadow-soft;
   }
-  
+
+  /* ─── Badges ───────────────────────────────────── */
   .badge {
-    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold;
   }
-  
+
   .badge-success {
-    @apply bg-green-100 text-green-800;
+    @apply bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200;
   }
-  
+
   .badge-warning {
-    @apply bg-yellow-100 text-yellow-800;
+    @apply bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200;
   }
-  
+
   .badge-danger {
-    @apply bg-red-100 text-red-800;
+    @apply bg-red-50 text-red-700 ring-1 ring-inset ring-red-200;
   }
-  
+
   .badge-info {
-    @apply bg-blue-100 text-blue-800;
+    @apply bg-sky-50 text-sky-700 ring-1 ring-inset ring-sky-200;
   }
-  
+
   .badge-gray {
-    @apply bg-gray-100 text-gray-800;
+    @apply bg-warm-100 text-warm-600 ring-1 ring-inset ring-warm-200;
   }
 }

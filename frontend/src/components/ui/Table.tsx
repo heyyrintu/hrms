@@ -8,8 +8,8 @@ interface TableProps {
 
 export function Table({ children, className }: TableProps) {
   return (
-    <div className={cn('overflow-x-auto', className)}>
-      <table className="min-w-full divide-y divide-gray-200">
+    <div className={cn('overflow-x-auto rounded-xl border border-warm-200', className)}>
+      <table className="min-w-full divide-y divide-warm-200">
         {children}
       </table>
     </div>
@@ -23,7 +23,7 @@ interface TableHeaderProps {
 
 export function TableHeader({ children, className }: TableHeaderProps) {
   return (
-    <thead className={cn('bg-gray-50', className)}>
+    <thead className={cn('bg-warm-50', className)}>
       {children}
     </thead>
   );
@@ -36,7 +36,7 @@ interface TableBodyProps {
 
 export function TableBody({ children, className }: TableBodyProps) {
   return (
-    <tbody className={cn('divide-y divide-gray-200 bg-white', className)}>
+    <tbody className={cn('divide-y divide-warm-100 bg-white', className)}>
       {children}
     </tbody>
   );
@@ -52,7 +52,8 @@ export function TableRow({ children, className, onClick }: TableRowProps) {
   return (
     <tr
       className={cn(
-        onClick && 'cursor-pointer hover:bg-gray-50',
+        'transition-colors',
+        onClick && 'cursor-pointer hover:bg-warm-50',
         className
       )}
       onClick={onClick}
@@ -71,7 +72,7 @@ export function TableHead({ children, className }: TableHeadProps) {
   return (
     <th
       className={cn(
-        'px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider',
+        'px-4 py-3 text-left text-xs font-semibold text-warm-500 uppercase tracking-wider',
         className
       )}
     >
@@ -87,7 +88,7 @@ interface TableCellProps {
 
 export function TableCell({ children, className }: TableCellProps) {
   return (
-    <td className={cn('px-4 py-3 text-sm text-gray-900 whitespace-nowrap', className)}>
+    <td className={cn('px-4 py-3 text-sm text-warm-800 whitespace-nowrap', className)}>
       {children}
     </td>
   );
@@ -101,8 +102,8 @@ interface EmptyStateProps {
 export function TableEmptyState({ message = 'No data found', colSpan = 1 }: EmptyStateProps) {
   return (
     <tr>
-      <td colSpan={colSpan} className="px-4 py-8 text-center text-gray-500">
-        {message}
+      <td colSpan={colSpan} className="px-4 py-12 text-center text-warm-400">
+        <p className="text-sm">{message}</p>
       </td>
     </tr>
   );
@@ -115,10 +116,10 @@ interface LoadingStateProps {
 export function TableLoadingState({ colSpan = 1 }: LoadingStateProps) {
   return (
     <tr>
-      <td colSpan={colSpan} className="px-4 py-8 text-center">
+      <td colSpan={colSpan} className="px-4 py-12 text-center">
         <div className="flex items-center justify-center">
-          <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" />
-          <span className="ml-2 text-gray-500">Loading...</span>
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary-500 border-t-transparent" />
+          <span className="ml-2.5 text-sm text-warm-500">Loading...</span>
         </div>
       </td>
     </tr>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   Card, CardHeader, CardTitle, CardContent,
@@ -579,8 +579,8 @@ export default function EmployeesPage() {
               />
             ) : (
               employees.map((employee) => (
-                <>
-                  <TableRow key={employee.id} className="cursor-pointer hover:bg-gray-50">
+                <React.Fragment key={employee.id}>
+                  <TableRow className="cursor-pointer hover:bg-gray-50">
                     <TableCell>
                       <button
                         onClick={() => toggleRowExpansion(employee.id)}
@@ -730,7 +730,7 @@ export default function EmployeesPage() {
                       </td>
                     </tr>
                   )}
-                </>
+                </React.Fragment>
               ))
             )}
           </TableBody>

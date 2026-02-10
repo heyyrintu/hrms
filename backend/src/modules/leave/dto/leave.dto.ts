@@ -7,35 +7,43 @@ import {
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateLeaveRequestDto {
+  @ApiProperty()
   @IsUUID()
   leaveTypeId: string;
 
+  @ApiProperty()
   @IsDateString()
   startDate: string;
 
+  @ApiProperty()
   @IsDateString()
   endDate: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   reason?: string;
 }
 
 export class ApproveLeaveDto {
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   approverNote?: string;
 }
 
 export class RejectLeaveDto {
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   approverNote?: string;
 }
 
 export class LeaveBalanceQueryDto {
+  @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
@@ -43,24 +51,29 @@ export class LeaveBalanceQueryDto {
 }
 
 export class LeaveRequestQueryDto {
+  @ApiPropertyOptional()
   @IsOptional()
   @IsDateString()
   from?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsDateString()
   to?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   status?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(1)
   page?: number = 1;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
@@ -69,39 +82,48 @@ export class LeaveRequestQueryDto {
 }
 
 export class CreateLeaveTypeDto {
+  @ApiProperty()
   @IsString()
   name: string;
 
+  @ApiProperty()
   @IsString()
   code: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   description?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(0)
   defaultDays?: number;
 
+  @ApiPropertyOptional()
   @IsOptional()
   carryForward?: boolean;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
   maxCarryForward?: number;
 
+  @ApiPropertyOptional()
   @IsOptional()
   isPaid?: boolean;
 }
 
 export class UpdateLeaveBalanceDto {
+  @ApiProperty()
   @IsNumber()
   @Min(0)
   totalDays: number;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
   @Min(0)
@@ -109,32 +131,39 @@ export class UpdateLeaveBalanceDto {
 }
 
 export class AdminLeaveRequestQueryDto {
+  @ApiPropertyOptional()
   @IsOptional()
   @IsDateString()
   from?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsDateString()
   to?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   status?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   employeeId?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   leaveTypeId?: string;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
   @Min(1)
   page?: number = 1;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
@@ -143,9 +172,11 @@ export class AdminLeaveRequestQueryDto {
 }
 
 export class InitializeBalancesDto {
+  @ApiProperty()
   @IsNumber()
   year: number;
 
+  @ApiPropertyOptional()
   @IsOptional()
   @IsString({ each: true })
   employeeIds?: string[];

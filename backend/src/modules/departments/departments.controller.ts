@@ -8,7 +8,7 @@ import {
   Param,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { DepartmentsService } from './departments.service';
 import { CreateDepartmentDto, UpdateDepartmentDto } from './dto/department.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -30,6 +30,10 @@ export class DepartmentsController {
    * POST /api/departments
    */
   @Post()
+  @ApiOperation({ summary: 'Create new department' })
+  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async create(
     @CurrentUser() user: AuthenticatedUser,
@@ -43,6 +47,9 @@ export class DepartmentsController {
    * GET /api/departments
    */
   @Get()
+  @ApiOperation({ summary: 'Get all departments' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async findAll(@CurrentUser() user: AuthenticatedUser) {
     return this.departmentsService.findAll(user.tenantId);
   }
@@ -52,6 +59,9 @@ export class DepartmentsController {
    * GET /api/departments/hierarchy
    */
   @Get('hierarchy')
+  @ApiOperation({ summary: 'Get department hierarchy' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getHierarchy(@CurrentUser() user: AuthenticatedUser) {
     return this.departmentsService.getHierarchy(user.tenantId);
   }
@@ -61,6 +71,10 @@ export class DepartmentsController {
    * GET /api/departments/:id
    */
   @Get(':id')
+  @ApiOperation({ summary: 'Get department by ID' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   async findOne(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
@@ -73,6 +87,11 @@ export class DepartmentsController {
    * PUT /api/departments/:id
    */
   @Put(':id')
+  @ApiOperation({ summary: 'Update department' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async update(
     @CurrentUser() user: AuthenticatedUser,
@@ -87,6 +106,11 @@ export class DepartmentsController {
    * DELETE /api/departments/:id
    */
   @Delete(':id')
+  @ApiOperation({ summary: 'Delete department' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async remove(
     @CurrentUser() user: AuthenticatedUser,

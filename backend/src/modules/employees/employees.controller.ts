@@ -9,7 +9,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { EmployeesService } from './employees.service';
 import { CreateEmployeeDto, UpdateEmployeeDto, EmployeeQueryDto } from './dto/employee.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -31,6 +31,10 @@ export class EmployeesController {
    * POST /api/employees
    */
   @Post()
+  @ApiOperation({ summary: 'Create new employee' })
+  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async create(
     @CurrentUser() user: AuthenticatedUser,
@@ -44,6 +48,9 @@ export class EmployeesController {
    * GET /api/employees
    */
   @Get()
+  @ApiOperation({ summary: 'Get all employees' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
   async findAll(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: EmployeeQueryDto,
@@ -56,6 +63,10 @@ export class EmployeesController {
    * GET /api/employees/:id
    */
   @Get(':id')
+  @ApiOperation({ summary: 'Get employee by ID' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   async findOne(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
@@ -68,6 +79,10 @@ export class EmployeesController {
    * GET /api/employees/:id/360
    */
   @Get(':id/360')
+  @ApiOperation({ summary: 'Get employee 360 view' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   async get360View(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
@@ -80,6 +95,10 @@ export class EmployeesController {
    * GET /api/employees/:id/direct-reports
    */
   @Get(':id/direct-reports')
+  @ApiOperation({ summary: 'Get direct reports' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   async getDirectReports(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
@@ -92,6 +111,11 @@ export class EmployeesController {
    * PUT /api/employees/:id
    */
   @Put(':id')
+  @ApiOperation({ summary: 'Update employee' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async update(
     @CurrentUser() user: AuthenticatedUser,
@@ -106,6 +130,11 @@ export class EmployeesController {
    * DELETE /api/employees/:id
    */
   @Delete(':id')
+  @ApiOperation({ summary: 'Delete employee' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async remove(
     @CurrentUser() user: AuthenticatedUser,

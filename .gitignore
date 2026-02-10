@@ -53,6 +53,7 @@ dist
 NUL
 nul
 .claude/
+.agents/
 out
 
 # Uploads

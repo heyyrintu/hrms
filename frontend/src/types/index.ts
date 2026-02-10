@@ -780,3 +780,94 @@ export interface OnboardingTask {
     employee?: { firstName: string; lastName: string };
   };
 }
+
+// ============================================
+// AUDIT
+// ============================================
+
+export type AuditAction = 'CREATE' | 'UPDATE' | 'DELETE' | 'LOGIN';
+
+export interface AuditLog {
+  id: string;
+  tenantId: string;
+  userId?: string;
+  action: AuditAction;
+  entityType: string;
+  entityId?: string;
+  oldValues?: Record<string, unknown>;
+  newValues?: Record<string, unknown>;
+  ipAddress?: string;
+  userAgent?: string;
+  createdAt: string;
+}
+
+// ============================================
+// PERFORMANCE MANAGEMENT
+// ============================================
+
+export type ReviewCycleStatus = 'DRAFT' | 'ACTIVE' | 'COMPLETED';
+export type PerformanceReviewStatus = 'PENDING' | 'SELF_REVIEW' | 'MANAGER_REVIEW' | 'COMPLETED';
+export type GoalStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED';
+
+export interface ReviewCycle {
+  id: string;
+  tenantId: string;
+  name: string;
+  description?: string;
+  startDate: string;
+  endDate: string;
+  status: ReviewCycleStatus;
+  createdAt: string;
+  updatedAt: string;
+  _count?: { reviews: number };
+}
+
+export interface PerformanceReview {
+  id: string;
+  tenantId: string;
+  cycleId: string;
+  employeeId: string;
+  reviewerId: string;
+  status: PerformanceReviewStatus;
+  selfRating?: number;
+  selfComments?: string;
+  managerRating?: number;
+  managerComments?: string;
+  overallRating?: number;
+  selfSubmittedAt?: string;
+  managerSubmittedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  cycle?: { id: string; name: string; startDate: string; endDate: string };
+  employee?: {
+    id: string;
+    employeeCode: string;
+    firstName: string;
+    lastName: string;
+    designation?: string;
+    department?: { name: string };
+  };
+  reviewer?: { id: string; firstName: string; lastName: string };
+  goals?: Goal[];
+  _count?: { goals: number };
+}
+
+export interface Goal {
+  id: string;
+  tenantId: string;
+  reviewId: string;
+  employeeId: string;
+  title: string;
+  description?: string;
+  targetDate: string;
+  status: GoalStatus;
+  progress: number;
+  weight: number;
+  createdAt: string;
+  updatedAt: string;
+  review?: {
+    id: string;
+    status: PerformanceReviewStatus;
+    cycle?: { id: string; name: string };
+  };
+}
