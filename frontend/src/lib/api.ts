@@ -119,6 +119,33 @@ export const leaveApi = {
     api.get('/leave/admin/analytics', { params: year ? { year } : {} }),
 };
 
+// Leave Accrual API
+export const accrualApi = {
+  // Rules
+  getRules: () => api.get('/leave/admin/accrual/rules'),
+  getRuleById: (id: string) => api.get(`/leave/admin/accrual/rules/${id}`),
+  createRule: (data: Record<string, unknown>) =>
+    api.post('/leave/admin/accrual/rules', data),
+  updateRule: (id: string, data: Record<string, unknown>) =>
+    api.put(`/leave/admin/accrual/rules/${id}`, data),
+  deleteRule: (id: string) => api.delete(`/leave/admin/accrual/rules/${id}`),
+
+  // Processing
+  triggerAccrual: (data: {
+    month: number;
+    year: number;
+    employeeIds?: string[];
+    leaveTypeIds?: string[];
+  }) => api.post('/leave/admin/accrual/calculate', data),
+
+  // Runs
+  getRuns: (params?: { year?: number; page?: number; limit?: number }) =>
+    api.get('/leave/admin/accrual/runs', { params }),
+  getRunById: (id: string) => api.get(`/leave/admin/accrual/runs/${id}`),
+  getRunEntries: (id: string, params?: { page?: number; limit?: number }) =>
+    api.get(`/leave/admin/accrual/runs/${id}/entries`, { params }),
+};
+
 // Holidays API
 export const holidaysApi = {
   getAll: (params?: Record<string, unknown>) => api.get('/holidays', { params }),

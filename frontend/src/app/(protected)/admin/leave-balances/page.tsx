@@ -57,7 +57,12 @@ export default function LeaveBalancesAdminPage() {
     const [editingBalance, setEditingBalance] = useState<LeaveBalance | null>(null);
     const [initYear, setInitYear] = useState(new Date().getFullYear());
     const [saving, setSaving] = useState(false);
-    const [editFormData, setEditFormData] = useState({ totalDays: 0, carriedOver: 0 });
+    const [editFormData, setEditFormData] = useState({
+        totalDays: 0,
+        usedDays: 0,
+        pendingDays: 0,
+        carriedOver: 0,
+    });
 
     useEffect(() => {
         loadData();
@@ -98,6 +103,8 @@ export default function LeaveBalancesAdminPage() {
         setEditingBalance(balance);
         setEditFormData({
             totalDays: balance.totalDays,
+            usedDays: balance.usedDays,
+            pendingDays: balance.pendingDays,
             carriedOver: balance.carriedOver,
         });
         setEditModalOpen(true);
@@ -430,14 +437,41 @@ export default function LeaveBalancesAdminPage() {
                             </div>
                         </div>
 
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Used Days
+                                </label>
+                                <input
+                                    type="number"
+                                    value={editFormData.usedDays}
+                                    onChange={(e) => setEditFormData({ ...editFormData, usedDays: parseFloat(e.target.value) || 0 })}
+                                    min={0}
+                                    step={0.5}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                    Pending Days
+                                </label>
+                                <input
+                                    type="number"
+                                    value={editFormData.pendingDays}
+                                    onChange={(e) => setEditFormData({ ...editFormData, pendingDays: parseFloat(e.target.value) || 0 })}
+                                    min={0}
+                                    step={0.5}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                />
+                            </div>
+                        </div>
+
                         <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
                             <div className="flex justify-between">
-                                <span className="text-blue-700">Current Used:</span>
-                                <span className="font-medium text-blue-900">{editingBalance.usedDays} days</span>
-                            </div>
-                            <div className="flex justify-between mt-1">
-                                <span className="text-blue-700">Pending:</span>
-                                <span className="font-medium text-blue-900">{editingBalance.pendingDays} days</span>
+                                <span className="text-blue-700">Available:</span>
+                                <span className="font-medium text-blue-900">
+                                    {(editFormData.totalDays + editFormData.carriedOver - editFormData.usedDays - editFormData.pendingDays).toFixed(1)} days
+                                </span>
                             </div>
                         </div>
                     </div>

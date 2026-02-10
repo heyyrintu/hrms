@@ -128,6 +128,18 @@ export class UpdateLeaveBalanceDto {
   @IsNumber()
   @Min(0)
   carriedOver?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  usedDays?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  pendingDays?: number;
 }
 
 export class AdminLeaveRequestQueryDto {

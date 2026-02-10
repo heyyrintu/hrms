@@ -29,6 +29,8 @@ import {
   Shield,
   Target,
   Star,
+  CalendarClock,
+  CalendarCheck,
 } from 'lucide-react';
 import { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -142,6 +144,10 @@ const navigation: NavItem[] = [
       { name: 'OT Rules', href: '/admin/ot-rules', icon: <Clock className="h-4 w-4" /> },
       { name: 'Holidays', href: '/admin/holidays', icon: <CalendarDays className="h-4 w-4" /> },
       { name: 'Shifts', href: '/admin/shifts', icon: <Timer className="h-4 w-4" /> },
+      { name: 'Leave Types', href: '/admin/leave-types', icon: <FileText className="h-4 w-4" /> },
+      { name: 'Leave Balances', href: '/admin/leave-balances', icon: <Calendar className="h-4 w-4" /> },
+      { name: 'Accrual Rules', href: '/admin/accrual-rules', icon: <CalendarClock className="h-4 w-4" /> },
+      { name: 'Accrual History', href: '/admin/accrual-history', icon: <CalendarCheck className="h-4 w-4" /> },
       { name: 'Announcements', href: '/admin/announcements', icon: <Megaphone className="h-4 w-4" /> },
       { name: 'Expense Categories', href: '/admin/expense-categories', icon: <Tags className="h-4 w-4" /> },
       { name: 'Onboarding Templates', href: '/admin/onboarding-templates', icon: <ClipboardList className="h-4 w-4" /> },

@@ -52,6 +52,9 @@ model Tenant {
   reviewCycles        ReviewCycle[]
   performanceReviews  PerformanceReview[]
   goals               Goal[]
+  accrualRules        LeaveAccrualRule[]
+  accrualRuns         LeaveAccrualRun[]
+  accrualEntries      LeaveAccrualEntry[]
 
   @@map("tenants")
 }
@@ -201,6 +204,7 @@ model Employee {
   performanceReviews  PerformanceReview[] @relation("ReviewEmployee")
   conductedReviews    PerformanceReview[] @relation("ReviewReviewer")
   goals               Goal[]
+  accrualEntries      LeaveAccrualEntry[]
 
   @@unique([tenantId, employeeCode])
   @@unique([tenantId, email])
@@ -320,9 +324,11 @@ model LeaveType {
   updatedAt       DateTime @updatedAt
 
   // Relations
-  tenant        Tenant         @relation(fields: [tenantId], references: [id])
-  leaveBalances LeaveBalance[]
-  leaveRequests LeaveRequest[]
+  tenant          Tenant              @relation(fields: [tenantId], references: [id])
+  leaveBalances   LeaveBalance[]
+  leaveRequests   LeaveRequest[]
+  accrualRules    LeaveAccrualRule[]
+  accrualEntries  LeaveAccrualEntry[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -343,9 +349,10 @@ model LeaveBalance {
   updatedAt   DateTime @updatedAt
 
   // Relations
-  tenant    Tenant    @relation(fields: [tenantId], references: [id])
-  employee  Employee  @relation(fields: [employeeId], references: [id])
-  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+  tenant         Tenant              @relation(fields: [tenantId], references: [id])
+  employee       Employee            @relation(fields: [employeeId], references: [id])
+  leaveType      LeaveType           @relation(fields: [leaveTypeId], references: [id])
+  accrualEntries LeaveAccrualEntry[]
 
   @@unique([tenantId, employeeId, leaveTypeId, year])
   @@index([tenantId])
@@ -386,6 +393,105 @@ model LeaveRequest {
   @@index([employeeId])
   @@index([status])
   @@map("leave_requests")
+}
+
+// ============================================
+// LEAVE ACCRUAL SYSTEM
+// ============================================
+
+enum AccrualTriggerType {
+  CRON_JOB
+  MANUAL_ADMIN
+  MANUAL_SYSTEM
+}
+
+enum AccrualStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  ROLLED_BACK
+}
+
+// Accrual rules per leave type
+model LeaveAccrualRule {
+  id                String   @id @default(uuid())
+  tenantId          String
+  leaveTypeId       String
+  monthlyAccrualDays Decimal  @db.Decimal(5, 2) // Days to accrue per month (e.g., 1.5)
+  maxBalanceCap     Decimal? @db.Decimal(5, 2) // Max balance cap (e.g., 30.0)
+  applyCapOnAccrual Boolean  @default(true)    // Apply cap during accrual vs. end of year
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  @@unique([tenantId, leaveTypeId])
+  @@index([tenantId])
+  @@index([leaveTypeId])
+  @@map("leave_accrual_rules")
+}
+
+// Track each accrual run for idempotency
+model LeaveAccrualRun {
+  id              String             @id @default(uuid())
+  tenantId        String
+  month           Int                // 1-12
+  year            Int                // 2025
+  fiscalYear      Int                // Fiscal year (e.g., 2025 for FY 2025-26)
+  triggerType     AccrualTriggerType @default(CRON_JOB)
+  triggeredBy     String?            // userId if manual
+  status          AccrualStatus      @default(PENDING)
+  processedCount  Int                @default(0)
+  failedCount     Int                @default(0)
+  errorMessage    String?
+  startedAt       DateTime           @default(now())
+  completedAt     DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  // Relations
+  tenant   Tenant              @relation(fields: [tenantId], references: [id])
+  accruals LeaveAccrualEntry[]
+
+  @@unique([tenantId, month, year]) // Idempotency constraint
+  @@index([tenantId])
+  @@index([status])
+  @@index([fiscalYear])
+  @@map("leave_accrual_runs")
+}
+
+// Individual employee accrual entries
+model LeaveAccrualEntry {
+  id             String    @id @default(uuid())
+  tenantId       String
+  accrualRunId   String
+  employeeId     String
+  leaveTypeId    String
+  leaveBalanceId String
+  accrualDays    Decimal   @db.Decimal(5, 2)
+  balanceBefore  Decimal   @db.Decimal(5, 2)
+  balanceAfter   Decimal   @db.Decimal(5, 2)
+  capApplied     Boolean   @default(false)
+  capAmount      Decimal?  @db.Decimal(5, 2)
+  notes          String?
+  createdAt      DateTime  @default(now())
+
+  // Relations
+  tenant       Tenant          @relation(fields: [tenantId], references: [id])
+  accrualRun   LeaveAccrualRun @relation(fields: [accrualRunId], references: [id], onDelete: Cascade)
+  employee     Employee        @relation(fields: [employeeId], references: [id])
+  leaveType    LeaveType       @relation(fields: [leaveTypeId], references: [id])
+  leaveBalance LeaveBalance    @relation(fields: [leaveBalanceId], references: [id])
+
+  @@unique([accrualRunId, employeeId, leaveTypeId])
+  @@index([tenantId])
+  @@index([accrualRunId])
+  @@index([employeeId])
+  @@index([leaveTypeId])
+  @@map("leave_accrual_entries")
 }
 
 // ============================================
@@ -581,6 +687,7 @@ model EmployeeChangeRequest {
 enum NotificationType {
   LEAVE_APPROVED
   LEAVE_REJECTED
+  LEAVE_BALANCE_UPDATED
   OT_APPROVED
   OT_REJECTED
   CHANGE_REQUEST_APPROVED

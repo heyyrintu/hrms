@@ -512,13 +512,24 @@ export class LeaveService {
       },
     });
 
+    const updateData: any = {
+      totalDays: dto.totalDays,
+      carriedOver: dto.carriedOver || 0,
+    };
+
+    // Support updating all fields (usedDays, pendingDays) if provided
+    if (dto.usedDays !== undefined) {
+      updateData.usedDays = dto.usedDays;
+    }
+
+    if (dto.pendingDays !== undefined) {
+      updateData.pendingDays = dto.pendingDays;
+    }
+
     if (balance) {
       return this.prisma.leaveBalance.update({
         where: { id: balance.id },
-        data: {
-          totalDays: dto.totalDays,
-          carriedOver: dto.carriedOver || 0,
-        },
+        data: updateData,
         include: { leaveType: true },
       });
     }
@@ -531,6 +542,8 @@ export class LeaveService {
         year,
         totalDays: dto.totalDays,
         carriedOver: dto.carriedOver || 0,
+        usedDays: dto.usedDays || 0,
+        pendingDays: dto.pendingDays || 0,
       },
       include: { leaveType: true },
     });
