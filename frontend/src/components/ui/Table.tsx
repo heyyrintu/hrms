@@ -8,7 +8,7 @@ interface TableProps {
 
 export function Table({ children, className }: TableProps) {
   return (
-    <div className={cn('overflow-x-auto rounded-xl border border-warm-200', className)}>
+    <div className={cn('overflow-x-auto rounded-xl border border-warm-200 scroll-shadow', className)}>
       <table className="min-w-full divide-y divide-warm-200">
         {children}
       </table>
@@ -53,7 +53,7 @@ export function TableRow({ children, className, onClick }: TableRowProps) {
     <tr
       className={cn(
         'transition-colors',
-        onClick && 'cursor-pointer hover:bg-warm-50',
+        onClick && 'cursor-pointer hover:bg-warm-50 active:bg-warm-100',
         className
       )}
       onClick={onClick}
@@ -72,7 +72,7 @@ export function TableHead({ children, className }: TableHeadProps) {
   return (
     <th
       className={cn(
-        'px-4 py-3 text-left text-xs font-semibold text-warm-500 uppercase tracking-wider',
+        'px-3 sm:px-4 py-2.5 sm:py-3 text-left text-xs font-semibold text-warm-500 uppercase tracking-wider',
         className
       )}
     >
@@ -88,7 +88,7 @@ interface TableCellProps {
 
 export function TableCell({ children, className }: TableCellProps) {
   return (
-    <td className={cn('px-4 py-3 text-sm text-warm-800 whitespace-nowrap', className)}>
+    <td className={cn('px-3 sm:px-4 py-2.5 sm:py-3 text-sm text-warm-800', className)}>
       {children}
     </td>
   );

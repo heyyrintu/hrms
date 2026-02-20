@@ -7,7 +7,7 @@ import {
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableEmptyState, TableLoadingState,
   Badge, getStatusBadgeVariant, Select, Button
 } from '@/components/ui';
-import { ChevronLeft, ChevronRight, Download, LogIn, LogOut, Clock } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, LogIn, LogOut, Clock, MapPin } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api, attendanceApi, employeesApi, departmentsApi } from '@/lib/api';
 import { formatDate, formatTime, formatMinutesToHoursMinutes, formatDateForApi, getMonthYear, getDaysInMonth } from '@/lib/date-utils';
@@ -62,15 +62,37 @@ export default function AttendancePage() {
     }
   };
 
+  const getLocation = (): Promise<{ latitude: number; longitude: number }> =>
+    new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error('Geolocation is not supported by your browser'));
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+        (err) => {
+          if (err.code === err.PERMISSION_DENIED) {
+            reject(new Error('Location permission denied. Please allow location access to record attendance.'));
+          } else if (err.code === err.TIMEOUT) {
+            reject(new Error('Location request timed out. Please try again in an open area.'));
+          } else {
+            reject(new Error('Unable to retrieve your location. Please check your device GPS settings.'));
+          }
+        },
+        { timeout: 10000, maximumAge: 0 },
+      );
+    });
+
   const handleClockIn = async () => {
     try {
       setClockingIn(true);
-      await attendanceApi.clockIn();
+      const { latitude, longitude } = await getLocation();
+      await attendanceApi.clockIn(latitude, longitude);
       toast.success('Clocked in successfully!');
       await loadTodayStatus();
       await loadAttendance();
     } catch (error: any) {
-      const message = error.response?.data?.message || 'Failed to clock in';
+      const message = error.response?.data?.message || error.message || 'Failed to clock in';
       toast.error(message);
     } finally {
       setClockingIn(false);
@@ -80,12 +102,13 @@ export default function AttendancePage() {
   const handleClockOut = async () => {
     try {
       setClockingOut(true);
-      await attendanceApi.clockOut();
+      const { latitude, longitude } = await getLocation();
+      await attendanceApi.clockOut(latitude, longitude);
       toast.success('Clocked out successfully!');
       await loadTodayStatus();
       await loadAttendance();
     } catch (error: any) {
-      const message = error.response?.data?.message || 'Failed to clock out';
+      const message = error.response?.data?.message || error.message || 'Failed to clock out';
       toast.error(message);
     } finally {
       setClockingOut(false);
@@ -162,7 +185,7 @@ export default function AttendancePage() {
         dateStr,
         record,
         isWeekend: date.getDay() === 0 || date.getDay() === 6,
-        isToday: formatDateForApi(new Date()) === dateStr,
+        isToday: date.toDateString() === new Date().toDateString(),
       });
     }
     
@@ -174,10 +197,10 @@ export default function AttendancePage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Attendance</h1>
-          <p className="text-gray-500">View and track attendance records</p>
+          <h1 className="text-xl sm:text-2xl font-bold text-warm-900">Attendance</h1>
+          <p className="text-warm-500">View and track attendance records</p>
         </div>
         
         {/* View Toggle for Managers */}
@@ -209,8 +232,8 @@ export default function AttendancePage() {
               <div className="flex items-center gap-3">
                 <Clock className="h-5 w-5 text-primary-600" />
                 <div>
-                  <p className="font-medium text-gray-900">Today&apos;s Attendance</p>
-                  <p className="text-sm text-gray-500">
+                  <p className="font-medium text-warm-900">Today&apos;s Attendance</p>
+                  <p className="text-sm text-warm-500">
                     {clockedIn ? 'You are currently clocked in' : canClockIn ? 'You have not clocked in yet' : 'Shift complete for today'}
                   </p>
                 </div>
@@ -240,7 +263,7 @@ export default function AttendancePage() {
           <div className="flex items-center justify-between">
             <button
               onClick={goToPreviousMonth}
-              className="p-2 rounded-md hover:bg-gray-100"
+              className="p-2 rounded-md hover:bg-warm-100"
             >
               <ChevronLeft className="h-5 w-5" />
             </button>
@@ -254,7 +277,7 @@ export default function AttendancePage() {
             
             <button
               onClick={goToNextMonth}
-              className="p-2 rounded-md hover:bg-gray-100"
+              className="p-2 rounded-md hover:bg-warm-100"
             >
               <ChevronRight className="h-5 w-5" />
             </button>
@@ -266,7 +289,7 @@ export default function AttendancePage() {
       {viewMode === 'team' && (isManager || isAdmin) && (
         <Card>
           <CardContent className="p-4">
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
               <Select
                 label="Employee"
                 placeholder="All Employees"
@@ -309,25 +332,26 @@ export default function AttendancePage() {
               <TableHead>Date</TableHead>
               {viewMode === 'team' && <TableHead>Employee</TableHead>}
               <TableHead>Status</TableHead>
-              <TableHead>Clock In</TableHead>
-              <TableHead>Clock Out</TableHead>
+              <TableHead className="hidden sm:table-cell">Clock In</TableHead>
+              <TableHead className="hidden sm:table-cell">Clock Out</TableHead>
               <TableHead>Worked</TableHead>
-              <TableHead>OT (Calc)</TableHead>
-              <TableHead>OT (Approved)</TableHead>
+              <TableHead className="hidden lg:table-cell">OT (Calc)</TableHead>
+              <TableHead className="hidden lg:table-cell">OT (Approved)</TableHead>
+              <TableHead className="hidden lg:table-cell">Location</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
-              <TableLoadingState colSpan={viewMode === 'team' ? 8 : 7} />
+              <TableLoadingState colSpan={viewMode === 'team' ? 9 : 8} />
             ) : calendarData.length === 0 ? (
-              <TableEmptyState message="No attendance records found" colSpan={viewMode === 'team' ? 8 : 7} />
+              <TableEmptyState message="No attendance records found" colSpan={viewMode === 'team' ? 9 : 8} />
             ) : (
               calendarData.map(({ date, dateStr, record, isWeekend, isToday }) => (
-                <TableRow key={dateStr} className={isToday ? 'bg-primary-50' : isWeekend ? 'bg-gray-50' : ''}>
+                <TableRow key={dateStr} className={isToday ? 'bg-primary-50' : isWeekend ? 'bg-warm-50' : ''}>
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <span className={isToday ? 'font-bold text-primary-600' : ''}>
-                        {formatDate(dateStr)}
+                        {date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                       </span>
                       {isToday && (
                         <Badge variant="info">Today</Badge>
@@ -345,30 +369,56 @@ export default function AttendancePage() {
                         {record.status}
                       </Badge>
                     ) : (
-                      <span className="text-gray-400">-</span>
+                      <span className="text-warm-400">-</span>
                     )}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="hidden sm:table-cell whitespace-nowrap">
                     {record?.clockInTime ? formatTime(record.clockInTime) : '-'}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="hidden sm:table-cell whitespace-nowrap">
                     {record?.clockOutTime ? formatTime(record.clockOutTime) : '-'}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="whitespace-nowrap">
                     {record?.workedMinutes ? formatMinutesToHoursMinutes(record.workedMinutes) : '-'}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="hidden lg:table-cell whitespace-nowrap">
                     {record?.otMinutesCalculated ? (
                       <span className="text-orange-600">
                         {formatMinutesToHoursMinutes(record.otMinutesCalculated)}
                       </span>
                     ) : '-'}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="hidden lg:table-cell whitespace-nowrap">
                     {record?.otMinutesApproved !== undefined && record?.otMinutesApproved !== null ? (
-                      <span className="text-green-600">
+                      <span className="text-emerald-600">
                         {formatMinutesToHoursMinutes(record.otMinutesApproved)}
                       </span>
+                    ) : '-'}
+                  </TableCell>
+                  <TableCell className="hidden lg:table-cell whitespace-nowrap">
+                    {(record?.clockInLatitude != null && record?.clockInLongitude != null) || (record?.clockOutLatitude != null && record?.clockOutLongitude != null) ? (
+                      <div className="flex flex-col gap-0.5">
+                        {record?.clockInLatitude != null && record?.clockInLongitude != null && (
+                          <a
+                            href={`https://www.google.com/maps?q=${record.clockInLatitude},${record.clockInLongitude}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-primary-600 hover:underline flex items-center gap-0.5"
+                          >
+                            <MapPin className="h-3 w-3" />In
+                          </a>
+                        )}
+                        {record?.clockOutLatitude != null && record?.clockOutLongitude != null && (
+                          <a
+                            href={`https://www.google.com/maps?q=${record.clockOutLatitude},${record.clockOutLongitude}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-primary-600 hover:underline flex items-center gap-0.5"
+                          >
+                            <MapPin className="h-3 w-3" />Out
+                          </a>
+                        )}
+                      </div>
                     ) : '-'}
                   </TableCell>
                 </TableRow>

@@ -11,7 +11,7 @@ import {
   PayrollRunQueryDto,
   PayslipQueryDto,
 } from './dto/payroll.dto';
-import { PayrollRunStatus } from '@prisma/client';
+import { PayrollRunStatus, UserRole } from '@prisma/client';
 
 @Injectable()
 export class PayrollService {
@@ -222,12 +222,12 @@ export class PayrollService {
     });
   }
 
-  async deleteRun(tenantId: string, id: string) {
+  async deleteRun(tenantId: string, id: string, userRole?: UserRole) {
     const run = await this.prisma.payrollRun.findFirst({
       where: { id, tenantId },
     });
     if (!run) throw new NotFoundException('Payroll run not found');
-    if (run.status !== PayrollRunStatus.DRAFT) {
+    if (userRole !== UserRole.SUPER_ADMIN && run.status !== PayrollRunStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT runs can be deleted');
     }
 
@@ -332,5 +332,26 @@ export class PayrollService {
     });
     if (!payslip) throw new NotFoundException('Payslip not found');
     return payslip;
+  }
+
+  async getEmployeePayslips(tenantId: string, employeeId: string) {
+    return this.prisma.payslip.findMany({
+      where: {
+        tenantId,
+        employeeId,
+        payrollRun: {
+          status: { in: [PayrollRunStatus.APPROVED, PayrollRunStatus.PAID] },
+        },
+      },
+      include: {
+        payrollRun: {
+          select: { month: true, year: true, status: true },
+        },
+      },
+      orderBy: [
+        { payrollRun: { year: 'desc' } },
+        { payrollRun: { month: 'desc' } },
+      ],
+    });
   }
 }

@@ -1,12 +1,16 @@
 import { Injectable, NotFoundException, ConflictException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { StorageService } from '../../common/storage/storage.service';
 import { CreateCompanyDto, UpdateCompanyDto, CompanyQueryDto } from './dto/company.dto';
 import * as bcrypt from 'bcrypt';
 import { UserRole } from '@prisma/client';
 
 @Injectable()
 export class CompaniesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private storage: StorageService,
+  ) {}
 
   /**
    * Create a new company/tenant with initial admin user
@@ -211,10 +215,13 @@ export class CompaniesService {
   async update(id: string, dto: UpdateCompanyDto) {
     await this.findOne(id);
 
-    return this.prisma.tenant.update({
+    await this.prisma.tenant.update({
       where: { id },
       data: dto,
     });
+
+    // Return enriched data (with stats) so the frontend stays in sync
+    return this.findOne(id);
   }
 
   /**
@@ -264,6 +271,36 @@ export class CompaniesService {
     });
 
     return { message: 'Company deleted successfully' };
+  }
+
+  /**
+   * Upload company logo: delete old file, store new key, return key
+   */
+  async uploadLogo(id: string, file: Express.Multer.File) {
+    // Fetch existing logo key so we can delete the old file
+    const existing = await this.prisma.tenant.findUnique({
+      where: { id },
+      select: { logoUrl: true },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Company not found');
+    }
+
+    // Delete old logo file (ignore errors if already gone)
+    if (existing.logoUrl) {
+      await this.storage.delete(existing.logoUrl).catch(() => {});
+    }
+
+    // Upload new file and store just the storage key
+    const uploaded = await this.storage.upload(file, 'company_logo', id);
+
+    await this.prisma.tenant.update({
+      where: { id },
+      data: { logoUrl: uploaded.key },
+    });
+
+    return { logoUrl: uploaded.key };
   }
 
   /**

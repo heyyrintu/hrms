@@ -1,11 +1,27 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { EmailService } from '../../common/email/email.service';
 import { CreateEmployeeDto, UpdateEmployeeDto, EmployeeQueryDto } from './dto/employee.dto';
 import * as bcrypt from 'bcrypt';
 
+export interface OrgNode {
+  id: string;
+  name: string;
+  employeeCode: string;
+  designation: string;
+  department: string;
+  email: string;
+  children: OrgNode[];
+}
+
 @Injectable()
 export class EmployeesService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(EmployeesService.name);
+
+  constructor(
+    private prisma: PrismaService,
+    private emailService: EmailService,
+  ) {}
 
   /**
    * Create a new employee
@@ -45,8 +61,8 @@ export class EmployeesService {
     }
 
     // Create employee and user in a transaction
-    return this.prisma.$transaction(async (prisma) => {
-      const employee = await prisma.employee.create({
+    const employee = await this.prisma.$transaction(async (prisma) => {
+      const emp = await prisma.employee.create({
         data: {
           tenantId,
           employeeCode: dto.employeeCode,
@@ -83,7 +99,8 @@ export class EmployeesService {
           hourlyRate: dto.hourlyRate,
           otMultiplier: dto.otMultiplier || 1.5,
           departmentId: dto.departmentId,
-          designation: dto.designation,
+          designationId: dto.designationId,
+          branchId: dto.branchId,
           managerId: dto.managerId,
           joinDate: new Date(dto.joinDate),
           exitDate: dto.exitDate ? new Date(dto.exitDate) : null,
@@ -91,6 +108,8 @@ export class EmployeesService {
         },
         include: {
           department: true,
+          designation: true,
+          branch: true,
           manager: {
             select: {
               id: true,
@@ -105,21 +124,42 @@ export class EmployeesService {
       // Create user account if requested
       if (dto.createUser && dto.userEmail && dto.userPassword) {
         const passwordHash = await bcrypt.hash(dto.userPassword, 10);
-        
+
         await prisma.user.create({
           data: {
             tenantId,
             email: dto.userEmail,
             passwordHash,
             role: dto.userRole || 'EMPLOYEE',
-            employeeId: employee.id,
+            employeeId: emp.id,
             isActive: true,
           },
         });
       }
 
-      return employee;
+      return emp;
     });
+
+    // Send welcome email (fire and forget)
+    const companyName = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { name: true },
+    });
+    this.emailService.sendEmail({
+      to: employee.email,
+      subject: `Welcome to ${companyName?.name || 'the company'}!`,
+      template: 'welcome',
+      context: {
+        firstName: employee.firstName,
+        companyName: companyName?.name || 'HRMS',
+        email: employee.email,
+        employeeCode: employee.employeeCode,
+      },
+    }).catch((err) => {
+      this.logger.error(`Failed to send welcome email: ${err}`);
+    });
+
+    return employee;
   }
 
   /**
@@ -152,6 +192,8 @@ export class EmployeesService {
         orderBy: { createdAt: 'desc' },
         include: {
           department: true,
+          designation: true,
+          branch: true,
           manager: {
             select: {
               id: true,
@@ -183,6 +225,8 @@ export class EmployeesService {
       where: { id, tenantId },
       include: {
         department: true,
+        designation: true,
+        branch: true,
         manager: {
           select: {
             id: true,
@@ -197,7 +241,7 @@ export class EmployeesService {
             firstName: true,
             lastName: true,
             email: true,
-            designation: true,
+            designationId: true,
           },
         },
       },
@@ -303,6 +347,8 @@ export class EmployeesService {
       },
       include: {
         department: true,
+        designation: true,
+        branch: true,
         manager: {
           select: {
             id: true,
@@ -344,5 +390,50 @@ export class EmployeesService {
         department: true,
       },
     });
+  }
+
+  /**
+   * Get org chart tree structure — all active employees with hierarchy
+   */
+  async getOrgChart(tenantId: string) {
+    const employees = await this.prisma.employee.findMany({
+      where: { tenantId, status: 'ACTIVE' },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        employeeCode: true,
+        designation: true,
+        department: { select: { name: true } },
+        managerId: true,
+        email: true,
+      },
+      orderBy: { firstName: 'asc' },
+    });
+
+    const nodeMap = new Map<string, OrgNode>();
+    for (const emp of employees) {
+      nodeMap.set(emp.id, {
+        id: emp.id,
+        name: `${emp.firstName} ${emp.lastName}`,
+        employeeCode: emp.employeeCode,
+        designation: emp.designation?.name || '',
+        department: emp.department?.name || '',
+        email: emp.email,
+        children: [],
+      });
+    }
+
+    const roots: OrgNode[] = [];
+    for (const emp of employees) {
+      const node = nodeMap.get(emp.id)!;
+      if (emp.managerId && nodeMap.has(emp.managerId)) {
+        nodeMap.get(emp.managerId)!.children.push(node);
+      } else {
+        roots.push(node);
+      }
+    }
+
+    return roots;
   }
 }

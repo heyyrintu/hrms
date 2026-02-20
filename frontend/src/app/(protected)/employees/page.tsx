@@ -9,8 +9,8 @@ import {
   Modal, ModalFooter, FormRow, FormGrid, FormError, FormSuccess
 } from '@/components/ui';
 import { Search, Plus, Eye, Edit2, Trash2, UserPlus, Phone, Mail, Calendar, Building2, Users, Download, Filter, X, ChevronDown, ChevronUp } from 'lucide-react';
-import { employeesApi, departmentsApi } from '@/lib/api';
-import { Employee, Department, EmploymentType, EmployeeStatus, PayType, PaginatedResponse, UserRole } from '@/types';
+import { employeesApi, departmentsApi, designationsApi } from '@/lib/api';
+import { Employee, Department, Designation, EmploymentType, EmployeeStatus, PayType, PaginatedResponse, UserRole } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 
 // Types for form data
@@ -25,7 +25,7 @@ interface EmployeeFormData {
   hourlyRate: string;
   otMultiplier: string;
   departmentId: string;
-  designation: string;
+  designationId: string;
   managerId: string;
   joinDate: string;
   exitDate: string;
@@ -43,7 +43,7 @@ const initialFormData: EmployeeFormData = {
   hourlyRate: '',
   otMultiplier: '1.5',
   departmentId: '',
-  designation: '',
+  designationId: '',
   managerId: '',
   joinDate: new Date().toISOString().split('T')[0],
   exitDate: '',
@@ -56,6 +56,7 @@ export default function EmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [allEmployees, setAllEmployees] = useState<Employee[]>([]); // For manager dropdown
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [designations, setDesignations] = useState<Designation[]>([]);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -86,6 +87,7 @@ export default function EmployeesPage() {
 
   useEffect(() => {
     loadDepartments();
+    loadDesignations();
     loadAllEmployees();
   }, []);
 
@@ -111,6 +113,15 @@ export default function EmployeesPage() {
       setDepartments(response.data || []);
     } catch (error) {
       console.error('Failed to load departments:', error);
+    }
+  };
+
+  const loadDesignations = async () => {
+    try {
+      const response = await designationsApi.getAll();
+      setDesignations(response.data.filter((d: Designation) => d.isActive));
+    } catch (error) {
+      console.error('Failed to load designations:', error);
     }
   };
 
@@ -167,7 +178,7 @@ export default function EmployeesPage() {
       hourlyRate: employee.hourlyRate?.toString() || '',
       otMultiplier: employee.otMultiplier?.toString() || '1.5',
       departmentId: employee.departmentId || '',
-      designation: employee.designation || '',
+      designationId: employee.designationId || '',
       managerId: employee.managerId || '',
       joinDate: employee.joinDate?.split('T')[0] || '',
       exitDate: employee.exitDate?.split('T')[0] || '',
@@ -253,7 +264,7 @@ export default function EmployeesPage() {
         hourlyRate: formData.hourlyRate ? parseFloat(formData.hourlyRate) : undefined,
         otMultiplier: formData.otMultiplier ? parseFloat(formData.otMultiplier) : 1.5,
         departmentId: formData.departmentId || undefined,
-        designation: formData.designation || undefined,
+        designationId: formData.designationId || undefined,
         managerId: formData.managerId || undefined,
         joinDate: formData.joinDate,
         exitDate: formData.exitDate || undefined,
@@ -293,7 +304,7 @@ export default function EmployeesPage() {
         hourlyRate: formData.hourlyRate ? parseFloat(formData.hourlyRate) : undefined,
         otMultiplier: formData.otMultiplier ? parseFloat(formData.otMultiplier) : undefined,
         departmentId: formData.departmentId || undefined,
-        designation: formData.designation || undefined,
+        designationId: formData.designationId || undefined,
         managerId: formData.managerId || undefined,
         exitDate: formData.exitDate || undefined,
         status: formData.status,
@@ -401,10 +412,10 @@ export default function EmployeesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Employees</h1>
-          <p className="text-gray-500">Manage and view employee information</p>
+          <h1 className="text-xl sm:text-2xl font-bold text-warm-900">Employees</h1>
+          <p className="text-warm-500">Manage and view employee information</p>
         </div>
         <div className="flex gap-2">
           {isAdmin && (
@@ -417,7 +428,7 @@ export default function EmployeesPage() {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
@@ -425,8 +436,8 @@ export default function EmployeesPage() {
                 <Users className="h-5 w-5 text-blue-600" />
               </div>
               <div>
-                <p className="text-sm text-gray-500">Total Employees</p>
-                <p className="text-2xl font-bold text-gray-900">{total}</p>
+                <p className="text-sm text-warm-500">Total Employees</p>
+                <p className="text-2xl font-bold text-warm-900">{total}</p>
               </div>
             </div>
           </CardContent>
@@ -434,12 +445,12 @@ export default function EmployeesPage() {
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-green-100 rounded-lg">
-                <Users className="h-5 w-5 text-green-600" />
+              <div className="p-2 bg-emerald-100 rounded-lg">
+                <Users className="h-5 w-5 text-emerald-600" />
               </div>
               <div>
-                <p className="text-sm text-gray-500">Active</p>
-                <p className="text-2xl font-bold text-gray-900">
+                <p className="text-sm text-warm-500">Active</p>
+                <p className="text-2xl font-bold text-warm-900">
                   {allEmployees.filter(e => e.status === EmployeeStatus.ACTIVE).length}
                 </p>
               </div>
@@ -453,8 +464,8 @@ export default function EmployeesPage() {
                 <Building2 className="h-5 w-5 text-purple-600" />
               </div>
               <div>
-                <p className="text-sm text-gray-500">Departments</p>
-                <p className="text-2xl font-bold text-gray-900">{departments.length}</p>
+                <p className="text-sm text-warm-500">Departments</p>
+                <p className="text-2xl font-bold text-warm-900">{departments.length}</p>
               </div>
             </div>
           </CardContent>
@@ -466,8 +477,8 @@ export default function EmployeesPage() {
                 <Calendar className="h-5 w-5 text-orange-600" />
               </div>
               <div>
-                <p className="text-sm text-gray-500">New This Month</p>
-                <p className="text-2xl font-bold text-gray-900">
+                <p className="text-sm text-warm-500">New This Month</p>
+                <p className="text-2xl font-bold text-warm-900">
                   {allEmployees.filter(e => {
                     const joinDate = new Date(e.joinDate);
                     const now = new Date();
@@ -487,7 +498,7 @@ export default function EmployeesPage() {
           <div className="space-y-4">
             <div className="flex flex-col md:flex-row gap-4">
               <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-warm-400" />
                 <Input
                   placeholder="Search by name, email, or employee code..."
                   value={search}
@@ -518,7 +529,7 @@ export default function EmployeesPage() {
             </div>
 
             {showFilters && (
-              <div className="grid gap-4 md:grid-cols-3 pt-4 border-t">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 pt-4 border-t">
                 <Select
                   label="Department"
                   value={selectedDepartment}
@@ -546,7 +557,7 @@ export default function EmployeesPage() {
               </div>
             )}
 
-            <div className="flex items-center justify-between text-sm text-gray-500">
+            <div className="flex items-center justify-between text-sm text-warm-500">
               <span>Showing {employees.length} of {total} employees</span>
             </div>
           </div>
@@ -560,11 +571,11 @@ export default function EmployeesPage() {
             <TableRow>
               <TableHead className="w-8"></TableHead>
               <TableHead>Employee</TableHead>
-              <TableHead>Code</TableHead>
-              <TableHead>Department</TableHead>
-              <TableHead>Designation</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Tenure</TableHead>
+              <TableHead className="hidden sm:table-cell">Code</TableHead>
+              <TableHead className="hidden md:table-cell">Department</TableHead>
+              <TableHead className="hidden lg:table-cell">Designation</TableHead>
+              <TableHead className="hidden sm:table-cell">Type</TableHead>
+              <TableHead className="hidden lg:table-cell">Tenure</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Actions</TableHead>
             </TableRow>
@@ -580,16 +591,16 @@ export default function EmployeesPage() {
             ) : (
               employees.map((employee) => (
                 <React.Fragment key={employee.id}>
-                  <TableRow className="cursor-pointer hover:bg-gray-50">
+                  <TableRow className="cursor-pointer hover:bg-warm-50">
                     <TableCell>
                       <button
                         onClick={() => toggleRowExpansion(employee.id)}
-                        className="p-1 hover:bg-gray-100 rounded"
+                        className="p-1 hover:bg-warm-100 rounded"
                       >
                         {expandedRows.has(employee.id) ? (
-                          <ChevronUp className="h-4 w-4 text-gray-500" />
+                          <ChevronUp className="h-4 w-4 text-warm-500" />
                         ) : (
-                          <ChevronDown className="h-4 w-4 text-gray-500" />
+                          <ChevronDown className="h-4 w-4 text-warm-500" />
                         )}
                       </button>
                     </TableCell>
@@ -601,31 +612,31 @@ export default function EmployeesPage() {
                           </span>
                         </div>
                         <div className="min-w-0">
-                          <p className="font-medium text-gray-900 truncate">
+                          <p className="font-medium text-warm-900 truncate">
                             {employee.firstName} {employee.lastName}
                           </p>
-                          <p className="text-sm text-gray-500 truncate">{employee.email}</p>
+                          <p className="text-sm text-warm-500 truncate">{employee.email}</p>
                         </div>
                       </div>
                     </TableCell>
-                    <TableCell>
-                      <span className="font-mono text-sm bg-gray-100 px-2 py-1 rounded">
+                    <TableCell className="hidden sm:table-cell">
+                      <span className="font-mono text-sm bg-warm-100 px-2 py-1 rounded">
                         {employee.employeeCode}
                       </span>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden md:table-cell">
                       <span className="text-sm">{employee.department?.name || '-'}</span>
                     </TableCell>
-                    <TableCell>
-                      <span className="text-sm">{employee.designation || '-'}</span>
+                    <TableCell className="hidden lg:table-cell">
+                      <span className="text-sm">{employee.designation?.name || '-'}</span>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden sm:table-cell">
                       <Badge variant="gray">
                         {employee.employmentType.replace('_', ' ')}
                       </Badge>
                     </TableCell>
-                    <TableCell>
-                      <span className="text-sm text-gray-600">
+                    <TableCell className="hidden lg:table-cell">
+                      <span className="text-sm text-warm-600">
                         {calculateTenure(employee.joinDate)}
                       </span>
                     </TableCell>
@@ -679,50 +690,50 @@ export default function EmployeesPage() {
                   </TableRow>
                   {/* Expanded Row Content */}
                   {expandedRows.has(employee.id) && (
-                    <tr className="bg-gray-50">
+                    <tr className="bg-warm-50">
                       <td colSpan={9} className="px-4 py-3">
-                        <div className="grid md:grid-cols-4 gap-4 text-sm">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                           <div>
-                            <p className="text-gray-500 mb-1">Contact Information</p>
+                            <p className="text-warm-500 mb-1">Contact Information</p>
                             <div className="space-y-1">
                               <div className="flex items-center gap-2">
-                                <Mail className="h-4 w-4 text-gray-400" />
+                                <Mail className="h-4 w-4 text-warm-400" />
                                 <span>{employee.email}</span>
                               </div>
                               {employee.phone && (
                                 <div className="flex items-center gap-2">
-                                  <Phone className="h-4 w-4 text-gray-400" />
+                                  <Phone className="h-4 w-4 text-warm-400" />
                                   <span>{employee.phone}</span>
                                 </div>
                               )}
                             </div>
                           </div>
                           <div>
-                            <p className="text-gray-500 mb-1">Employment Details</p>
+                            <p className="text-warm-500 mb-1">Employment Details</p>
                             <div className="space-y-1">
-                              <p><span className="text-gray-500">Pay Type:</span> {employee.payType}</p>
+                              <p><span className="text-warm-500">Pay Type:</span> {employee.payType}</p>
                               {employee.hourlyRate && (
-                                <p><span className="text-gray-500">Hourly Rate:</span> ${employee.hourlyRate}</p>
+                                <p><span className="text-warm-500">Hourly Rate:</span> ${employee.hourlyRate}</p>
                               )}
-                              <p><span className="text-gray-500">OT Multiplier:</span> {employee.otMultiplier}x</p>
+                              <p><span className="text-warm-500">OT Multiplier:</span> {employee.otMultiplier}x</p>
                             </div>
                           </div>
                           <div>
-                            <p className="text-gray-500 mb-1">Dates</p>
+                            <p className="text-warm-500 mb-1">Dates</p>
                             <div className="space-y-1">
-                              <p><span className="text-gray-500">Joined:</span> {formatDate(employee.joinDate)}</p>
+                              <p><span className="text-warm-500">Joined:</span> {formatDate(employee.joinDate)}</p>
                               {employee.exitDate && (
-                                <p><span className="text-gray-500">Exit:</span> {formatDate(employee.exitDate)}</p>
+                                <p><span className="text-warm-500">Exit:</span> {formatDate(employee.exitDate)}</p>
                               )}
                             </div>
                           </div>
                           <div>
-                            <p className="text-gray-500 mb-1">Reporting</p>
+                            <p className="text-warm-500 mb-1">Reporting</p>
                             <div className="space-y-1">
                               {employee.manager ? (
-                                <p><span className="text-gray-500">Manager:</span> {employee.manager.firstName} {employee.manager.lastName}</p>
+                                <p><span className="text-warm-500">Manager:</span> {employee.manager.firstName} {employee.manager.lastName}</p>
                               ) : (
-                                <p className="text-gray-400">No manager assigned</p>
+                                <p className="text-warm-400">No manager assigned</p>
                               )}
                             </div>
                           </div>
@@ -739,7 +750,7 @@ export default function EmployeesPage() {
         {/* Pagination */}
         {totalPages > 1 && (
           <div className="flex items-center justify-between px-4 py-3 border-t">
-            <div className="text-sm text-gray-500">
+            <div className="text-sm text-warm-500">
               Page {page} of {totalPages}
             </div>
             <div className="flex gap-2">
@@ -804,7 +815,7 @@ export default function EmployeesPage() {
           <div className="space-y-6">
             {/* Basic Information */}
             <div>
-              <h4 className="text-sm font-medium text-gray-900 mb-3">Basic Information</h4>
+              <h4 className="text-sm font-medium text-warm-900 mb-3">Basic Information</h4>
               <FormGrid cols={2}>
                 <FormRow>
                   <Input
@@ -848,11 +859,14 @@ export default function EmployeesPage() {
                   />
                 </FormRow>
                 <FormRow>
-                  <Input
+                  <Select
                     label="Designation"
-                    value={formData.designation}
-                    onChange={(e) => handleFormChange('designation', e.target.value)}
-                    placeholder="Software Engineer"
+                    value={formData.designationId}
+                    onChange={(e) => handleFormChange('designationId', e.target.value)}
+                    options={[
+                      { value: '', label: 'Select Designation' },
+                      ...designations.map((d) => ({ value: d.id, label: d.name })),
+                    ]}
                   />
                 </FormRow>
               </FormGrid>
@@ -860,7 +874,7 @@ export default function EmployeesPage() {
 
             {/* Employment Details */}
             <div>
-              <h4 className="text-sm font-medium text-gray-900 mb-3">Employment Details</h4>
+              <h4 className="text-sm font-medium text-warm-900 mb-3">Employment Details</h4>
               <FormGrid cols={2}>
                 <FormRow>
                   <Select
@@ -937,7 +951,7 @@ export default function EmployeesPage() {
 
             {/* Compensation */}
             <div>
-              <h4 className="text-sm font-medium text-gray-900 mb-3">Compensation</h4>
+              <h4 className="text-sm font-medium text-warm-900 mb-3">Compensation</h4>
               <FormGrid cols={3}>
                 <FormRow>
                   <Select
@@ -996,14 +1010,14 @@ export default function EmployeesPage() {
           <div className="space-y-6">
             {/* Basic Information */}
             <div>
-              <h4 className="text-sm font-medium text-gray-900 mb-3">Basic Information</h4>
+              <h4 className="text-sm font-medium text-warm-900 mb-3">Basic Information</h4>
               <FormGrid cols={2}>
                 <FormRow>
                   <Input
                     label="Employee Code"
                     value={formData.employeeCode}
                     disabled
-                    className="bg-gray-50"
+                    className="bg-warm-50"
                   />
                 </FormRow>
                 <FormRow>
@@ -1040,11 +1054,14 @@ export default function EmployeesPage() {
                   />
                 </FormRow>
                 <FormRow>
-                  <Input
+                  <Select
                     label="Designation"
-                    value={formData.designation}
-                    onChange={(e) => handleFormChange('designation', e.target.value)}
-                    placeholder="Software Engineer"
+                    value={formData.designationId}
+                    onChange={(e) => handleFormChange('designationId', e.target.value)}
+                    options={[
+                      { value: '', label: 'Select Designation' },
+                      ...designations.map((d) => ({ value: d.id, label: d.name })),
+                    ]}
                   />
                 </FormRow>
               </FormGrid>
@@ -1052,7 +1069,7 @@ export default function EmployeesPage() {
 
             {/* Employment Details */}
             <div>
-              <h4 className="text-sm font-medium text-gray-900 mb-3">Employment Details</h4>
+              <h4 className="text-sm font-medium text-warm-900 mb-3">Employment Details</h4>
               <FormGrid cols={2}>
                 <FormRow>
                   <Select
@@ -1114,7 +1131,7 @@ export default function EmployeesPage() {
                     type="date"
                     value={formData.joinDate}
                     disabled
-                    className="bg-gray-50"
+                    className="bg-warm-50"
                   />
                 </FormRow>
                 <FormRow>
@@ -1130,7 +1147,7 @@ export default function EmployeesPage() {
 
             {/* Compensation */}
             <div>
-              <h4 className="text-sm font-medium text-gray-900 mb-3">Compensation</h4>
+              <h4 className="text-sm font-medium text-warm-900 mb-3">Compensation</h4>
               <FormGrid cols={3}>
                 <FormRow>
                   <Select
@@ -1192,10 +1209,10 @@ export default function EmployeesPage() {
                 </span>
               </div>
               <div className="flex-1">
-                <h3 className="text-xl font-semibold text-gray-900">
+                <h3 className="text-xl font-semibold text-warm-900">
                   {selectedEmployee.firstName} {selectedEmployee.lastName}
                 </h3>
-                <p className="text-gray-500">{selectedEmployee.designation || 'No designation'}</p>
+                <p className="text-warm-500">{selectedEmployee.designation?.name || 'No designation'}</p>
                 <div className="flex items-center gap-2 mt-2">
                   <Badge variant="gray">{selectedEmployee.employeeCode}</Badge>
                   <Badge variant={getStatusBadgeVariant(selectedEmployee.status)}>
@@ -1216,19 +1233,19 @@ export default function EmployeesPage() {
 
             {/* Contact Information */}
             <div>
-              <h4 className="text-sm font-medium text-gray-900 mb-3">Contact Information</h4>
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                  <Mail className="h-5 w-5 text-gray-400" />
+              <h4 className="text-sm font-medium text-warm-900 mb-3">Contact Information</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="flex items-center gap-3 p-3 bg-warm-50 rounded-lg">
+                  <Mail className="h-5 w-5 text-warm-400" />
                   <div>
-                    <p className="text-xs text-gray-500">Email</p>
+                    <p className="text-xs text-warm-500">Email</p>
                     <p className="text-sm font-medium">{selectedEmployee.email}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
-                  <Phone className="h-5 w-5 text-gray-400" />
+                <div className="flex items-center gap-3 p-3 bg-warm-50 rounded-lg">
+                  <Phone className="h-5 w-5 text-warm-400" />
                   <div>
-                    <p className="text-xs text-gray-500">Phone</p>
+                    <p className="text-xs text-warm-500">Phone</p>
                     <p className="text-sm font-medium">{selectedEmployee.phone || '-'}</p>
                   </div>
                 </div>
@@ -1237,26 +1254,26 @@ export default function EmployeesPage() {
 
             {/* Employment Details */}
             <div>
-              <h4 className="text-sm font-medium text-gray-900 mb-3">Employment Details</h4>
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="text-xs text-gray-500">Department</p>
+              <h4 className="text-sm font-medium text-warm-900 mb-3">Employment Details</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="p-3 bg-warm-50 rounded-lg">
+                  <p className="text-xs text-warm-500">Department</p>
                   <p className="text-sm font-medium">{selectedEmployee.department?.name || '-'}</p>
                 </div>
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="text-xs text-gray-500">Employment Type</p>
+                <div className="p-3 bg-warm-50 rounded-lg">
+                  <p className="text-xs text-warm-500">Employment Type</p>
                   <p className="text-sm font-medium">{selectedEmployee.employmentType.replace('_', ' ')}</p>
                 </div>
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="text-xs text-gray-500">Reporting Manager</p>
+                <div className="p-3 bg-warm-50 rounded-lg">
+                  <p className="text-xs text-warm-500">Reporting Manager</p>
                   <p className="text-sm font-medium">
                     {selectedEmployee.manager 
                       ? `${selectedEmployee.manager.firstName} ${selectedEmployee.manager.lastName}`
                       : '-'}
                   </p>
                 </div>
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="text-xs text-gray-500">Tenure</p>
+                <div className="p-3 bg-warm-50 rounded-lg">
+                  <p className="text-xs text-warm-500">Tenure</p>
                   <p className="text-sm font-medium">{calculateTenure(selectedEmployee.joinDate)}</p>
                 </div>
               </div>
@@ -1264,14 +1281,14 @@ export default function EmployeesPage() {
 
             {/* Dates */}
             <div>
-              <h4 className="text-sm font-medium text-gray-900 mb-3">Important Dates</h4>
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="text-xs text-gray-500">Join Date</p>
+              <h4 className="text-sm font-medium text-warm-900 mb-3">Important Dates</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="p-3 bg-warm-50 rounded-lg">
+                  <p className="text-xs text-warm-500">Join Date</p>
                   <p className="text-sm font-medium">{formatDate(selectedEmployee.joinDate)}</p>
                 </div>
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="text-xs text-gray-500">Exit Date</p>
+                <div className="p-3 bg-warm-50 rounded-lg">
+                  <p className="text-xs text-warm-500">Exit Date</p>
                   <p className="text-sm font-medium">{formatDate(selectedEmployee.exitDate)}</p>
                 </div>
               </div>
@@ -1279,20 +1296,20 @@ export default function EmployeesPage() {
 
             {/* Compensation */}
             <div>
-              <h4 className="text-sm font-medium text-gray-900 mb-3">Compensation</h4>
-              <div className="grid md:grid-cols-3 gap-4">
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="text-xs text-gray-500">Pay Type</p>
+              <h4 className="text-sm font-medium text-warm-900 mb-3">Compensation</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="p-3 bg-warm-50 rounded-lg">
+                  <p className="text-xs text-warm-500">Pay Type</p>
                   <p className="text-sm font-medium">{selectedEmployee.payType}</p>
                 </div>
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="text-xs text-gray-500">Hourly Rate</p>
+                <div className="p-3 bg-warm-50 rounded-lg">
+                  <p className="text-xs text-warm-500">Hourly Rate</p>
                   <p className="text-sm font-medium">
                     {selectedEmployee.hourlyRate ? `$${selectedEmployee.hourlyRate}` : '-'}
                   </p>
                 </div>
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="text-xs text-gray-500">OT Multiplier</p>
+                <div className="p-3 bg-warm-50 rounded-lg">
+                  <p className="text-xs text-warm-500">OT Multiplier</p>
                   <p className="text-sm font-medium">{selectedEmployee.otMultiplier}x</p>
                 </div>
               </div>
@@ -1320,15 +1337,15 @@ export default function EmployeesPage() {
             <div className="mx-auto h-12 w-12 rounded-full bg-red-100 flex items-center justify-center mb-4">
               <Trash2 className="h-6 w-6 text-red-600" />
             </div>
-            <p className="text-gray-900 font-medium">
+            <p className="text-warm-900 font-medium">
               Are you sure you want to delete this employee?
             </p>
             {selectedEmployee && (
-              <p className="text-gray-500 mt-1">
+              <p className="text-warm-500 mt-1">
                 {selectedEmployee.firstName} {selectedEmployee.lastName} ({selectedEmployee.employeeCode})
               </p>
             )}
-            <p className="text-sm text-gray-400 mt-2">
+            <p className="text-sm text-warm-400 mt-2">
               This action cannot be undone.
             </p>
           </div>

@@ -238,11 +238,11 @@ export default function ShiftsAdminPage() {
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                        <h1 className="text-2xl font-bold text-warm-900 flex items-center gap-2">
                             <Timer className="w-7 h-7 text-primary-600" />
                             Shift Management
                         </h1>
-                        <p className="text-gray-600 mt-1">
+                        <p className="text-warm-600 mt-1">
                             Configure work shifts and assign employees
                         </p>
                     </div>
@@ -273,7 +273,7 @@ export default function ShiftsAdminPage() {
                 </div>
 
                 {/* Tabs */}
-                <div className="border-b border-gray-200">
+                <div className="border-b border-warm-200">
                     <div className="flex gap-4">
                         <button
                             onClick={() => setActiveTab('shifts')}
@@ -281,7 +281,7 @@ export default function ShiftsAdminPage() {
                                 'pb-3 px-1 text-sm font-medium border-b-2 transition-colors',
                                 activeTab === 'shifts'
                                     ? 'border-primary-600 text-primary-600'
-                                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                                    : 'border-transparent text-warm-500 hover:text-warm-700'
                             )}
                         >
                             <Timer className="w-4 h-4 inline mr-2" />
@@ -293,7 +293,7 @@ export default function ShiftsAdminPage() {
                                 'pb-3 px-1 text-sm font-medium border-b-2 transition-colors',
                                 activeTab === 'assignments'
                                     ? 'border-primary-600 text-primary-600'
-                                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                                    : 'border-transparent text-warm-500 hover:text-warm-700'
                             )}
                         >
                             <Users className="w-4 h-4 inline mr-2" />
@@ -312,11 +312,11 @@ export default function ShiftsAdminPage() {
                         ) : shifts.length === 0 ? (
                             <Card>
                                 <CardContent className="py-16 text-center">
-                                    <Timer className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                                    <Timer className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+                                    <h3 className="text-lg font-semibold text-warm-900 mb-2">
                                         No Shifts Configured
                                     </h3>
-                                    <p className="text-gray-600 mb-4">
+                                    <p className="text-warm-600 mb-4">
                                         Create your first shift to get started.
                                     </p>
                                     <Button onClick={openCreateShift}>
@@ -339,7 +339,7 @@ export default function ShiftsAdminPage() {
                                                         <CardTitle className="text-base">
                                                             {shift.name}
                                                         </CardTitle>
-                                                        <span className="text-xs text-gray-500">
+                                                        <span className="text-xs text-warm-500">
                                                             {shift.code}
                                                         </span>
                                                     </div>
@@ -347,13 +347,13 @@ export default function ShiftsAdminPage() {
                                                 <div className="flex gap-1">
                                                     <button
                                                         onClick={() => openEditShift(shift)}
-                                                        className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                                                        className="p-2 text-warm-400 hover:text-warm-600 hover:bg-warm-100 rounded-lg transition-colors"
                                                     >
                                                         <Edit2 className="w-4 h-4" />
                                                     </button>
                                                     <button
                                                         onClick={() => openDeleteShift(shift)}
-                                                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                        className="p-2 text-warm-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                                     >
                                                         <Trash2 className="w-4 h-4" />
                                                     </button>
@@ -362,35 +362,35 @@ export default function ShiftsAdminPage() {
                                         </CardHeader>
                                         <CardContent>
                                             <div className="space-y-2 text-sm">
-                                                <div className="flex items-center gap-2 text-gray-600">
-                                                    <Clock className="w-4 h-4 text-gray-400" />
+                                                <div className="flex items-center gap-2 text-warm-600">
+                                                    <Clock className="w-4 h-4 text-warm-400" />
                                                     <span>
                                                         {formatTime(shift.startTime)} -{' '}
                                                         {formatTime(shift.endTime)}
                                                     </span>
                                                 </div>
-                                                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-gray-100">
+                                                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-warm-100">
                                                     <div className="text-center">
-                                                        <p className="text-xs text-gray-500">
+                                                        <p className="text-xs text-warm-500">
                                                             Work
                                                         </p>
-                                                        <p className="font-medium text-gray-900">
+                                                        <p className="font-medium text-warm-900">
                                                             {calcHours(shift.standardWorkMinutes)}
                                                         </p>
                                                     </div>
                                                     <div className="text-center">
-                                                        <p className="text-xs text-gray-500">
+                                                        <p className="text-xs text-warm-500">
                                                             Break
                                                         </p>
-                                                        <p className="font-medium text-gray-900">
+                                                        <p className="font-medium text-warm-900">
                                                             {calcHours(shift.breakMinutes)}
                                                         </p>
                                                     </div>
                                                     <div className="text-center">
-                                                        <p className="text-xs text-gray-500">
+                                                        <p className="text-xs text-warm-500">
                                                             Grace
                                                         </p>
-                                                        <p className="font-medium text-gray-900">
+                                                        <p className="font-medium text-warm-900">
                                                             {shift.graceMinutes}m
                                                         </p>
                                                     </div>
@@ -410,11 +410,11 @@ export default function ShiftsAdminPage() {
                         {assignments.length === 0 ? (
                             <Card>
                                 <CardContent className="py-16 text-center">
-                                    <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                                    <Users className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+                                    <h3 className="text-lg font-semibold text-warm-900 mb-2">
                                         No Active Assignments
                                     </h3>
-                                    <p className="text-gray-600 mb-4">
+                                    <p className="text-warm-600 mb-4">
                                         Assign employees to shifts to get started.
                                     </p>
                                     <Button onClick={openAssignModal}>
@@ -428,38 +428,38 @@ export default function ShiftsAdminPage() {
                                 <div className="overflow-x-auto">
                                     <table className="w-full">
                                         <thead>
-                                            <tr className="border-b border-gray-200 bg-gray-50">
-                                                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">
+                                            <tr className="border-b border-warm-200 bg-warm-50">
+                                                <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">
                                                     Employee
                                                 </th>
-                                                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">
+                                                <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">
                                                     Shift
                                                 </th>
-                                                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">
+                                                <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">
                                                     Timing
                                                 </th>
-                                                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">
+                                                <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">
                                                     Start Date
                                                 </th>
-                                                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">
+                                                <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">
                                                     Status
                                                 </th>
                                             </tr>
                                         </thead>
-                                        <tbody className="divide-y divide-gray-200">
+                                        <tbody className="divide-y divide-warm-200">
                                             {assignments.map((assignment) => (
                                                 <tr
                                                     key={assignment.id}
-                                                    className="hover:bg-gray-50 transition-colors"
+                                                    className="hover:bg-warm-50 transition-colors"
                                                 >
                                                     <td className="px-4 py-3">
                                                         <div>
-                                                            <p className="text-sm font-medium text-gray-900">
+                                                            <p className="text-sm font-medium text-warm-900">
                                                                 {assignment.employee
                                                                     ? `${assignment.employee.firstName} ${assignment.employee.lastName}`
                                                                     : '—'}
                                                             </p>
-                                                            <p className="text-xs text-gray-500">
+                                                            <p className="text-xs text-warm-500">
                                                                 {assignment.employee?.employeeCode}
                                                             </p>
                                                         </div>
@@ -470,13 +470,13 @@ export default function ShiftsAdminPage() {
                                                                 assignment.shiftId}
                                                         </Badge>
                                                     </td>
-                                                    <td className="px-4 py-3 text-sm text-gray-600">
+                                                    <td className="px-4 py-3 text-sm text-warm-600">
                                                         {assignment.shift?.startTime &&
                                                         assignment.shift?.endTime
                                                             ? `${formatTime(assignment.shift.startTime)} - ${formatTime(assignment.shift.endTime)}`
                                                             : '—'}
                                                     </td>
-                                                    <td className="px-4 py-3 text-sm text-gray-600">
+                                                    <td className="px-4 py-3 text-sm text-warm-600">
                                                         {new Date(
                                                             assignment.startDate
                                                         ).toLocaleDateString()}
@@ -517,7 +517,7 @@ export default function ShiftsAdminPage() {
                 <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 Shift Name *
                             </label>
                             <input
@@ -527,11 +527,11 @@ export default function ShiftsAdminPage() {
                                     setShiftForm({ ...shiftForm, name: e.target.value })
                                 }
                                 placeholder="e.g., Morning Shift"
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 Code *
                             </label>
                             <input
@@ -545,14 +545,14 @@ export default function ShiftsAdminPage() {
                                 }
                                 placeholder="e.g., MS"
                                 maxLength={10}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 Start Time *
                             </label>
                             <input
@@ -561,11 +561,11 @@ export default function ShiftsAdminPage() {
                                 onChange={(e) =>
                                     setShiftForm({ ...shiftForm, startTime: e.target.value })
                                 }
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 End Time *
                             </label>
                             <input
@@ -574,14 +574,14 @@ export default function ShiftsAdminPage() {
                                 onChange={(e) =>
                                     setShiftForm({ ...shiftForm, endTime: e.target.value })
                                 }
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                     </div>
 
                     <div className="grid grid-cols-3 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 Break (minutes)
                             </label>
                             <input
@@ -594,11 +594,11 @@ export default function ShiftsAdminPage() {
                                     })
                                 }
                                 min={0}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 Standard Work (min)
                             </label>
                             <input
@@ -611,11 +611,11 @@ export default function ShiftsAdminPage() {
                                     })
                                 }
                                 min={0}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 Grace (minutes)
                             </label>
                             <input
@@ -628,7 +628,7 @@ export default function ShiftsAdminPage() {
                                     })
                                 }
                                 min={0}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                     </div>
@@ -664,7 +664,7 @@ export default function ShiftsAdminPage() {
                 title="Delete Shift"
                 size="sm"
             >
-                <p className="text-gray-600">
+                <p className="text-warm-600">
                     Are you sure you want to delete{' '}
                     <strong>{deletingShift?.name}</strong>? This will deactivate
                     the shift. Existing assignments will not be affected.
@@ -692,7 +692,7 @@ export default function ShiftsAdminPage() {
             >
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-medium text-warm-700 mb-1">
                             Employee *
                         </label>
                         <select
@@ -700,7 +700,7 @@ export default function ShiftsAdminPage() {
                             onChange={(e) =>
                                 setAssignForm({ ...assignForm, employeeId: e.target.value })
                             }
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         >
                             <option value="">Select Employee</option>
                             {employees.map((emp) => (
@@ -712,7 +712,7 @@ export default function ShiftsAdminPage() {
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-medium text-warm-700 mb-1">
                             Shift *
                         </label>
                         <select
@@ -720,7 +720,7 @@ export default function ShiftsAdminPage() {
                             onChange={(e) =>
                                 setAssignForm({ ...assignForm, shiftId: e.target.value })
                             }
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         >
                             <option value="">Select Shift</option>
                             {shifts.map((shift) => (
@@ -734,7 +734,7 @@ export default function ShiftsAdminPage() {
 
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 Start Date *
                             </label>
                             <input
@@ -743,11 +743,11 @@ export default function ShiftsAdminPage() {
                                 onChange={(e) =>
                                     setAssignForm({ ...assignForm, startDate: e.target.value })
                                 }
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 End Date (Optional)
                             </label>
                             <input
@@ -756,12 +756,12 @@ export default function ShiftsAdminPage() {
                                 onChange={(e) =>
                                     setAssignForm({ ...assignForm, endDate: e.target.value })
                                 }
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                     </div>
 
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-warm-500">
                         Note: Assigning a new shift will automatically deactivate any current
                         active shift assignment for this employee.
                     </p>

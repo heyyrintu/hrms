@@ -35,6 +35,21 @@ api.interceptors.response.use(
   }
 );
 
+// Companies API (SUPER_ADMIN only)
+export const companiesApi = {
+  getAll: (params?: Record<string, unknown>) => api.get('/companies', { params }),
+  getById: (id: string) => api.get(`/companies/${id}`),
+  getStats: () => api.get('/companies/stats'),
+  create: (data: Record<string, unknown>) => api.post('/companies', data),
+  update: (id: string, data: Record<string, unknown>) => api.put(`/companies/${id}`, data),
+  uploadLogo: (id: string, formData: FormData) =>
+    api.post(`/companies/${id}/logo`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
+  toggleStatus: (id: string) => api.put(`/companies/${id}/toggle-status`),
+  delete: (id: string) => api.delete(`/companies/${id}`),
+};
+
 // Auth API
 export const authApi = {
   login: (email: string, password: string) =>
@@ -49,6 +64,7 @@ export const employeesApi = {
   getAll: (params?: Record<string, unknown>) => api.get('/employees', { params }),
   getById: (id: string) => api.get(`/employees/${id}`),
   get360View: (id: string) => api.get(`/employees/${id}/360`),
+  getOrgChart: () => api.get('/employees/org-chart'),
   create: (data: Record<string, unknown>) => api.post('/employees', data),
   update: (id: string, data: Record<string, unknown>) => api.put(`/employees/${id}`, data),
   delete: (id: string) => api.delete(`/employees/${id}`),
@@ -64,10 +80,30 @@ export const departmentsApi = {
   delete: (id: string) => api.delete(`/departments/${id}`),
 };
 
+// Designations API
+export const designationsApi = {
+  getAll: () => api.get('/designations'),
+  getById: (id: string) => api.get(`/designations/${id}`),
+  create: (data: Record<string, unknown>) => api.post('/designations', data),
+  update: (id: string, data: Record<string, unknown>) => api.put(`/designations/${id}`, data),
+  delete: (id: string) => api.delete(`/designations/${id}`),
+};
+
+// Branches API
+export const branchesApi = {
+  getAll: () => api.get('/branches'),
+  getById: (id: string) => api.get(`/branches/${id}`),
+  create: (data: Record<string, unknown>) => api.post('/branches', data),
+  update: (id: string, data: Record<string, unknown>) => api.put(`/branches/${id}`, data),
+  delete: (id: string) => api.delete(`/branches/${id}`),
+};
+
 // Attendance API
 export const attendanceApi = {
-  clockIn: (data?: Record<string, unknown>) => api.post('/attendance/clock-in', data || {}),
-  clockOut: (data?: Record<string, unknown>) => api.post('/attendance/clock-out', data || {}),
+  clockIn: (latitude: number, longitude: number, data?: Record<string, unknown>) =>
+    api.post('/attendance/clock-in', { latitude, longitude, ...data }),
+  clockOut: (latitude?: number, longitude?: number, data?: Record<string, unknown>) =>
+    api.post('/attendance/clock-out', { ...(latitude != null && { latitude }), ...(longitude != null && { longitude }), ...data }),
   getTodayStatus: () => api.get('/attendance/today'),
   getMyAttendance: (from: string, to: string) =>
     api.get('/attendance/me', { params: { from, to } }),
@@ -117,6 +153,16 @@ export const leaveApi = {
     api.get('/leave/admin/requests', { params }),
   getAnalytics: (year?: number) =>
     api.get('/leave/admin/analytics', { params: year ? { year } : {} }),
+};
+
+// Comp-Off API
+export const compOffApi = {
+  create: (data: Record<string, unknown>) => api.post('/leave/comp-off', data),
+  getMyRequests: (params?: Record<string, unknown>) => api.get('/leave/comp-off/me', { params }),
+  getPendingApprovals: () => api.get('/leave/comp-off/pending-approvals'),
+  getAllRequests: (params?: Record<string, unknown>) => api.get('/leave/comp-off/all', { params }),
+  approve: (id: string, note?: string) => api.post(`/leave/comp-off/${id}/approve`, { approverNote: note }),
+  reject: (id: string, note?: string) => api.post(`/leave/comp-off/${id}/reject`, { approverNote: note }),
 };
 
 // Leave Accrual API
@@ -192,6 +238,13 @@ export const documentsApi = {
     api.post(`/employees/${employeeId}/documents/${docId}/verify`),
   delete: (employeeId: string, docId: string) =>
     api.delete(`/employees/${employeeId}/documents/${docId}`),
+
+  // Document Expiry (Admin)
+  getExpiring: (days?: number) =>
+    api.get('/employees/documents/expiring', { params: days ? { days } : {} }),
+  getExpired: () => api.get('/employees/documents/expired'),
+  sendExpiryAlerts: (days?: number) =>
+    api.post('/employees/documents/send-expiry-alerts', { days }),
 };
 
 // Self-Service API
@@ -234,6 +287,7 @@ export const announcementsApi = {
 // Admin API
 export const adminApi = {
   getDashboard: () => api.get('/admin/dashboard'),
+  getAnalytics: () => api.get('/admin/analytics'),
   getOtRules: () => api.get('/admin/settings/ot-rules'),
   getOtRule: (id: string) => api.get(`/admin/settings/ot-rules/${id}`),
   createOtRule: (data: Record<string, unknown>) => api.post('/admin/settings/ot-rules', data),
@@ -272,6 +326,60 @@ export const payrollApi = {
     api.get(`/payroll/runs/${runId}/payslips`, { params }),
   getMyPayslips: () => api.get('/payroll/my-payslips'),
   getPayslip: (id: string) => api.get(`/payroll/payslips/${id}`),
+  getEmployeePayslips: (employeeId: string) =>
+    api.get(`/payroll/employees/${employeeId}/payslips`),
+  downloadPayslip: async (id: string, filename: string) => {
+    const response = await api.get(`/payroll/payslips/${id}/pdf`, { responseType: 'blob' });
+    const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  },
+};
+
+// Exit / Separation API
+export const exitApi = {
+  initiate: (data: Record<string, unknown>) => api.post('/exit/separations', data),
+  getAll: (params?: Record<string, unknown>) => api.get('/exit/separations', { params }),
+  getById: (id: string) => api.get(`/exit/separations/${id}`),
+  update: (id: string, data: Record<string, unknown>) => api.put(`/exit/separations/${id}`, data),
+  moveToNoticePeriod: (id: string) => api.post(`/exit/separations/${id}/notice-period`),
+  moveToClearance: (id: string) => api.post(`/exit/separations/${id}/clearance`),
+  complete: (id: string) => api.post(`/exit/separations/${id}/complete`),
+  cancel: (id: string) => api.post(`/exit/separations/${id}/cancel`),
+};
+
+// Letters API
+export const lettersApi = {
+  // Templates (Admin/HR)
+  getTemplates: (params?: Record<string, unknown>) => api.get('/letters/templates', { params }),
+  getTemplate: (id: string) => api.get(`/letters/templates/${id}`),
+  createTemplate: (data: Record<string, unknown>) => api.post('/letters/templates', data),
+  updateTemplate: (id: string, data: Record<string, unknown>) =>
+    api.put(`/letters/templates/${id}`, data),
+  deleteTemplate: (id: string) => api.delete(`/letters/templates/${id}`),
+
+  // Generation
+  generate: (data: { templateId: string; employeeId: string }) =>
+    api.post('/letters/generate', data),
+  getGenerated: () => api.get('/letters/generated'),
+  getMyLetters: () => api.get('/letters/generated/me'),
+  getGeneratedById: (id: string) => api.get(`/letters/generated/${id}`),
+  downloadPdf: async (id: string, filename: string) => {
+    const response = await api.get(`/letters/generated/${id}/pdf`, { responseType: 'blob' });
+    const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  },
 };
 
 // Reports API
@@ -331,6 +439,18 @@ export const onboardingApi = {
   updateTask: (id: string, data: Record<string, unknown>) =>
     api.put(`/onboarding/tasks/${id}`, data),
   completeTask: (id: string) => api.post(`/onboarding/tasks/${id}/complete`),
+};
+
+// ============================================
+// ATTENDANCE REGULARIZATION
+// ============================================
+export const regularizationApi = {
+  create: (data: Record<string, unknown>) => api.post('/attendance/regularization', data),
+  getMyRequests: (params?: Record<string, unknown>) => api.get('/attendance/regularization/me', { params }),
+  getPendingApprovals: () => api.get('/attendance/regularization/pending-approvals'),
+  getAllRequests: (params?: Record<string, unknown>) => api.get('/attendance/regularization/all', { params }),
+  approve: (id: string, note?: string) => api.post(`/attendance/regularization/${id}/approve`, { approverNote: note }),
+  reject: (id: string, note?: string) => api.post(`/attendance/regularization/${id}/reject`, { approverNote: note }),
 };
 
 // ============================================

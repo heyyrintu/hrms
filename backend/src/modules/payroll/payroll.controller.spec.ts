@@ -3,6 +3,7 @@ import { ForbiddenException } from '@nestjs/common';
 import { PayrollController } from './payroll.controller';
 import { SalaryService } from './salary.service';
 import { PayrollService } from './payroll.service';
+import { PayrollPdfService } from './payroll-pdf.service';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { UserRole } from '@prisma/client';
 
@@ -59,6 +60,7 @@ describe('PayrollController', () => {
       providers: [
         { provide: SalaryService, useValue: mockSalaryService },
         { provide: PayrollService, useValue: mockPayrollService },
+        { provide: PayrollPdfService, useValue: { generatePayslipPdf: jest.fn() } },
       ],
     }).compile();
 
@@ -289,6 +291,7 @@ describe('PayrollController', () => {
       expect(payrollService.deleteRun).toHaveBeenCalledWith(
         'tenant-1',
         'pr-1',
+        UserRole.HR_ADMIN,
       );
       expect(result).toEqual({ message: 'Payroll run deleted' });
     });

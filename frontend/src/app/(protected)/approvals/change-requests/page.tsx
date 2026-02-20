@@ -93,11 +93,11 @@ export default function ChangeRequestsApprovalPage() {
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                        <h1 className="text-2xl font-bold text-warm-900 flex items-center gap-2">
                             <GitPullRequest className="w-7 h-7 text-primary-600" />
                             Change Requests
                         </h1>
-                        <p className="text-gray-600 mt-1">
+                        <p className="text-warm-600 mt-1">
                             Review employee profile change requests
                         </p>
                     </div>
@@ -105,7 +105,7 @@ export default function ChangeRequestsApprovalPage() {
                         <select
                             value={filterStatus}
                             onChange={(e) => setFilterStatus(e.target.value)}
-                            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         >
                             <option value="PENDING">Pending</option>
                             <option value="APPROVED">Approved</option>
@@ -127,11 +127,11 @@ export default function ChangeRequestsApprovalPage() {
                 ) : requests.length === 0 ? (
                     <Card>
                         <CardContent className="py-16 text-center">
-                            <GitPullRequest className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                            <GitPullRequest className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+                            <h3 className="text-lg font-semibold text-warm-900 mb-2">
                                 No Change Requests
                             </h3>
-                            <p className="text-gray-600">
+                            <p className="text-warm-600">
                                 {filterStatus === 'PENDING'
                                     ? 'No pending requests to review.'
                                     : 'No requests match the selected filter.'}
@@ -143,37 +143,37 @@ export default function ChangeRequestsApprovalPage() {
                         <div className="overflow-x-auto">
                             <table className="w-full">
                                 <thead>
-                                    <tr className="border-b border-gray-200 bg-gray-50">
-                                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Employee</th>
-                                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Field</th>
-                                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Change</th>
-                                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Reason</th>
-                                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Status</th>
-                                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Date</th>
+                                    <tr className="border-b border-warm-200 bg-warm-50">
+                                        <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">Employee</th>
+                                        <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">Field</th>
+                                        <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">Change</th>
+                                        <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">Reason</th>
+                                        <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">Status</th>
+                                        <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">Date</th>
                                         {filterStatus === 'PENDING' && (
-                                            <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Actions</th>
+                                            <th className="text-right px-4 py-3 text-xs font-medium text-warm-500 uppercase">Actions</th>
                                         )}
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-gray-200">
+                                <tbody className="divide-y divide-warm-200">
                                     {requests.map((req) => (
-                                        <tr key={req.id} className="hover:bg-gray-50">
+                                        <tr key={req.id} className="hover:bg-warm-50">
                                             <td className="px-4 py-3">
-                                                <p className="text-sm font-medium text-gray-900">
+                                                <p className="text-sm font-medium text-warm-900">
                                                     {req.employee
                                                         ? `${req.employee.firstName} ${req.employee.lastName}`
                                                         : '—'}
                                                 </p>
-                                                <p className="text-xs text-gray-500">{req.employee?.employeeCode}</p>
+                                                <p className="text-xs text-warm-500">{req.employee?.employeeCode}</p>
                                             </td>
                                             <td className="px-4 py-3">
                                                 <Badge variant="info">{req.fieldName}</Badge>
                                             </td>
                                             <td className="px-4 py-3">
-                                                <p className="text-xs text-gray-500">{req.oldValue || '(empty)'}</p>
-                                                <p className="text-sm font-medium text-gray-900">→ {req.newValue}</p>
+                                                <p className="text-xs text-warm-500">{req.oldValue || '(empty)'}</p>
+                                                <p className="text-sm font-medium text-warm-900">→ {req.newValue}</p>
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-600 max-w-[200px] truncate">
+                                            <td className="px-4 py-3 text-sm text-warm-600 max-w-[200px] truncate">
                                                 {req.reason || '—'}
                                             </td>
                                             <td className="px-4 py-3">
@@ -184,14 +184,14 @@ export default function ChangeRequestsApprovalPage() {
                                                     {req.status}
                                                 </Badge>
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-500">
+                                            <td className="px-4 py-3 text-sm text-warm-500">
                                                 {new Date(req.createdAt).toLocaleDateString()}
                                             </td>
                                             {filterStatus === 'PENDING' && (
                                                 <td className="px-4 py-3 text-right whitespace-nowrap">
                                                     <button
                                                         onClick={() => openReviewModal(req, 'APPROVED')}
-                                                        className="p-2 text-green-500 hover:text-green-700 hover:bg-green-50 rounded-lg transition-colors"
+                                                        className="p-2 text-emerald-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors"
                                                         title="Approve"
                                                     >
                                                         <CheckCircle className="w-4 h-4" />
@@ -223,23 +223,23 @@ export default function ChangeRequestsApprovalPage() {
             >
                 {reviewingRequest && (
                     <div className="space-y-4">
-                        <div className="bg-gray-50 rounded-lg p-4">
-                            <p className="text-sm text-gray-600">
+                        <div className="bg-warm-50 rounded-lg p-4">
+                            <p className="text-sm text-warm-600">
                                 <strong>{reviewingRequest.employee?.firstName} {reviewingRequest.employee?.lastName}</strong> wants to change
                             </p>
                             <p className="text-sm mt-2">
                                 <span className="font-medium">{reviewingRequest.fieldName}</span>:{' '}
-                                <span className="text-gray-500">{reviewingRequest.oldValue || '(empty)'}</span>
+                                <span className="text-warm-500">{reviewingRequest.oldValue || '(empty)'}</span>
                                 {' → '}
                                 <span className="font-medium text-primary-600">{reviewingRequest.newValue}</span>
                             </p>
                             {reviewingRequest.reason && (
-                                <p className="text-xs text-gray-500 mt-2">Reason: {reviewingRequest.reason}</p>
+                                <p className="text-xs text-warm-500 mt-2">Reason: {reviewingRequest.reason}</p>
                             )}
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 Review Note (Optional)
                             </label>
                             <textarea
@@ -247,12 +247,12 @@ export default function ChangeRequestsApprovalPage() {
                                 onChange={(e) => setReviewNote(e.target.value)}
                                 placeholder="Add a note..."
                                 rows={2}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
                             />
                         </div>
 
                         {reviewAction === 'APPROVED' && (
-                            <p className="text-xs text-green-600 bg-green-50 px-3 py-2 rounded-lg">
+                            <p className="text-xs text-emerald-600 bg-emerald-50 px-3 py-2 rounded-lg">
                                 Approving will automatically update the employee&apos;s profile field.
                             </p>
                         )}

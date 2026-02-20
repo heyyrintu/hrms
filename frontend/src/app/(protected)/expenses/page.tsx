@@ -185,13 +185,13 @@ export default function ExpensesPage() {
         <>
             <div className="space-y-6">
                 {/* Header */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                        <h1 className="text-xl sm:text-2xl font-bold text-warm-900 flex items-center gap-2">
                             <Wallet className="w-7 h-7 text-primary-600" />
                             My Expenses
                         </h1>
-                        <p className="text-gray-600 mt-1">
+                        <p className="text-warm-600 mt-1">
                             Submit and track your expense claims
                         </p>
                     </div>
@@ -208,7 +208,7 @@ export default function ExpensesPage() {
                 </div>
 
                 {/* Stats */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                     <Card>
                         <CardContent className="py-4">
                             <div className="flex items-center gap-3">
@@ -216,8 +216,8 @@ export default function ExpensesPage() {
                                     <IndianRupee className="w-5 h-5 text-blue-600" />
                                 </div>
                                 <div>
-                                    <p className="text-2xl font-bold text-gray-900">{formatCurrency(totalClaimed)}</p>
-                                    <p className="text-sm text-gray-500">Total Claimed</p>
+                                    <p className="text-2xl font-bold text-warm-900">{formatCurrency(totalClaimed)}</p>
+                                    <p className="text-sm text-warm-500">Total Claimed</p>
                                 </div>
                             </div>
                         </CardContent>
@@ -225,12 +225,12 @@ export default function ExpensesPage() {
                     <Card>
                         <CardContent className="py-4">
                             <div className="flex items-center gap-3">
-                                <div className="p-2 rounded-lg bg-green-50">
-                                    <IndianRupee className="w-5 h-5 text-green-600" />
+                                <div className="p-2 rounded-lg bg-emerald-50">
+                                    <IndianRupee className="w-5 h-5 text-emerald-600" />
                                 </div>
                                 <div>
-                                    <p className="text-2xl font-bold text-green-600">{formatCurrency(totalApproved)}</p>
-                                    <p className="text-sm text-gray-500">Approved / Reimbursed</p>
+                                    <p className="text-2xl font-bold text-emerald-600">{formatCurrency(totalApproved)}</p>
+                                    <p className="text-sm text-warm-500">Approved / Reimbursed</p>
                                 </div>
                             </div>
                         </CardContent>
@@ -243,7 +243,7 @@ export default function ExpensesPage() {
                                 </div>
                                 <div>
                                     <p className="text-2xl font-bold text-orange-600">{pendingCount}</p>
-                                    <p className="text-sm text-gray-500">Pending Approval</p>
+                                    <p className="text-sm text-warm-500">Pending Approval</p>
                                 </div>
                             </div>
                         </CardContent>
@@ -253,19 +253,19 @@ export default function ExpensesPage() {
                 {/* Filters */}
                 <div className="flex flex-col sm:flex-row gap-3">
                     <div className="relative flex-1">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-warm-400" />
                         <input
                             type="text"
                             placeholder="Search claims..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="w-full pl-10 pr-4 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         />
                     </div>
                     <select
                         value={filterStatus}
                         onChange={(e) => setFilterStatus(e.target.value)}
-                        className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                        className="px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                     >
                         <option value="">All Statuses</option>
                         <option value="DRAFT">Draft</option>
@@ -284,9 +284,9 @@ export default function ExpensesPage() {
                 ) : filteredClaims.length === 0 ? (
                     <Card>
                         <CardContent className="py-16 text-center">
-                            <Wallet className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                            <h3 className="text-lg font-semibold text-gray-900 mb-2">No Expense Claims</h3>
-                            <p className="text-gray-600 mb-4">
+                            <Wallet className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+                            <h3 className="text-lg font-semibold text-warm-900 mb-2">No Expense Claims</h3>
+                            <p className="text-warm-600 mb-4">
                                 {searchQuery ? 'No claims match your search.' : 'You have not submitted any expense claims yet.'}
                             </p>
                             <Button onClick={openCreateModal}>
@@ -300,28 +300,28 @@ export default function ExpensesPage() {
                         <div className="overflow-x-auto">
                             <table className="w-full">
                                 <thead>
-                                    <tr className="border-b border-gray-200 bg-gray-50">
-                                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Date</th>
-                                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Category</th>
-                                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Description</th>
-                                        <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Amount</th>
-                                        <th className="text-center px-4 py-3 text-xs font-medium text-gray-500 uppercase">Status</th>
-                                        <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Actions</th>
+                                    <tr className="border-b border-warm-200 bg-warm-50">
+                                        <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">Date</th>
+                                        <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">Category</th>
+                                        <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">Description</th>
+                                        <th className="text-right px-4 py-3 text-xs font-medium text-warm-500 uppercase">Amount</th>
+                                        <th className="text-center px-4 py-3 text-xs font-medium text-warm-500 uppercase">Status</th>
+                                        <th className="text-right px-4 py-3 text-xs font-medium text-warm-500 uppercase">Actions</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-gray-200">
+                                <tbody className="divide-y divide-warm-200">
                                     {filteredClaims.map((claim) => (
-                                        <tr key={claim.id} className="hover:bg-gray-50 transition-colors">
+                                        <tr key={claim.id} className="hover:bg-warm-50 transition-colors">
                                             <td className="px-4 py-3 text-sm whitespace-nowrap">
                                                 {formatDate(claim.expenseDate)}
                                             </td>
-                                            <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                                            <td className="px-4 py-3 text-sm font-medium text-warm-900">
                                                 {claim.category?.name || '—'}
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">
+                                            <td className="px-4 py-3 text-sm text-warm-600 max-w-xs truncate">
                                                 {claim.description}
                                             </td>
-                                            <td className="px-4 py-3 text-sm font-semibold text-gray-900 text-right whitespace-nowrap">
+                                            <td className="px-4 py-3 text-sm font-semibold text-warm-900 text-right whitespace-nowrap">
                                                 {formatCurrency(Number(claim.amount))}
                                             </td>
                                             <td className="px-4 py-3 text-center">
@@ -341,20 +341,20 @@ export default function ExpensesPage() {
                                                         </button>
                                                         <button
                                                             onClick={() => openEditModal(claim)}
-                                                            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                                                            className="p-2 text-warm-400 hover:text-warm-600 hover:bg-warm-100 rounded-lg transition-colors"
                                                         >
                                                             <Edit2 className="w-4 h-4" />
                                                         </button>
                                                         <button
                                                             onClick={() => openDeleteModal(claim)}
-                                                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                            className="p-2 text-warm-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                                         >
                                                             <Trash2 className="w-4 h-4" />
                                                         </button>
                                                     </>
                                                 )}
                                                 {claim.approverNote && (
-                                                    <span className="text-xs text-gray-500 ml-2" title={claim.approverNote}>
+                                                    <span className="text-xs text-warm-500 ml-2" title={claim.approverNote}>
                                                         Note
                                                     </span>
                                                 )}
@@ -377,11 +377,11 @@ export default function ExpensesPage() {
             >
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Category *</label>
+                        <label className="block text-sm font-medium text-warm-700 mb-1">Category *</label>
                         <select
                             value={formData.categoryId}
                             onChange={(e) => setFormData({ ...formData, categoryId: e.target.value })}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         >
                             <option value="">Select category</option>
                             {categories.map((cat) => (
@@ -394,7 +394,7 @@ export default function ExpensesPage() {
 
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Amount *</label>
+                            <label className="block text-sm font-medium text-warm-700 mb-1">Amount *</label>
                             <input
                                 type="number"
                                 value={formData.amount}
@@ -402,28 +402,28 @@ export default function ExpensesPage() {
                                 placeholder="0.00"
                                 min="0.01"
                                 step="0.01"
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Expense Date *</label>
+                            <label className="block text-sm font-medium text-warm-700 mb-1">Expense Date *</label>
                             <input
                                 type="date"
                                 value={formData.expenseDate}
                                 onChange={(e) => setFormData({ ...formData, expenseDate: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Description *</label>
+                        <label className="block text-sm font-medium text-warm-700 mb-1">Description *</label>
                         <textarea
                             value={formData.description}
                             onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                             placeholder="Describe the expense..."
                             rows={3}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
                         />
                     </div>
                 </div>
@@ -449,7 +449,7 @@ export default function ExpensesPage() {
                 title="Delete Expense Claim"
                 size="sm"
             >
-                <p className="text-gray-600">
+                <p className="text-warm-600">
                     Are you sure you want to delete this expense claim of{' '}
                     <strong>{deletingClaim ? formatCurrency(Number(deletingClaim.amount)) : ''}</strong>?
                 </p>

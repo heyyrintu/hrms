@@ -73,30 +73,30 @@ export default function LeaveAnalyticsPage() {
     const getStatusIcon = (status: string) => {
         switch (status) {
             case 'APPROVED':
-                return <CheckCircle className="w-5 h-5 text-green-500" />;
+                return <CheckCircle className="w-5 h-5 text-emerald-500" />;
             case 'REJECTED':
                 return <XCircle className="w-5 h-5 text-red-500" />;
             case 'PENDING':
                 return <Clock className="w-5 h-5 text-yellow-500" />;
             case 'CANCELLED':
-                return <XCircle className="w-5 h-5 text-gray-400" />;
+                return <XCircle className="w-5 h-5 text-warm-400" />;
             default:
-                return <Clock className="w-5 h-5 text-gray-400" />;
+                return <Clock className="w-5 h-5 text-warm-400" />;
         }
     };
 
     const getStatusColor = (status: string) => {
         switch (status) {
             case 'APPROVED':
-                return 'bg-green-100 text-green-800';
+                return 'bg-emerald-100 text-emerald-800';
             case 'REJECTED':
                 return 'bg-red-100 text-red-800';
             case 'PENDING':
                 return 'bg-yellow-100 text-yellow-800';
             case 'CANCELLED':
-                return 'bg-gray-100 text-gray-600';
+                return 'bg-warm-100 text-warm-600';
             default:
-                return 'bg-gray-100 text-gray-600';
+                return 'bg-warm-100 text-warm-600';
         }
     };
 
@@ -104,8 +104,8 @@ export default function LeaveAnalyticsPage() {
         const colors: Record<string, string> = {
             'CL': 'bg-blue-500',
             'SL': 'bg-red-500',
-            'PL': 'bg-green-500',
-            'LOP': 'bg-gray-500',
+            'PL': 'bg-emerald-500',
+            'LOP': 'bg-warm-500',
             'ML': 'bg-pink-500',
             'PFL': 'bg-purple-500',
         };
@@ -118,11 +118,11 @@ export default function LeaveAnalyticsPage() {
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                        <h1 className="text-2xl font-bold text-warm-900 flex items-center gap-2">
                             <BarChart3 className="w-7 h-7 text-primary-600" />
                             Leave Analytics
                         </h1>
-                        <p className="text-gray-600 mt-1">
+                        <p className="text-warm-600 mt-1">
                             Overview of leave usage and trends
                         </p>
                     </div>
@@ -130,7 +130,7 @@ export default function LeaveAnalyticsPage() {
                         <select
                             value={selectedYear}
                             onChange={(e) => setSelectedYear(parseInt(e.target.value))}
-                            className="border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-primary-500"
+                            className="border border-warm-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-primary-500"
                         >
                             {years.map(year => (
                                 <option key={year} value={year}>{year}</option>
@@ -157,21 +157,21 @@ export default function LeaveAnalyticsPage() {
                                         <Users className="w-6 h-6 text-blue-600" />
                                     </div>
                                     <div>
-                                        <div className="text-2xl font-bold text-gray-900">{totalRequests}</div>
-                                        <div className="text-sm text-gray-500">Total Requests</div>
+                                        <div className="text-2xl font-bold text-warm-900">{totalRequests}</div>
+                                        <div className="text-sm text-warm-500">Total Requests</div>
                                     </div>
                                 </CardContent>
                             </Card>
                             <Card>
                                 <CardContent className="flex items-center gap-4">
-                                    <div className="p-3 bg-green-100 rounded-lg">
-                                        <CheckCircle className="w-6 h-6 text-green-600" />
+                                    <div className="p-3 bg-emerald-100 rounded-lg">
+                                        <CheckCircle className="w-6 h-6 text-emerald-600" />
                                     </div>
                                     <div>
-                                        <div className="text-2xl font-bold text-gray-900">
+                                        <div className="text-2xl font-bold text-warm-900">
                                             {analytics.requestsByStatus['APPROVED'] || 0}
                                         </div>
-                                        <div className="text-sm text-gray-500">Approved</div>
+                                        <div className="text-sm text-warm-500">Approved</div>
                                     </div>
                                 </CardContent>
                             </Card>
@@ -181,8 +181,8 @@ export default function LeaveAnalyticsPage() {
                                         <Calendar className="w-6 h-6 text-purple-600" />
                                     </div>
                                     <div>
-                                        <div className="text-2xl font-bold text-gray-900">{totalApprovedDays}</div>
-                                        <div className="text-sm text-gray-500">Total Days Used</div>
+                                        <div className="text-2xl font-bold text-warm-900">{totalApprovedDays}</div>
+                                        <div className="text-sm text-warm-500">Total Days Used</div>
                                     </div>
                                 </CardContent>
                             </Card>
@@ -192,10 +192,10 @@ export default function LeaveAnalyticsPage() {
                                         <Clock className="w-6 h-6 text-yellow-600" />
                                     </div>
                                     <div>
-                                        <div className="text-2xl font-bold text-gray-900">
+                                        <div className="text-2xl font-bold text-warm-900">
                                             {analytics.requestsByStatus['PENDING'] || 0}
                                         </div>
-                                        <div className="text-sm text-gray-500">Pending</div>
+                                        <div className="text-sm text-warm-500">Pending</div>
                                     </div>
                                 </CardContent>
                             </Card>
@@ -217,17 +217,17 @@ export default function LeaveAnalyticsPage() {
                                                 {getStatusIcon(status)}
                                                 <div className="flex-1">
                                                     <div className="flex items-center justify-between mb-1">
-                                                        <span className="text-sm font-medium text-gray-700">{status}</span>
-                                                        <span className="text-sm font-bold text-gray-900">{count}</span>
+                                                        <span className="text-sm font-medium text-warm-700">{status}</span>
+                                                        <span className="text-sm font-bold text-warm-900">{count}</span>
                                                     </div>
-                                                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                                    <div className="h-2 bg-warm-100 rounded-full overflow-hidden">
                                                         <div
                                                             className={cn(
                                                                 'h-full rounded-full transition-all',
-                                                                status === 'APPROVED' && 'bg-green-500',
+                                                                status === 'APPROVED' && 'bg-emerald-500',
                                                                 status === 'REJECTED' && 'bg-red-500',
                                                                 status === 'PENDING' && 'bg-yellow-500',
-                                                                status === 'CANCELLED' && 'bg-gray-400',
+                                                                status === 'CANCELLED' && 'bg-warm-400',
                                                             )}
                                                             style={{ width: `${totalRequests ? (count / totalRequests) * 100 : 0}%` }}
                                                         />
@@ -249,7 +249,7 @@ export default function LeaveAnalyticsPage() {
                                 </CardHeader>
                                 <CardContent>
                                     {analytics.usageByType.length === 0 ? (
-                                        <p className="text-center text-gray-500 py-8">No approved leave data yet.</p>
+                                        <p className="text-center text-warm-500 py-8">No approved leave data yet.</p>
                                     ) : (
                                         <div className="space-y-3">
                                             {analytics.usageByType.map((item) => (
@@ -262,14 +262,14 @@ export default function LeaveAnalyticsPage() {
                                                     </div>
                                                     <div className="flex-1">
                                                         <div className="flex items-center justify-between mb-1">
-                                                            <span className="text-sm font-medium text-gray-700">
+                                                            <span className="text-sm font-medium text-warm-700">
                                                                 {item.leaveType.name}
                                                             </span>
-                                                            <span className="text-sm text-gray-500">
+                                                            <span className="text-sm text-warm-500">
                                                                 {item.totalDays} days ({item.requestCount} requests)
                                                             </span>
                                                         </div>
-                                                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                                        <div className="h-2 bg-warm-100 rounded-full overflow-hidden">
                                                             <div
                                                                 className={cn(
                                                                     'h-full rounded-full transition-all',
@@ -311,9 +311,9 @@ export default function LeaveAnalyticsPage() {
                                                     title={`${days} days`}
                                                 />
                                             </div>
-                                            <div className="text-xs text-gray-500">{MONTHS[index]}</div>
+                                            <div className="text-xs text-warm-500">{MONTHS[index]}</div>
                                             {days > 0 && (
-                                                <div className="text-xs font-medium text-gray-700">{days}</div>
+                                                <div className="text-xs font-medium text-warm-700">{days}</div>
                                             )}
                                         </div>
                                     ))}
@@ -324,11 +324,11 @@ export default function LeaveAnalyticsPage() {
                 ) : (
                     <Card>
                         <CardContent className="py-16 text-center">
-                            <BarChart3 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                            <BarChart3 className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+                            <h3 className="text-lg font-semibold text-warm-900 mb-2">
                                 No Analytics Data
                             </h3>
-                            <p className="text-gray-600">
+                            <p className="text-warm-600">
                                 Leave data will appear here once employees start using the leave system.
                             </p>
                         </CardContent>

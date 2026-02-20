@@ -43,6 +43,18 @@ export class AdminController {
   }
 
   /**
+   * Get analytics data for charts
+   * GET /api/admin/analytics
+   */
+  @Get('analytics')
+  @ApiOperation({ summary: 'Get analytics data for dashboard charts' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
+  async getAnalytics(@CurrentUser() user: AuthenticatedUser) {
+    return this.adminService.getAnalytics(user.tenantId);
+  }
+
+  /**
    * Get all OT rules
    * GET /api/admin/settings/ot-rules
    */

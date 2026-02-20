@@ -38,6 +38,35 @@ export class AttendanceService {
       throw new NotFoundException('Employee not found or inactive');
     }
 
+    // Validate GPS coordinates are finite numbers
+    if (!Number.isFinite(dto.latitude) || !Number.isFinite(dto.longitude)) {
+      throw new BadRequestException('Valid GPS coordinates are required to clock in.');
+    }
+
+    // Geofencing: validate employee is within office radius if configured
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { officeLatitude: true, officeLongitude: true, officeRadiusMeters: true },
+    });
+
+    if (
+      tenant?.officeLatitude != null &&
+      tenant?.officeLongitude != null &&
+      tenant?.officeRadiusMeters != null
+    ) {
+      const distance = this.calculateDistanceMeters(
+        dto.latitude,
+        dto.longitude,
+        tenant.officeLatitude,
+        tenant.officeLongitude,
+      );
+      if (distance > tenant.officeRadiusMeters) {
+        throw new BadRequestException(
+          `You are ${Math.round(distance)}m from the office. Must be within ${tenant.officeRadiusMeters}m to clock in.`,
+        );
+      }
+    }
+
     // Check if already clocked in today
     let attendance = await this.prisma.attendanceRecord.findUnique({
       where: {
@@ -74,6 +103,8 @@ export class AttendanceService {
             status: 'PRESENT',
             source: dto.source || 'WEB',
             remarks: dto.remarks,
+            clockInLatitude: dto.latitude,
+            clockInLongitude: dto.longitude,
           },
         });
       }
@@ -88,6 +119,8 @@ export class AttendanceService {
           status: 'PRESENT',
           source: dto.source || 'WEB',
           remarks: dto.remarks,
+          clockInLatitude: dto.latitude,
+          clockInLongitude: dto.longitude,
           standardWorkMinutes: 480, // 8 hours default
           sessions: {
             create: {
@@ -187,6 +220,8 @@ export class AttendanceService {
         workedMinutes: netWorkedMinutes,
         otMinutesCalculated,
         remarks: dto.remarks || attendance.remarks,
+        clockOutLatitude: dto.latitude ?? null,
+        clockOutLongitude: dto.longitude ?? null,
       },
     });
 
@@ -594,6 +629,26 @@ export class AttendanceService {
   }
 
   /**
+   * Haversine formula — returns great-circle distance in metres between two lat/lon points.
+   */
+  private calculateDistanceMeters(
+    lat1: number,
+    lon1: number,
+    lat2: number,
+    lon2: number,
+  ): number {
+    const R = 6371000; // Earth radius in metres
+    const toRad = (deg: number) => (deg * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  /**
    * Get today's attendance status for dashboard
    */
   async getTodayStatus(tenantId: string, employeeId: string) {
@@ -637,6 +692,10 @@ export class AttendanceService {
       workedMinutes: attendance.workedMinutes,
       otMinutesCalculated: attendance.otMinutesCalculated,
       currentSessionStart: isClockedIn ? lastSession.inTime : null,
+      clockInLatitude: attendance.clockInLatitude,
+      clockInLongitude: attendance.clockInLongitude,
+      clockOutLatitude: attendance.clockOutLatitude,
+      clockOutLongitude: attendance.clockOutLongitude,
     };
   }
 }

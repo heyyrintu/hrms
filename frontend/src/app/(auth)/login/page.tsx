@@ -43,25 +43,25 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="w-full max-w-md space-y-8">
+    <div className="w-full max-w-md space-y-6 sm:space-y-8">
       {/* Logo & Title */}
       <div className="text-center">
         <img
           src="/logo.png"
           alt="Drona Logitech"
-          className="mx-auto h-16 w-auto object-contain"
+          className="mx-auto h-12 sm:h-16 w-auto object-contain"
         />
-        <h2 className="mt-6 text-3xl font-bold text-warm-900">
+        <h2 className="mt-4 sm:mt-6 text-2xl sm:text-3xl font-bold text-warm-900">
           Welcome back
         </h2>
-        <p className="mt-2 text-sm text-warm-500">
+        <p className="mt-1.5 sm:mt-2 text-sm text-warm-500">
           Sign in to your HRMS workspace
         </p>
       </div>
 
       {/* Login Form */}
-      <div className="bg-white py-8 px-7 shadow-elevated rounded-2xl border border-warm-200">
-        <form onSubmit={handleSubmit} className="space-y-5">
+      <div className="bg-white py-6 sm:py-8 px-5 sm:px-7 shadow-elevated rounded-2xl border border-warm-200">
+        <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-5">
           {error && <FormError message={error} />}
 
           <Input
@@ -95,9 +95,9 @@ export default function LoginPage() {
         </form>
 
         {/* Demo accounts info */}
-        <div className="mt-7 pt-6 border-t border-warm-200">
-          <p className="text-xs text-warm-400 text-center mb-3 font-medium uppercase tracking-wider">Demo accounts</p>
-          <p className="text-[11px] text-warm-400 text-center mb-3">password: password123</p>
+        <div className="mt-5 sm:mt-7 pt-5 sm:pt-6 border-t border-warm-200">
+          <p className="text-xs text-warm-400 text-center mb-2 sm:mb-3 font-medium uppercase tracking-wider">Demo accounts</p>
+          <p className="text-[11px] text-warm-400 text-center mb-2 sm:mb-3">password: password123</p>
           <div className="grid grid-cols-2 gap-2">
             {[
               { role: 'HR Admin', email: 'admin@example.com' },
@@ -109,10 +109,10 @@ export default function LoginPage() {
                 key={account.email}
                 type="button"
                 onClick={() => setEmail(account.email)}
-                className="bg-warm-50 hover:bg-warm-100 border border-warm-200 p-2.5 rounded-lg text-left transition-colors group"
+                className="bg-warm-50 hover:bg-warm-100 border border-warm-200 p-2 sm:p-2.5 rounded-lg text-left transition-colors group active:scale-[0.98]"
               >
                 <p className="font-semibold text-xs text-warm-700 group-hover:text-warm-900">{account.role}</p>
-                <p className="text-[11px] text-warm-400 truncate">{account.email}</p>
+                <p className="text-[10px] sm:text-[11px] text-warm-400 truncate">{account.email}</p>
               </button>
             ))}
           </div>

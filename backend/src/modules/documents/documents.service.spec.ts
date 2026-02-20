@@ -3,7 +3,8 @@ import { NotFoundException } from '@nestjs/common';
 import { DocumentsService } from './documents.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../../common/storage/storage.service';
-import { createMockPrismaService } from '../../test/helpers';
+import { NotificationsService } from '../notifications/notifications.service';
+import { createMockPrismaService, createMockNotificationsService } from '../../test/helpers';
 
 function createMockStorageService() {
   return {
@@ -24,6 +25,7 @@ describe('DocumentsService', () => {
         DocumentsService,
         { provide: PrismaService, useValue: createMockPrismaService() },
         { provide: StorageService, useValue: createMockStorageService() },
+        { provide: NotificationsService, useValue: createMockNotificationsService() },
       ],
     }).compile();
 

@@ -5,14 +5,16 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../../common/storage/storage.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateDocumentDto, DocumentQueryDto } from './dto/document.dto';
-import { DocumentCategory } from '@prisma/client';
+import { DocumentCategory, NotificationType } from '@prisma/client';
 
 @Injectable()
 export class DocumentsService {
   constructor(
     private prisma: PrismaService,
     private storageService: StorageService,
+    private notificationsService: NotificationsService,
   ) {}
 
   async uploadDocument(
@@ -143,5 +145,79 @@ export class DocumentsService {
     await this.prisma.upload.delete({ where: { id: doc.uploadId } });
 
     return { message: 'Document deleted' };
+  }
+
+  // Get documents expiring within N days (default 30)
+  async getExpiringDocuments(tenantId: string, daysAhead: number = 30) {
+    const now = new Date();
+    const futureDate = new Date();
+    futureDate.setDate(futureDate.getDate() + daysAhead);
+
+    return this.prisma.employeeDocument.findMany({
+      where: {
+        tenantId,
+        expiryDate: {
+          gte: now,
+          lte: futureDate,
+        },
+      },
+      include: {
+        employee: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            employeeCode: true,
+            department: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { expiryDate: 'asc' },
+    });
+  }
+
+  // Get already expired documents
+  async getExpiredDocuments(tenantId: string) {
+    return this.prisma.employeeDocument.findMany({
+      where: {
+        tenantId,
+        expiryDate: { lt: new Date() },
+      },
+      include: {
+        employee: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            employeeCode: true,
+            department: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { expiryDate: 'asc' },
+    });
+  }
+
+  // Send expiry notifications (called by admin or cron)
+  async sendExpiryAlerts(tenantId: string, daysAhead: number = 30) {
+    const expiring = await this.getExpiringDocuments(tenantId, daysAhead);
+    let sentCount = 0;
+
+    for (const doc of expiring) {
+      // Notify the employee
+      this.notificationsService
+        .notifyEmployee(
+          tenantId,
+          doc.employeeId,
+          NotificationType.DOCUMENT_EXPIRING,
+          'Document Expiring Soon',
+          `Your ${doc.name} (${doc.category}) is expiring on ${doc.expiryDate!.toISOString().split('T')[0]}.`,
+          '/my-profile',
+        )
+        .catch(() => {});
+      sentCount++;
+    }
+
+    return { sentCount, totalExpiring: expiring.length };
   }
 }

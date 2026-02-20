@@ -167,12 +167,12 @@ export default function ReviewCyclesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
         <div className="flex items-center gap-3">
           <Target className="h-8 w-8 text-indigo-600" />
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Review Cycles</h1>
-            <p className="text-sm text-gray-500">
+            <h1 className="text-xl sm:text-2xl font-bold text-warm-900">Review Cycles</h1>
+            <p className="text-sm text-warm-500">
               Manage performance review cycles
             </p>
           </div>
@@ -190,11 +190,11 @@ export default function ReviewCyclesPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-col sm:flex-row gap-3">
         <select
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value)}
-          className="rounded-md border border-gray-300 px-3 py-2 text-sm"
+          className="rounded-md border border-warm-300 px-3 py-2 text-sm"
         >
           <option value="">All Statuses</option>
           <option value="DRAFT">Draft</option>
@@ -208,11 +208,11 @@ export default function ReviewCyclesPage() {
         <CardContent className="p-0">
           {loading ? (
             <div className="flex items-center justify-center py-12">
-              <RefreshCw className="h-6 w-6 animate-spin text-gray-400" />
+              <RefreshCw className="h-6 w-6 animate-spin text-warm-400" />
             </div>
           ) : cycles.length === 0 ? (
-            <div className="text-center py-12 text-gray-500">
-              <Target className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+            <div className="text-center py-12 text-warm-500">
+              <Target className="h-12 w-12 mx-auto mb-3 text-warm-300" />
               <p className="text-lg font-medium">No review cycles</p>
               <p className="text-sm">Create your first review cycle to get started</p>
               <Button variant="primary" onClick={() => openModal()} className="mt-4">
@@ -224,28 +224,28 @@ export default function ReviewCyclesPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b bg-gray-50">
-                    <th className="text-left px-4 py-3 font-medium text-gray-600">Name</th>
-                    <th className="text-left px-4 py-3 font-medium text-gray-600">Start Date</th>
-                    <th className="text-left px-4 py-3 font-medium text-gray-600">End Date</th>
-                    <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
-                    <th className="text-left px-4 py-3 font-medium text-gray-600">Reviews</th>
-                    <th className="text-left px-4 py-3 font-medium text-gray-600">Actions</th>
+                  <tr className="border-b bg-warm-50">
+                    <th className="text-left px-4 py-3 font-medium text-warm-600">Name</th>
+                    <th className="text-left px-4 py-3 font-medium text-warm-600">Start Date</th>
+                    <th className="text-left px-4 py-3 font-medium text-warm-600">End Date</th>
+                    <th className="text-left px-4 py-3 font-medium text-warm-600">Status</th>
+                    <th className="text-left px-4 py-3 font-medium text-warm-600">Reviews</th>
+                    <th className="text-left px-4 py-3 font-medium text-warm-600">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {cycles.map((cycle) => (
-                    <tr key={cycle.id} className="border-b hover:bg-gray-50">
+                    <tr key={cycle.id} className="border-b hover:bg-warm-50">
                       <td className="px-4 py-3">
-                        <p className="font-medium text-gray-900">{cycle.name}</p>
+                        <p className="font-medium text-warm-900">{cycle.name}</p>
                         {cycle.description && (
-                          <p className="text-xs text-gray-500 mt-0.5">{cycle.description}</p>
+                          <p className="text-xs text-warm-500 mt-0.5">{cycle.description}</p>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-gray-600">
+                      <td className="px-4 py-3 text-warm-600">
                         {new Date(cycle.startDate).toLocaleDateString()}
                       </td>
-                      <td className="px-4 py-3 text-gray-600">
+                      <td className="px-4 py-3 text-warm-600">
                         {new Date(cycle.endDate).toLocaleDateString()}
                       </td>
                       <td className="px-4 py-3">
@@ -253,7 +253,7 @@ export default function ReviewCyclesPage() {
                           {statusLabels[cycle.status]}
                         </Badge>
                       </td>
-                      <td className="px-4 py-3 text-gray-600">
+                      <td className="px-4 py-3 text-warm-600">
                         {cycle._count?.reviews ?? 0}
                       </td>
                       <td className="px-4 py-3">
@@ -262,7 +262,7 @@ export default function ReviewCyclesPage() {
                             <>
                               <button
                                 onClick={() => openModal(cycle)}
-                                className="text-gray-500 hover:text-gray-700"
+                                className="text-warm-500 hover:text-warm-700"
                                 title="Edit"
                               >
                                 <Edit2 className="h-4 w-4" />
@@ -286,7 +286,7 @@ export default function ReviewCyclesPage() {
                           {cycle.status === 'ACTIVE' && (
                             <button
                               onClick={() => { setCompletingCycle(cycle); setCompleteModal(true); }}
-                              className="text-green-600 hover:text-green-800"
+                              className="text-emerald-600 hover:text-emerald-800"
                               title="Complete"
                             >
                               <CheckCircle className="h-4 w-4" />
@@ -311,41 +311,41 @@ export default function ReviewCyclesPage() {
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
+            <label className="block text-sm font-medium text-warm-700 mb-1">Name *</label>
             <input
               type="text"
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               placeholder="e.g. Q1 2026 Review"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+              className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <label className="block text-sm font-medium text-warm-700 mb-1">Description</label>
             <textarea
               value={formData.description}
               onChange={(e) => setFormData({ ...formData, description: e.target.value })}
               rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+              className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
             />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Start Date *</label>
+              <label className="block text-sm font-medium text-warm-700 mb-1">Start Date *</label>
               <input
                 type="date"
                 value={formData.startDate}
                 onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">End Date *</label>
+              <label className="block text-sm font-medium text-warm-700 mb-1">End Date *</label>
               <input
                 type="date"
                 value={formData.endDate}
                 onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
               />
             </div>
           </div>
@@ -370,11 +370,11 @@ export default function ReviewCyclesPage() {
         onClose={() => setLaunchModal(false)}
         title="Launch Review Cycle"
       >
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-warm-600">
           This will create performance reviews for all active employees with managers.
           Employees will be notified to complete their self-reviews.
         </p>
-        <p className="text-sm font-medium text-gray-900 mt-2">
+        <p className="text-sm font-medium text-warm-900 mt-2">
           Launch &quot;{launchingCycle?.name}&quot;?
         </p>
         <ModalFooter>
@@ -393,7 +393,7 @@ export default function ReviewCyclesPage() {
         onClose={() => setCompleteModal(false)}
         title="Complete Review Cycle"
       >
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-warm-600">
           Mark &quot;{completingCycle?.name}&quot; as completed? This will close the cycle.
         </p>
         <ModalFooter>
@@ -412,7 +412,7 @@ export default function ReviewCyclesPage() {
         onClose={() => setDeleteModal(false)}
         title="Delete Review Cycle"
       >
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-warm-600">
           Are you sure you want to delete &quot;{deletingCycle?.name}&quot;? This action cannot be undone.
         </p>
         <ModalFooter>

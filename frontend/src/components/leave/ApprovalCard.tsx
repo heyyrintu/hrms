@@ -78,8 +78,8 @@ export function ApprovalCard({ request, onApprove, onReject, isSelected, onToggl
         const colors: Record<string, string> = {
             'CL': 'from-blue-500 to-blue-600',
             'SL': 'from-red-500 to-red-600',
-            'PL': 'from-green-500 to-green-600',
-            'LOP': 'from-gray-500 to-gray-600',
+            'PL': 'from-emerald-500 to-emerald-600',
+            'LOP': 'from-warm-500 to-warm-600',
             'ML': 'from-pink-500 to-pink-600',
             'PFL': 'from-purple-500 to-purple-600',
         };
@@ -128,14 +128,14 @@ export function ApprovalCard({ request, onApprove, onReject, isSelected, onToggl
                     <div className="p-4 space-y-4">
                         {/* Employee Info */}
                         <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center">
-                                <User className="w-5 h-5 text-gray-500" />
+                            <div className="w-10 h-10 bg-warm-100 rounded-full flex items-center justify-center">
+                                <User className="w-5 h-5 text-warm-500" />
                             </div>
                             <div>
-                                <div className="font-medium text-gray-900">
+                                <div className="font-medium text-warm-900">
                                     {request.employee.firstName} {request.employee.lastName}
                                 </div>
-                                <div className="text-sm text-gray-500">
+                                <div className="text-sm text-warm-500">
                                     {request.employee.employeeCode}
                                 </div>
                             </div>
@@ -143,20 +143,20 @@ export function ApprovalCard({ request, onApprove, onReject, isSelected, onToggl
 
                         {/* Details */}
                         <div className="grid grid-cols-2 gap-3 text-sm">
-                            <div className="flex items-center gap-2 text-gray-600">
+                            <div className="flex items-center gap-2 text-warm-600">
                                 <Calendar className="w-4 h-4" />
                                 <span>{formatDate(request.startDate)}</span>
                             </div>
-                            <div className="flex items-center gap-2 text-gray-600">
+                            <div className="flex items-center gap-2 text-warm-600">
                                 <Calendar className="w-4 h-4" />
                                 <span>{formatDate(request.endDate)}</span>
                             </div>
-                            <div className="flex items-center gap-2 text-gray-600">
+                            <div className="flex items-center gap-2 text-warm-600">
                                 <Clock className="w-4 h-4" />
                                 <span>{request.totalDays} day{request.totalDays > 1 ? 's' : ''}</span>
                             </div>
                             {request.employee.department && (
-                                <div className="flex items-center gap-2 text-gray-600">
+                                <div className="flex items-center gap-2 text-warm-600">
                                     <Building className="w-4 h-4" />
                                     <span className="truncate">{request.employee.department.name}</span>
                                 </div>
@@ -165,17 +165,17 @@ export function ApprovalCard({ request, onApprove, onReject, isSelected, onToggl
 
                         {/* Reason */}
                         {request.reason && (
-                            <div className="p-3 bg-gray-50 rounded-lg">
+                            <div className="p-3 bg-warm-50 rounded-lg">
                                 <div className="flex items-start gap-2">
-                                    <FileText className="w-4 h-4 text-gray-400 mt-0.5" />
-                                    <p className="text-sm text-gray-700">{request.reason}</p>
+                                    <FileText className="w-4 h-4 text-warm-400 mt-0.5" />
+                                    <p className="text-sm text-warm-700">{request.reason}</p>
                                 </div>
                             </div>
                         )}
 
                         {/* Actions */}
                         {request.status === 'PENDING' && (
-                            <div className="flex gap-2 pt-2 border-t border-gray-100">
+                            <div className="flex gap-2 pt-2 border-t border-warm-100">
                                 <Button
                                     variant="danger"
                                     size="sm"
@@ -187,7 +187,7 @@ export function ApprovalCard({ request, onApprove, onReject, isSelected, onToggl
                                 </Button>
                                 <Button
                                     size="sm"
-                                    className="flex-1 bg-green-600 hover:bg-green-700"
+                                    className="flex-1 bg-emerald-600 hover:bg-emerald-700"
                                     onClick={() => setModalType('approve')}
                                 >
                                     <Check className="w-4 h-4 mr-1" />
@@ -210,19 +210,19 @@ export function ApprovalCard({ request, onApprove, onReject, isSelected, onToggl
                 size="md"
             >
                 <div className="space-y-4">
-                    <div className="p-4 bg-gray-50 rounded-lg">
+                    <div className="p-4 bg-warm-50 rounded-lg">
                         <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center border border-gray-200">
-                                <User className="w-5 h-5 text-gray-500" />
+                            <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center border border-warm-200">
+                                <User className="w-5 h-5 text-warm-500" />
                             </div>
                             <div>
-                                <div className="font-medium text-gray-900">
+                                <div className="font-medium text-warm-900">
                                     {request.employee.firstName} {request.employee.lastName}
                                 </div>
-                                <div className="text-sm text-gray-500">
+                                <div className="text-sm text-warm-500">
                                     {request.leaveType.name} • {request.totalDays} day{request.totalDays > 1 ? 's' : ''}
                                 </div>
-                                <div className="text-sm text-gray-500">
+                                <div className="text-sm text-warm-500">
                                     {formatDate(request.startDate)} — {formatDate(request.endDate)}
                                 </div>
                             </div>
@@ -230,7 +230,7 @@ export function ApprovalCard({ request, onApprove, onReject, isSelected, onToggl
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                        <label className="block text-sm font-medium text-warm-700 mb-2">
                             Add a note (optional)
                         </label>
                         <textarea
@@ -242,7 +242,7 @@ export function ApprovalCard({ request, onApprove, onReject, isSelected, onToggl
                                     : 'Reason for rejection...'
                             }
                             rows={3}
-                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 resize-none"
+                            className="w-full px-4 py-3 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 resize-none"
                         />
                     </div>
                 </div>
@@ -262,7 +262,7 @@ export function ApprovalCard({ request, onApprove, onReject, isSelected, onToggl
                         variant={modalType === 'approve' ? 'primary' : 'danger'}
                         onClick={handleAction}
                         loading={loading}
-                        className={modalType === 'approve' ? 'bg-green-600 hover:bg-green-700' : ''}
+                        className={modalType === 'approve' ? 'bg-emerald-600 hover:bg-emerald-700' : ''}
                     >
                         {modalType === 'approve' ? 'Approve' : 'Reject'}
                     </Button>

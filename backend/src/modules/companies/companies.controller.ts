@@ -8,14 +8,22 @@ import {
   Param,
   Query,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  ParseFilePipe,
+  MaxFileSizeValidator,
+  FileTypeValidator,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiConsumes, ApiBody } from '@nestjs/swagger';
 import { CompaniesService } from './companies.service';
 import { CreateCompanyDto, UpdateCompanyDto, CompanyQueryDto } from './dto/company.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '@prisma/client';
+
+const MAX_LOGO_SIZE = 2 * 1024 * 1024; // 2MB
 
 @ApiTags('companies')
 @ApiBearerAuth()
@@ -90,6 +98,38 @@ export class CompaniesController {
   @ApiResponse({ status: 404, description: 'Not found' })
   async update(@Param('id') id: string, @Body() dto: UpdateCompanyDto) {
     return this.companiesService.update(id, dto);
+  }
+
+  /**
+   * Upload company logo
+   * POST /api/companies/:id/logo
+   */
+  @Post(':id/logo')
+  @ApiOperation({ summary: 'Upload company logo (max 2MB, images only)' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { logo: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Logo uploaded, returns { logoUrl }' })
+  @ApiResponse({ status: 400, description: 'File too large or wrong type' })
+  @ApiResponse({ status: 404, description: 'Company not found' })
+  @UseInterceptors(FileInterceptor('logo'))
+  async uploadLogo(
+    @Param('id') id: string,
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [
+          new MaxFileSizeValidator({ maxSize: MAX_LOGO_SIZE }),
+          new FileTypeValidator({ fileType: /^image\/(jpeg|png|gif|webp|svg\+xml)$/ }),
+        ],
+      }),
+    )
+    file: Express.Multer.File,
+  ) {
+    return this.companiesService.uploadLogo(id, file);
   }
 
   /**

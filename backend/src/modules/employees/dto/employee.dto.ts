@@ -189,8 +189,13 @@ export class CreateEmployeeDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
-  designation?: string;
+  @IsUUID()
+  designationId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -407,8 +412,13 @@ export class UpdateEmployeeDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
-  designation?: string;
+  @IsUUID()
+  designationId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  branchId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

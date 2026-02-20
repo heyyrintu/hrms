@@ -224,13 +224,13 @@ export default function PerformancePage() {
   };
 
   const renderStars = (rating?: number) => {
-    if (!rating) return <span className="text-gray-400">-</span>;
+    if (!rating) return <span className="text-warm-400">-</span>;
     return (
       <div className="flex items-center gap-0.5">
         {[1, 2, 3, 4, 5].map((i) => (
           <Star
             key={i}
-            className={`h-4 w-4 ${i <= rating ? 'text-yellow-400 fill-yellow-400' : 'text-gray-300'}`}
+            className={`h-4 w-4 ${i <= rating ? 'text-yellow-400 fill-yellow-400' : 'text-warm-300'}`}
           />
         ))}
       </div>
@@ -240,12 +240,12 @@ export default function PerformancePage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
         <div className="flex items-center gap-3">
           <Target className="h-8 w-8 text-indigo-600" />
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">My Performance</h1>
-            <p className="text-sm text-gray-500">
+            <h1 className="text-xl sm:text-2xl font-bold text-warm-900">My Performance</h1>
+            <p className="text-sm text-warm-500">
               Track your reviews and goals
             </p>
           </div>
@@ -260,14 +260,14 @@ export default function PerformancePage() {
       </div>
 
       {/* Tabs */}
-      <div className="border-b border-gray-200">
+      <div className="border-b border-warm-200">
         <nav className="flex gap-4">
           <button
             onClick={() => setActiveTab('reviews')}
             className={`pb-3 px-1 text-sm font-medium border-b-2 transition-colors ${
               activeTab === 'reviews'
                 ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                : 'border-transparent text-warm-500 hover:text-warm-700'
             }`}
           >
             My Reviews
@@ -277,7 +277,7 @@ export default function PerformancePage() {
             className={`pb-3 px-1 text-sm font-medium border-b-2 transition-colors ${
               activeTab === 'goals'
                 ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+                : 'border-transparent text-warm-500 hover:text-warm-700'
             }`}
           >
             My Goals
@@ -291,11 +291,11 @@ export default function PerformancePage() {
           <CardContent className="p-0">
             {reviewsLoading ? (
               <div className="flex items-center justify-center py-12">
-                <RefreshCw className="h-6 w-6 animate-spin text-gray-400" />
+                <RefreshCw className="h-6 w-6 animate-spin text-warm-400" />
               </div>
             ) : reviews.length === 0 ? (
-              <div className="text-center py-12 text-gray-500">
-                <Star className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+              <div className="text-center py-12 text-warm-500">
+                <Star className="h-12 w-12 mx-auto mb-3 text-warm-300" />
                 <p className="text-lg font-medium">No reviews yet</p>
                 <p className="text-sm">Reviews will appear here when a cycle is launched</p>
               </div>
@@ -303,20 +303,20 @@ export default function PerformancePage() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b bg-gray-50">
-                      <th className="text-left px-4 py-3 font-medium text-gray-600">Cycle</th>
-                      <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
-                      <th className="text-left px-4 py-3 font-medium text-gray-600">Reviewer</th>
-                      <th className="text-left px-4 py-3 font-medium text-gray-600">Self Rating</th>
-                      <th className="text-left px-4 py-3 font-medium text-gray-600">Manager Rating</th>
-                      <th className="text-left px-4 py-3 font-medium text-gray-600">Overall</th>
-                      <th className="text-left px-4 py-3 font-medium text-gray-600">Actions</th>
+                    <tr className="border-b bg-warm-50">
+                      <th className="text-left px-4 py-3 font-medium text-warm-600">Cycle</th>
+                      <th className="text-left px-4 py-3 font-medium text-warm-600">Status</th>
+                      <th className="text-left px-4 py-3 font-medium text-warm-600">Reviewer</th>
+                      <th className="text-left px-4 py-3 font-medium text-warm-600">Self Rating</th>
+                      <th className="text-left px-4 py-3 font-medium text-warm-600">Manager Rating</th>
+                      <th className="text-left px-4 py-3 font-medium text-warm-600">Overall</th>
+                      <th className="text-left px-4 py-3 font-medium text-warm-600">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {reviews.map((review) => (
-                      <tr key={review.id} className="border-b hover:bg-gray-50">
-                        <td className="px-4 py-3 font-medium text-gray-900">
+                      <tr key={review.id} className="border-b hover:bg-warm-50">
+                        <td className="px-4 py-3 font-medium text-warm-900">
                           {review.cycle?.name || '-'}
                         </td>
                         <td className="px-4 py-3">
@@ -324,7 +324,7 @@ export default function PerformancePage() {
                             {reviewStatusLabels[review.status]}
                           </Badge>
                         </td>
-                        <td className="px-4 py-3 text-gray-600">
+                        <td className="px-4 py-3 text-warm-600">
                           {review.reviewer ? `${review.reviewer.firstName} ${review.reviewer.lastName}` : '-'}
                         </td>
                         <td className="px-4 py-3">{renderStars(review.selfRating)}</td>
@@ -340,7 +340,7 @@ export default function PerformancePage() {
                             {(review.status === 'COMPLETED' || review.status === 'SELF_REVIEW' || review.status === 'MANAGER_REVIEW') && (
                               <button
                                 onClick={() => openViewReview(review)}
-                                className="text-gray-500 hover:text-gray-700"
+                                className="text-warm-500 hover:text-warm-700"
                                 title="View Details"
                               >
                                 <Eye className="h-4 w-4" />
@@ -371,11 +371,11 @@ export default function PerformancePage() {
             <CardContent className="p-0">
               {goalsLoading ? (
                 <div className="flex items-center justify-center py-12">
-                  <RefreshCw className="h-6 w-6 animate-spin text-gray-400" />
+                  <RefreshCw className="h-6 w-6 animate-spin text-warm-400" />
                 </div>
               ) : goals.length === 0 ? (
-                <div className="text-center py-12 text-gray-500">
-                  <Target className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                <div className="text-center py-12 text-warm-500">
+                  <Target className="h-12 w-12 mx-auto mb-3 text-warm-300" />
                   <p className="text-lg font-medium">No goals yet</p>
                   <p className="text-sm">Add goals to track your performance objectives</p>
                 </div>
@@ -383,29 +383,29 @@ export default function PerformancePage() {
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="border-b bg-gray-50">
-                        <th className="text-left px-4 py-3 font-medium text-gray-600">Title</th>
-                        <th className="text-left px-4 py-3 font-medium text-gray-600">Cycle</th>
-                        <th className="text-left px-4 py-3 font-medium text-gray-600">Target Date</th>
-                        <th className="text-left px-4 py-3 font-medium text-gray-600">Status</th>
-                        <th className="text-left px-4 py-3 font-medium text-gray-600">Progress</th>
-                        <th className="text-left px-4 py-3 font-medium text-gray-600">Weight</th>
-                        <th className="text-left px-4 py-3 font-medium text-gray-600">Actions</th>
+                      <tr className="border-b bg-warm-50">
+                        <th className="text-left px-4 py-3 font-medium text-warm-600">Title</th>
+                        <th className="text-left px-4 py-3 font-medium text-warm-600">Cycle</th>
+                        <th className="text-left px-4 py-3 font-medium text-warm-600">Target Date</th>
+                        <th className="text-left px-4 py-3 font-medium text-warm-600">Status</th>
+                        <th className="text-left px-4 py-3 font-medium text-warm-600">Progress</th>
+                        <th className="text-left px-4 py-3 font-medium text-warm-600">Weight</th>
+                        <th className="text-left px-4 py-3 font-medium text-warm-600">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {goals.map((goal) => (
-                        <tr key={goal.id} className="border-b hover:bg-gray-50">
+                        <tr key={goal.id} className="border-b hover:bg-warm-50">
                           <td className="px-4 py-3">
-                            <p className="font-medium text-gray-900">{goal.title}</p>
+                            <p className="font-medium text-warm-900">{goal.title}</p>
                             {goal.description && (
-                              <p className="text-xs text-gray-500 mt-0.5">{goal.description}</p>
+                              <p className="text-xs text-warm-500 mt-0.5">{goal.description}</p>
                             )}
                           </td>
-                          <td className="px-4 py-3 text-gray-600">
+                          <td className="px-4 py-3 text-warm-600">
                             {goal.review?.cycle?.name || '-'}
                           </td>
-                          <td className="px-4 py-3 text-gray-600">
+                          <td className="px-4 py-3 text-warm-600">
                             {new Date(goal.targetDate).toLocaleDateString()}
                           </td>
                           <td className="px-4 py-3">
@@ -415,21 +415,21 @@ export default function PerformancePage() {
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">
-                              <div className="w-20 bg-gray-200 rounded-full h-2">
+                              <div className="w-20 bg-warm-200 rounded-full h-2">
                                 <div
-                                  className={`h-2 rounded-full transition-all ${goal.progress === 100 ? 'bg-green-500' : 'bg-primary-500'}`}
+                                  className={`h-2 rounded-full transition-all ${goal.progress === 100 ? 'bg-emerald-500' : 'bg-primary-500'}`}
                                   style={{ width: `${goal.progress}%` }}
                                 />
                               </div>
-                              <span className="text-xs text-gray-500">{goal.progress}%</span>
+                              <span className="text-xs text-warm-500">{goal.progress}%</span>
                             </div>
                           </td>
-                          <td className="px-4 py-3 text-gray-600">{goal.weight}</td>
+                          <td className="px-4 py-3 text-warm-600">{goal.weight}</td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">
                               <button
                                 onClick={() => openGoalModal(goal)}
-                                className="text-gray-500 hover:text-gray-700"
+                                className="text-warm-500 hover:text-warm-700"
                                 title="Edit"
                               >
                                 <Edit2 className="h-4 w-4" />
@@ -464,7 +464,7 @@ export default function PerformancePage() {
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-warm-700 mb-2">
               Self Rating *
             </label>
             <div className="flex items-center gap-1">
@@ -478,16 +478,16 @@ export default function PerformancePage() {
                     className={`h-8 w-8 transition-colors ${
                       i <= selfRating
                         ? 'text-yellow-400 fill-yellow-400'
-                        : 'text-gray-300 hover:text-yellow-300'
+                        : 'text-warm-300 hover:text-yellow-300'
                     }`}
                   />
                 </button>
               ))}
-              <span className="ml-2 text-sm text-gray-500">{selfRating}/5</span>
+              <span className="ml-2 text-sm text-warm-500">{selfRating}/5</span>
             </div>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-warm-700 mb-1">
               Comments
             </label>
             <textarea
@@ -495,7 +495,7 @@ export default function PerformancePage() {
               onChange={(e) => setSelfComments(e.target.value)}
               rows={4}
               placeholder="Describe your achievements, challenges, and areas of growth..."
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+              className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
             />
           </div>
         </div>
@@ -520,13 +520,13 @@ export default function PerformancePage() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <p className="text-xs text-gray-500">Status</p>
+                <p className="text-xs text-warm-500">Status</p>
                 <Badge variant={reviewStatusColors[viewReview.status] as 'gray' | 'warning' | 'info' | 'success'}>
                   {reviewStatusLabels[viewReview.status]}
                 </Badge>
               </div>
               <div>
-                <p className="text-xs text-gray-500">Reviewer</p>
+                <p className="text-xs text-warm-500">Reviewer</p>
                 <p className="text-sm font-medium">
                   {viewReview.reviewer ? `${viewReview.reviewer.firstName} ${viewReview.reviewer.lastName}` : '-'}
                 </p>
@@ -534,41 +534,41 @@ export default function PerformancePage() {
             </div>
             {viewReview.selfRating && (
               <div className="border-t pt-4">
-                <h4 className="text-sm font-medium text-gray-900 mb-2">Self Review</h4>
+                <h4 className="text-sm font-medium text-warm-900 mb-2">Self Review</h4>
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm text-gray-500">Rating:</span>
+                  <span className="text-sm text-warm-500">Rating:</span>
                   {renderStars(viewReview.selfRating)}
                 </div>
                 {viewReview.selfComments && (
-                  <p className="text-sm text-gray-600 bg-gray-50 p-3 rounded">{viewReview.selfComments}</p>
+                  <p className="text-sm text-warm-600 bg-warm-50 p-3 rounded">{viewReview.selfComments}</p>
                 )}
               </div>
             )}
             {viewReview.managerRating && (
               <div className="border-t pt-4">
-                <h4 className="text-sm font-medium text-gray-900 mb-2">Manager Review</h4>
+                <h4 className="text-sm font-medium text-warm-900 mb-2">Manager Review</h4>
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm text-gray-500">Manager Rating:</span>
+                  <span className="text-sm text-warm-500">Manager Rating:</span>
                   {renderStars(viewReview.managerRating)}
                 </div>
                 <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm text-gray-500">Overall Rating:</span>
+                  <span className="text-sm text-warm-500">Overall Rating:</span>
                   {renderStars(viewReview.overallRating)}
                 </div>
                 {viewReview.managerComments && (
-                  <p className="text-sm text-gray-600 bg-gray-50 p-3 rounded">{viewReview.managerComments}</p>
+                  <p className="text-sm text-warm-600 bg-warm-50 p-3 rounded">{viewReview.managerComments}</p>
                 )}
               </div>
             )}
             {viewReview.goals && viewReview.goals.length > 0 && (
               <div className="border-t pt-4">
-                <h4 className="text-sm font-medium text-gray-900 mb-2">Goals ({viewReview.goals.length})</h4>
+                <h4 className="text-sm font-medium text-warm-900 mb-2">Goals ({viewReview.goals.length})</h4>
                 <div className="space-y-2">
                   {viewReview.goals.map((g) => (
-                    <div key={g.id} className="flex items-center justify-between bg-gray-50 p-2 rounded">
+                    <div key={g.id} className="flex items-center justify-between bg-warm-50 p-2 rounded">
                       <span className="text-sm">{g.title}</span>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-500">{g.progress}%</span>
+                        <span className="text-xs text-warm-500">{g.progress}%</span>
                         <Badge variant={goalStatusColors[g.status] as 'gray' | 'warning' | 'success'}>
                           {goalStatusLabels[g.status]}
                         </Badge>
@@ -596,11 +596,11 @@ export default function PerformancePage() {
         <div className="space-y-4">
           {!editingGoal && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Review Cycle *</label>
+              <label className="block text-sm font-medium text-warm-700 mb-1">Review Cycle *</label>
               <select
                 value={goalForm.reviewId}
                 onChange={(e) => setGoalForm({ ...goalForm, reviewId: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
               >
                 <option value="">Select review...</option>
                 {reviews
@@ -614,36 +614,36 @@ export default function PerformancePage() {
             </div>
           )}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Title *</label>
+            <label className="block text-sm font-medium text-warm-700 mb-1">Title *</label>
             <input
               type="text"
               value={goalForm.title}
               onChange={(e) => setGoalForm({ ...goalForm, title: e.target.value })}
               placeholder="e.g. Complete AWS certification"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+              className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+            <label className="block text-sm font-medium text-warm-700 mb-1">Description</label>
             <textarea
               value={goalForm.description}
               onChange={(e) => setGoalForm({ ...goalForm, description: e.target.value })}
               rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+              className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
             />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Target Date *</label>
+              <label className="block text-sm font-medium text-warm-700 mb-1">Target Date *</label>
               <input
                 type="date"
                 value={goalForm.targetDate}
                 onChange={(e) => setGoalForm({ ...goalForm, targetDate: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Weight (0-1)</label>
+              <label className="block text-sm font-medium text-warm-700 mb-1">Weight (0-1)</label>
               <input
                 type="number"
                 step="0.1"
@@ -651,18 +651,18 @@ export default function PerformancePage() {
                 max="1"
                 value={goalForm.weight}
                 onChange={(e) => setGoalForm({ ...goalForm, weight: parseFloat(e.target.value) || 0 })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
               />
             </div>
           </div>
           {editingGoal && (
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                <label className="block text-sm font-medium text-warm-700 mb-1">Status</label>
                 <select
                   value={goalForm.status}
                   onChange={(e) => setGoalForm({ ...goalForm, status: e.target.value as GoalStatus })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                  className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                 >
                   <option value="NOT_STARTED">Not Started</option>
                   <option value="IN_PROGRESS">In Progress</option>
@@ -670,7 +670,7 @@ export default function PerformancePage() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-warm-700 mb-1">
                   Progress ({goalForm.progress}%)
                 </label>
                 <input
@@ -705,7 +705,7 @@ export default function PerformancePage() {
         onClose={() => setDeleteModal(false)}
         title="Delete Goal"
       >
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-warm-600">
           Are you sure you want to delete &quot;{deletingGoal?.title}&quot;? This action cannot be undone.
         </p>
         <ModalFooter>

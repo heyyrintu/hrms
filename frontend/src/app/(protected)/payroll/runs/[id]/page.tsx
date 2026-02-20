@@ -15,12 +15,14 @@ import {
     CheckCircle,
     CreditCard,
     FileText,
+    Download,
 } from 'lucide-react';
 
 const monthNames = [
     '', 'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December',
 ];
+const monthShort = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 const statusColors: Record<PayrollRunStatus, string> = {
     [PayrollRunStatus.DRAFT]: 'gray',
@@ -37,6 +39,7 @@ export default function PayrollRunDetailPage() {
     const [run, setRun] = useState<PayrollRun | null>(null);
     const [loading, setLoading] = useState(true);
     const [processing, setProcessing] = useState(false);
+    const [downloading, setDownloading] = useState<string | null>(null);
 
     useEffect(() => {
         loadRun();
@@ -94,6 +97,20 @@ export default function PayrollRunDetailPage() {
             maximumFractionDigits: 0,
         }).format(val);
 
+    const handleDownload = async (slip: Payslip) => {
+        setDownloading(slip.id);
+        try {
+            const m = run?.month ?? 0;
+            const y = run?.year ?? '';
+            const filename = `payslip-${slip.employee?.employeeCode ?? 'emp'}-${monthShort[m]}-${y}.pdf`;
+            await payrollApi.downloadPayslip(slip.id, filename);
+        } catch {
+            toast.error('Failed to download payslip');
+        } finally {
+            setDownloading(null);
+        }
+    };
+
     if (loading) {
         return (
             <>
@@ -109,7 +126,7 @@ export default function PayrollRunDetailPage() {
             <>
                 <Card>
                     <CardContent className="py-16 text-center">
-                        <p className="text-gray-600">Payroll run not found.</p>
+                        <p className="text-warm-600">Payroll run not found.</p>
                         <Button variant="secondary" onClick={() => router.push('/payroll')} className="mt-4">
                             Back to Payroll
                         </Button>
@@ -125,15 +142,15 @@ export default function PayrollRunDetailPage() {
         <>
             <div className="space-y-6">
                 {/* Header */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
                     <div>
                         <button
                             onClick={() => router.push('/payroll')}
-                            className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-2"
+                            className="flex items-center gap-1 text-sm text-warm-500 hover:text-warm-700 mb-2"
                         >
                             <ArrowLeft className="w-4 h-4" /> Back to Payroll
                         </button>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                        <h1 className="text-xl sm:text-2xl font-bold text-warm-900 flex items-center gap-2">
                             <FileText className="w-7 h-7 text-primary-600" />
                             {monthNames[run.month]} {run.year}
                             <Badge variant={statusColors[run.status] as any}>
@@ -141,7 +158,7 @@ export default function PayrollRunDetailPage() {
                             </Badge>
                         </h1>
                         {run.remarks && (
-                            <p className="text-gray-600 mt-1">{run.remarks}</p>
+                            <p className="text-warm-600 mt-1">{run.remarks}</p>
                         )}
                     </div>
                     <div className="flex gap-2">
@@ -164,24 +181,24 @@ export default function PayrollRunDetailPage() {
                 </div>
 
                 {/* Summary Cards */}
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                     <Card>
                         <CardContent className="py-4">
-                            <p className="text-sm text-gray-500">Employees</p>
-                            <p className="text-2xl font-bold text-gray-900">{payslips.length}</p>
+                            <p className="text-sm text-warm-500">Employees</p>
+                            <p className="text-2xl font-bold text-warm-900">{payslips.length}</p>
                         </CardContent>
                     </Card>
                     <Card>
                         <CardContent className="py-4">
-                            <p className="text-sm text-gray-500">Total Gross</p>
-                            <p className="text-2xl font-bold text-gray-900">
+                            <p className="text-sm text-warm-500">Total Gross</p>
+                            <p className="text-2xl font-bold text-warm-900">
                                 {formatCurrency(Number(run.totalGross))}
                             </p>
                         </CardContent>
                     </Card>
                     <Card>
                         <CardContent className="py-4">
-                            <p className="text-sm text-gray-500">Total Deductions</p>
+                            <p className="text-sm text-warm-500">Total Deductions</p>
                             <p className="text-2xl font-bold text-red-600">
                                 {formatCurrency(Number(run.totalDeductions))}
                             </p>
@@ -189,8 +206,8 @@ export default function PayrollRunDetailPage() {
                     </Card>
                     <Card>
                         <CardContent className="py-4">
-                            <p className="text-sm text-gray-500">Total Net Pay</p>
-                            <p className="text-2xl font-bold text-green-600">
+                            <p className="text-sm text-warm-500">Total Net Pay</p>
+                            <p className="text-2xl font-bold text-emerald-600">
                                 {formatCurrency(Number(run.totalNet))}
                             </p>
                         </CardContent>
@@ -201,7 +218,7 @@ export default function PayrollRunDetailPage() {
                 {payslips.length === 0 ? (
                     <Card>
                         <CardContent className="py-12 text-center">
-                            <p className="text-gray-600">
+                            <p className="text-warm-600">
                                 {run.status === PayrollRunStatus.DRAFT
                                     ? 'No payslips yet. Process this run to generate payslips.'
                                     : 'No payslips found for this run.'}
@@ -213,34 +230,35 @@ export default function PayrollRunDetailPage() {
                         <div className="overflow-x-auto">
                             <table className="w-full">
                                 <thead>
-                                    <tr className="border-b border-gray-200 bg-gray-50">
-                                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Employee</th>
-                                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Department</th>
-                                        <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Days</th>
-                                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Base Pay</th>
-                                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">OT Pay</th>
-                                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Gross</th>
-                                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Deductions</th>
-                                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Net Pay</th>
+                                    <tr className="border-b border-warm-200 bg-warm-50">
+                                        <th className="px-4 py-3 text-left text-xs font-semibold text-warm-600 uppercase">Employee</th>
+                                        <th className="px-4 py-3 text-left text-xs font-semibold text-warm-600 uppercase">Department</th>
+                                        <th className="px-4 py-3 text-center text-xs font-semibold text-warm-600 uppercase">Days</th>
+                                        <th className="px-4 py-3 text-right text-xs font-semibold text-warm-600 uppercase">Base Pay</th>
+                                        <th className="px-4 py-3 text-right text-xs font-semibold text-warm-600 uppercase">OT Pay</th>
+                                        <th className="px-4 py-3 text-right text-xs font-semibold text-warm-600 uppercase">Gross</th>
+                                        <th className="px-4 py-3 text-right text-xs font-semibold text-warm-600 uppercase">Deductions</th>
+                                        <th className="px-4 py-3 text-right text-xs font-semibold text-warm-600 uppercase">Net Pay</th>
+                                        <th className="px-4 py-3 text-center text-xs font-semibold text-warm-600 uppercase">PDF</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-gray-100">
+                                <tbody className="divide-y divide-warm-100">
                                     {payslips.map((slip: Payslip) => (
-                                        <tr key={slip.id} className="hover:bg-gray-50">
+                                        <tr key={slip.id} className="hover:bg-warm-50">
                                             <td className="px-4 py-3">
-                                                <p className="font-medium text-gray-900 text-sm">
+                                                <p className="font-medium text-warm-900 text-sm">
                                                     {slip.employee?.firstName} {slip.employee?.lastName}
                                                 </p>
-                                                <p className="text-xs text-gray-500">
+                                                <p className="text-xs text-warm-500">
                                                     {slip.employee?.employeeCode}
                                                 </p>
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-600">
+                                            <td className="px-4 py-3 text-sm text-warm-600">
                                                 {slip.employee?.department?.name || '-'}
                                             </td>
                                             <td className="px-4 py-3 text-center text-sm">
-                                                <span className="text-gray-900">{slip.presentDays}</span>
-                                                <span className="text-gray-400">/{slip.workingDays}</span>
+                                                <span className="text-warm-900">{slip.presentDays}</span>
+                                                <span className="text-warm-400">/{slip.workingDays}</span>
                                                 {slip.lopDays > 0 && (
                                                     <span className="text-red-500 text-xs ml-1">
                                                         ({slip.lopDays} LOP)
@@ -261,8 +279,22 @@ export default function PayrollRunDetailPage() {
                                             <td className="px-4 py-3 text-right text-sm text-red-600">
                                                 {formatCurrency(Number(slip.totalDeductions))}
                                             </td>
-                                            <td className="px-4 py-3 text-right text-sm font-bold text-green-700">
+                                            <td className="px-4 py-3 text-right text-sm font-bold text-emerald-700">
                                                 {formatCurrency(Number(slip.netPay))}
+                                            </td>
+                                            <td className="px-4 py-3 text-center">
+                                                <button
+                                                    onClick={() => handleDownload(slip)}
+                                                    disabled={downloading === slip.id}
+                                                    className="p-1.5 text-warm-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors disabled:opacity-50"
+                                                    title="Download payslip PDF"
+                                                >
+                                                    {downloading === slip.id ? (
+                                                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-600 border-t-transparent" />
+                                                    ) : (
+                                                        <Download className="w-4 h-4" />
+                                                    )}
+                                                </button>
                                             </td>
                                         </tr>
                                     ))}

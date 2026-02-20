@@ -2,6 +2,11 @@ import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { Sidebar } from './Sidebar';
 
+// Mock api
+jest.mock('@/lib/api', () => ({
+  api: { get: jest.fn().mockRejectedValue(new Error('mock')) },
+}));
+
 // Mock lucide-react icons
 jest.mock('lucide-react', () => {
   const icons: Record<string, React.FC<any>> = {};
@@ -10,7 +15,9 @@ jest.mock('lucide-react', () => {
     'Settings', 'X', 'ChevronDown', 'ChevronRight', 'Building2',
     'CalendarDays', 'Timer', 'UserCircle', 'FileText', 'GitPullRequest',
     'Bell', 'Megaphone', 'FileSpreadsheet', 'DollarSign', 'Receipt',
-    'Wallet', 'Tags', 'ClipboardList', 'Shield', 'Target', 'Star',
+    'Wallet', 'Tags', 'ClipboardList', 'ClipboardEdit', 'Shield', 'Target', 'Star',
+    'CalendarClock', 'CalendarCheck', 'CalendarPlus', 'FileWarning',
+    'Briefcase', 'MapPin', 'Network', 'LogOut',
   ];
   iconNames.forEach(name => {
     icons[name] = (props: any) => <span data-testid={`icon-${name}`} {...props} />;

@@ -244,6 +244,7 @@ describe('ReportsService', () => {
         where: { tenantId: 'tenant-1' },
         include: {
           department: { select: { name: true } },
+          designation: { select: { name: true } },
           manager: { select: { firstName: true, lastName: true } },
         },
         orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],

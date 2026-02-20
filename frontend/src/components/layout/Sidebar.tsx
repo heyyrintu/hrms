@@ -26,16 +26,24 @@ import {
   Wallet,
   Tags,
   ClipboardList,
+  ClipboardEdit,
   Shield,
   Target,
   Star,
   CalendarClock,
   CalendarCheck,
+  CalendarPlus,
+  FileWarning,
+  Briefcase,
+  MapPin,
+  Network,
+  LogOut,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserRole } from '@/types';
 import { cn } from '@/lib/utils';
+import { api } from '@/lib/api';
 
 interface NavItem {
   name: string;
@@ -53,8 +61,11 @@ const navigation: NavItem[] = [
   },
   {
     name: 'Attendance',
-    href: '/attendance',
-    icon: <Clock className="h-[18px] w-[18px]" />
+    icon: <Clock className="h-[18px] w-[18px]" />,
+    children: [
+      { name: 'My Attendance', href: '/attendance', icon: <Clock className="h-4 w-4" /> },
+      { name: 'Regularization', href: '/attendance/regularization', icon: <ClipboardEdit className="h-4 w-4" /> },
+    ],
   },
   {
     name: 'Employees',
@@ -63,15 +74,29 @@ const navigation: NavItem[] = [
     roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER]
   },
   {
+    name: 'Org Chart',
+    href: '/org-chart',
+    icon: <Network className="h-[18px] w-[18px]" />,
+    roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER]
+  },
+  {
     name: 'Leave',
     href: '/leave',
     icon: <Calendar className="h-[18px] w-[18px]" />
   },
   {
+    name: 'Comp-Off',
+    href: '/leave/comp-off',
+    icon: <CalendarPlus className="h-[18px] w-[18px]" />
+  },
+  {
     name: 'Payroll',
-    href: '/payroll',
     icon: <DollarSign className="h-[18px] w-[18px]" />,
     roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN],
+    children: [
+      { name: 'Payroll Runs', href: '/payroll', icon: <DollarSign className="h-4 w-4" /> },
+      { name: 'Employee Payslips', href: '/payroll/payslips', icon: <Receipt className="h-4 w-4" /> },
+    ],
   },
   {
     name: 'My Payslips',
@@ -82,6 +107,12 @@ const navigation: NavItem[] = [
     name: 'Expenses',
     href: '/expenses',
     icon: <Wallet className="h-[18px] w-[18px]" />
+  },
+  {
+    name: 'Exit Management',
+    href: '/exit-management',
+    icon: <LogOut className="h-[18px] w-[18px]" />,
+    roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN],
   },
   {
     name: 'Onboarding',
@@ -98,6 +129,11 @@ const navigation: NavItem[] = [
     name: 'Notifications',
     href: '/notifications',
     icon: <Bell className="h-[18px] w-[18px]" />
+  },
+  {
+    name: 'My Letters',
+    href: '/my-letters',
+    icon: <FileText className="h-[18px] w-[18px]" />
   },
   {
     name: 'My Profile',
@@ -122,6 +158,8 @@ const navigation: NavItem[] = [
       { name: 'Leave Approvals', href: '/approvals/leave', icon: <Calendar className="h-4 w-4" /> },
       { name: 'Change Requests', href: '/approvals/change-requests', icon: <GitPullRequest className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
       { name: 'Expense Claims', href: '/approvals/expenses', icon: <Wallet className="h-4 w-4" /> },
+      { name: 'Comp-Off', href: '/approvals/comp-off', icon: <CalendarPlus className="h-4 w-4" /> },
+      { name: 'Regularization', href: '/approvals/regularization', icon: <ClipboardEdit className="h-4 w-4" /> },
     ]
   },
   {
@@ -141,6 +179,9 @@ const navigation: NavItem[] = [
     icon: <Settings className="h-[18px] w-[18px]" />,
     roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN],
     children: [
+      { name: 'Departments', href: '/admin/departments', icon: <Building2 className="h-4 w-4" /> },
+      { name: 'Designations', href: '/admin/designations', icon: <Briefcase className="h-4 w-4" /> },
+      { name: 'Branches', href: '/admin/branches', icon: <MapPin className="h-4 w-4" /> },
       { name: 'OT Rules', href: '/admin/ot-rules', icon: <Clock className="h-4 w-4" /> },
       { name: 'Holidays', href: '/admin/holidays', icon: <CalendarDays className="h-4 w-4" /> },
       { name: 'Shifts', href: '/admin/shifts', icon: <Timer className="h-4 w-4" /> },
@@ -151,6 +192,8 @@ const navigation: NavItem[] = [
       { name: 'Announcements', href: '/admin/announcements', icon: <Megaphone className="h-4 w-4" /> },
       { name: 'Expense Categories', href: '/admin/expense-categories', icon: <Tags className="h-4 w-4" /> },
       { name: 'Onboarding Templates', href: '/admin/onboarding-templates', icon: <ClipboardList className="h-4 w-4" /> },
+      { name: 'Document Expiry', href: '/admin/document-expiry', icon: <FileWarning className="h-4 w-4" /> },
+      { name: 'Letters', href: '/admin/letters', icon: <FileText className="h-4 w-4" /> },
       { name: 'Audit Logs', href: '/admin/audit', icon: <Shield className="h-4 w-4" /> },
     ]
   },
@@ -164,7 +207,21 @@ interface SidebarProps {
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
   const { user, hasRole } = useAuth();
-  const [expandedItems, setExpandedItems] = useState<string[]>(['Performance', 'Approvals', 'Admin']);
+  const [expandedItems, setExpandedItems] = useState<string[]>(['Attendance', 'Performance', 'Approvals', 'Admin', 'Payroll']);
+  const [tenantLogoUrl, setTenantLogoUrl] = useState<string | null>(null);
+  const [tenantName, setTenantName] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!user) return;
+    const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
+    api.get('/tenant-info')
+      .then((r) => {
+        // Compute absolute URL for the public logo endpoint (no auth required)
+        setTenantLogoUrl(r.data.logoUrl ? `${base}/companies/${r.data.id}/logo` : null);
+        setTenantName(r.data.name ?? null);
+      })
+      .catch(() => { /* fallback to static logo */ });
+  }, [user]);
 
   const toggleExpand = (name: string) => {
     setExpandedItems(prev =>
@@ -201,7 +258,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           <button
             onClick={() => toggleExpand(item.name)}
             className={cn(
-              'flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-all duration-150',
+              'flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 sm:py-2 text-sm sm:text-[13px] font-medium transition-all duration-150',
               'text-warm-600 hover:bg-warm-100 hover:text-warm-900'
             )}
           >
@@ -234,11 +291,11 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           }
         }}
         className={cn(
-          'flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition-all duration-150',
+          'flex items-center gap-3 rounded-lg px-3 py-2.5 sm:py-2 text-sm sm:text-[13px] font-medium transition-all duration-150',
           active
             ? 'bg-primary-50 text-primary-700 shadow-soft'
             : 'text-warm-600 hover:bg-warm-100 hover:text-warm-900',
-          isChild && 'text-[13px] py-1.5'
+          isChild && 'text-sm sm:text-[13px] py-2 sm:py-1.5'
         )}
       >
         <span className={cn(
@@ -274,12 +331,20 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       >
         {/* Logo */}
         <div className="flex h-16 items-center justify-between border-b border-warm-200 px-4">
-          <Link href="/dashboard" className="flex items-center">
-            <img
-              src="/logo.png"
-              alt="Drona Logitech"
-              className="h-10 w-auto object-contain"
-            />
+          <Link href="/dashboard" className="flex items-center gap-2 min-w-0">
+            {tenantLogoUrl ? (
+              <img
+                src={tenantLogoUrl}
+                alt={tenantName ?? 'Company'}
+                className="h-10 w-auto object-contain max-w-[160px]"
+              />
+            ) : (
+              <img
+                src="/logo.png"
+                alt="Drona Logitech"
+                className="h-10 w-auto object-contain"
+              />
+            )}
           </Link>
           <button
             onClick={onClose}
@@ -290,7 +355,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-4">
+        <nav className="flex-1 space-y-0.5 overflow-y-auto overscroll-contain px-3 py-3 sm:py-4">
           {filteredNavigation.map(item => renderNavItem(item))}
         </nav>
 

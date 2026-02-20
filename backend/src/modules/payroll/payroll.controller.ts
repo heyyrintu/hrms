@@ -9,7 +9,9 @@ import {
   Query,
   UseGuards,
   ForbiddenException,
+  Res,
 } from '@nestjs/common';
+import { Response } from 'express';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -18,6 +20,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { SalaryService } from './salary.service';
+import { PayrollPdfService } from './payroll-pdf.service';
 import { PayrollService } from './payroll.service';
 import {
   CreateSalaryStructureDto,
@@ -36,6 +39,7 @@ export class PayrollController {
   constructor(
     private salaryService: SalaryService,
     private payrollService: PayrollService,
+    private pdfService: PayrollPdfService,
   ) {}
 
   // ============================================
@@ -229,7 +233,7 @@ export class PayrollController {
   }
 
   @Delete('runs/:id')
-  @ApiOperation({ summary: 'Delete payroll run' })
+  @ApiOperation({ summary: 'Delete payroll run (SUPER_ADMIN can delete any status; others only DRAFT)' })
   @ApiResponse({ status: 200, description: 'Success' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
@@ -239,7 +243,7 @@ export class PayrollController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
   ) {
-    await this.payrollService.deleteRun(user.tenantId, id);
+    await this.payrollService.deleteRun(user.tenantId, id, user.role);
     return { message: 'Payroll run deleted' };
   }
 
@@ -276,6 +280,53 @@ export class PayrollController {
       user.tenantId,
       user.employeeId!,
     );
+  }
+
+  @Get('employees/:employeeId/payslips')
+  @ApiOperation({ summary: 'Get all payslips for a specific employee (admin/HR only)' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  async getEmployeePayslips(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('employeeId') employeeId: string,
+  ) {
+    return this.payrollService.getEmployeePayslips(user.tenantId, employeeId);
+  }
+
+  // NOTE: This route must be declared BEFORE /payslips/:id to avoid route conflict
+  @Get('payslips/:id/pdf')
+  @ApiOperation({ summary: 'Download payslip as PDF' })
+  @ApiResponse({ status: 200, description: 'PDF file' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
+  async downloadPayslipPdf(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    const payslip = await this.payrollService.getPayslip(user.tenantId, id);
+    if (
+      user.role !== UserRole.SUPER_ADMIN &&
+      user.role !== UserRole.HR_ADMIN &&
+      payslip.employeeId !== user.employeeId
+    ) {
+      throw new ForbiddenException('You can only download your own payslips');
+    }
+
+    const month = payslip.payrollRun?.month ?? 0;
+    const year = payslip.payrollRun?.year ?? '';
+    const monthNames = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const filename = `payslip-${payslip.employee?.employeeCode ?? 'emp'}-${monthNames[month]}-${year}.pdf`;
+
+    const pdfBuffer = await this.pdfService.generatePayslipPdf(payslip as any);
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.end(pdfBuffer);
   }
 
   @Get('payslips/:id')

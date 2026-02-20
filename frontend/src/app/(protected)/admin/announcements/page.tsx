@@ -175,11 +175,11 @@ export default function AnnouncementsAdminPage() {
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                        <h1 className="text-2xl font-bold text-warm-900 flex items-center gap-2">
                             <Megaphone className="w-7 h-7 text-primary-600" />
                             Announcements
                         </h1>
-                        <p className="text-gray-600 mt-1">
+                        <p className="text-warm-600 mt-1">
                             Create and manage company announcements
                         </p>
                     </div>
@@ -197,13 +197,13 @@ export default function AnnouncementsAdminPage() {
 
                 {/* Search */}
                 <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-warm-400" />
                     <input
                         type="text"
                         placeholder="Search announcements..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                        className="w-full pl-10 pr-4 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                     />
                 </div>
 
@@ -211,26 +211,26 @@ export default function AnnouncementsAdminPage() {
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     <Card>
                         <CardContent className="py-4 text-center">
-                            <p className="text-2xl font-bold text-gray-900">
+                            <p className="text-2xl font-bold text-warm-900">
                                 {announcements.length}
                             </p>
-                            <p className="text-sm text-gray-500">Total</p>
+                            <p className="text-sm text-warm-500">Total</p>
                         </CardContent>
                     </Card>
                     <Card>
                         <CardContent className="py-4 text-center">
-                            <p className="text-2xl font-bold text-green-600">
+                            <p className="text-2xl font-bold text-emerald-600">
                                 {announcements.filter((a) => a.isPublished && !isExpired(a)).length}
                             </p>
-                            <p className="text-sm text-gray-500">Active</p>
+                            <p className="text-sm text-warm-500">Active</p>
                         </CardContent>
                     </Card>
                     <Card>
                         <CardContent className="py-4 text-center">
-                            <p className="text-2xl font-bold text-gray-500">
+                            <p className="text-2xl font-bold text-warm-500">
                                 {announcements.filter((a) => !a.isPublished).length}
                             </p>
-                            <p className="text-sm text-gray-500">Drafts</p>
+                            <p className="text-sm text-warm-500">Drafts</p>
                         </CardContent>
                     </Card>
                     <Card>
@@ -238,7 +238,7 @@ export default function AnnouncementsAdminPage() {
                             <p className="text-2xl font-bold text-red-600">
                                 {announcements.filter((a) => a.priority === AnnouncementPriority.URGENT).length}
                             </p>
-                            <p className="text-sm text-gray-500">Urgent</p>
+                            <p className="text-sm text-warm-500">Urgent</p>
                         </CardContent>
                     </Card>
                 </div>
@@ -251,11 +251,11 @@ export default function AnnouncementsAdminPage() {
                 ) : filteredAnnouncements.length === 0 ? (
                     <Card>
                         <CardContent className="py-16 text-center">
-                            <Megaphone className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                            <Megaphone className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+                            <h3 className="text-lg font-semibold text-warm-900 mb-2">
                                 No Announcements Found
                             </h3>
-                            <p className="text-gray-600 mb-4">
+                            <p className="text-warm-600 mb-4">
                                 {searchQuery
                                     ? 'No announcements match your search.'
                                     : 'Create your first announcement to get started.'}
@@ -274,7 +274,7 @@ export default function AnnouncementsAdminPage() {
                                     <div className="flex items-start justify-between gap-4">
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2 flex-wrap">
-                                                <h3 className="text-base font-semibold text-gray-900">
+                                                <h3 className="text-base font-semibold text-warm-900">
                                                     {announcement.title}
                                                 </h3>
                                                 <Badge
@@ -298,10 +298,10 @@ export default function AnnouncementsAdminPage() {
                                                     <Badge variant="gray">Draft</Badge>
                                                 )}
                                             </div>
-                                            <p className="text-sm text-gray-600 mt-1 line-clamp-2">
+                                            <p className="text-sm text-warm-600 mt-1 line-clamp-2">
                                                 {announcement.content}
                                             </p>
-                                            <div className="flex items-center gap-4 mt-2 text-xs text-gray-400">
+                                            <div className="flex items-center gap-4 mt-2 text-xs text-warm-400">
                                                 {announcement.author && (
                                                     <span>
                                                         By {announcement.author.firstName}{' '}
@@ -324,14 +324,14 @@ export default function AnnouncementsAdminPage() {
                                         <div className="flex items-center gap-1 flex-shrink-0">
                                             <button
                                                 onClick={() => openEditModal(announcement)}
-                                                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                                                className="p-2 text-warm-400 hover:text-warm-600 hover:bg-warm-100 rounded-lg transition-colors"
                                                 title="Edit"
                                             >
                                                 <Edit2 className="w-4 h-4" />
                                             </button>
                                             <button
                                                 onClick={() => openDeleteModal(announcement)}
-                                                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                className="p-2 text-warm-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                                 title="Delete"
                                             >
                                                 <Trash2 className="w-4 h-4" />
@@ -345,7 +345,7 @@ export default function AnnouncementsAdminPage() {
                         {/* Pagination */}
                         {totalPages > 1 && (
                             <div className="flex items-center justify-between">
-                                <p className="text-sm text-gray-500">
+                                <p className="text-sm text-warm-500">
                                     Page {page} of {totalPages}
                                 </p>
                                 <div className="flex gap-2">
@@ -381,7 +381,7 @@ export default function AnnouncementsAdminPage() {
             >
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-medium text-warm-700 mb-1">
                             Title *
                         </label>
                         <input
@@ -389,12 +389,12 @@ export default function AnnouncementsAdminPage() {
                             value={formData.title}
                             onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                             placeholder="Announcement title"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         />
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-medium text-warm-700 mb-1">
                             Content *
                         </label>
                         <textarea
@@ -404,13 +404,13 @@ export default function AnnouncementsAdminPage() {
                             }
                             placeholder="Announcement content..."
                             rows={5}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
                         />
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 Priority
                             </label>
                             <select
@@ -421,7 +421,7 @@ export default function AnnouncementsAdminPage() {
                                         priority: e.target.value as AnnouncementPriority,
                                     })
                                 }
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             >
                                 {priorityOptions.map((opt) => (
                                     <option key={opt.value} value={opt.value}>
@@ -431,7 +431,7 @@ export default function AnnouncementsAdminPage() {
                             </select>
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 Expires At
                             </label>
                             <input
@@ -440,7 +440,7 @@ export default function AnnouncementsAdminPage() {
                                 onChange={(e) =>
                                     setFormData({ ...formData, expiresAt: e.target.value })
                                 }
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                     </div>
@@ -452,17 +452,17 @@ export default function AnnouncementsAdminPage() {
                             onChange={(e) =>
                                 setFormData({ ...formData, isPublished: e.target.checked })
                             }
-                            className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                            className="w-4 h-4 text-primary-600 border-warm-300 rounded focus:ring-primary-500"
                         />
-                        <span className="text-sm text-gray-700">
+                        <span className="text-sm text-warm-700">
                             {formData.isPublished ? (
                                 <span className="flex items-center gap-1">
-                                    <Eye className="w-4 h-4 text-green-600" />
+                                    <Eye className="w-4 h-4 text-emerald-600" />
                                     Published — visible to all employees
                                 </span>
                             ) : (
                                 <span className="flex items-center gap-1">
-                                    <EyeOff className="w-4 h-4 text-gray-400" />
+                                    <EyeOff className="w-4 h-4 text-warm-400" />
                                     Draft — not visible to employees
                                 </span>
                             )}
@@ -495,7 +495,7 @@ export default function AnnouncementsAdminPage() {
                 title="Delete Announcement"
                 size="sm"
             >
-                <p className="text-gray-600">
+                <p className="text-warm-600">
                     Are you sure you want to delete{' '}
                     <strong>{deletingAnnouncement?.title}</strong>? This action cannot
                     be undone.

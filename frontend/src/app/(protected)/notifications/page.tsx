@@ -34,16 +34,16 @@ interface Notification {
 }
 
 const typeIcons: Partial<Record<NotificationType, React.ReactNode>> = {
-    [NotificationType.LEAVE_APPROVED]: <Calendar className="w-4 h-4 text-green-600" />,
+    [NotificationType.LEAVE_APPROVED]: <Calendar className="w-4 h-4 text-emerald-600" />,
     [NotificationType.LEAVE_REJECTED]: <Calendar className="w-4 h-4 text-red-600" />,
-    [NotificationType.OT_APPROVED]: <Clock className="w-4 h-4 text-green-600" />,
+    [NotificationType.OT_APPROVED]: <Clock className="w-4 h-4 text-emerald-600" />,
     [NotificationType.OT_REJECTED]: <Clock className="w-4 h-4 text-red-600" />,
-    [NotificationType.CHANGE_REQUEST_APPROVED]: <FileText className="w-4 h-4 text-green-600" />,
+    [NotificationType.CHANGE_REQUEST_APPROVED]: <FileText className="w-4 h-4 text-emerald-600" />,
     [NotificationType.CHANGE_REQUEST_REJECTED]: <FileText className="w-4 h-4 text-red-600" />,
     [NotificationType.DOCUMENT_VERIFIED]: <Check className="w-4 h-4 text-blue-600" />,
     [NotificationType.SHIFT_ASSIGNED]: <Clock className="w-4 h-4 text-purple-600" />,
     [NotificationType.ANNOUNCEMENT]: <Megaphone className="w-4 h-4 text-orange-600" />,
-    [NotificationType.GENERAL]: <AlertCircle className="w-4 h-4 text-gray-600" />,
+    [NotificationType.GENERAL]: <AlertCircle className="w-4 h-4 text-warm-600" />,
 };
 
 export default function NotificationsPage() {
@@ -135,16 +135,16 @@ export default function NotificationsPage() {
         <>
             <div className="space-y-6">
                 {/* Header */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                        <h1 className="text-xl sm:text-2xl font-bold text-warm-900 flex items-center gap-2">
                             <Bell className="w-7 h-7 text-primary-600" />
                             Notifications
                             {unreadCount > 0 && (
                                 <Badge variant="danger">{unreadCount} unread</Badge>
                             )}
                         </h1>
-                        <p className="text-gray-600 mt-1">
+                        <p className="text-warm-600 mt-1">
                             Stay updated with your latest activity
                         </p>
                     </div>
@@ -179,11 +179,11 @@ export default function NotificationsPage() {
                 ) : notifications.length === 0 ? (
                     <Card>
                         <CardContent className="py-16 text-center">
-                            <Bell className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                            <Bell className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+                            <h3 className="text-lg font-semibold text-warm-900 mb-2">
                                 No Notifications
                             </h3>
-                            <p className="text-gray-600">
+                            <p className="text-warm-600">
                                 {filterUnread
                                     ? "You're all caught up! No unread notifications."
                                     : 'You have no notifications yet.'}
@@ -192,14 +192,14 @@ export default function NotificationsPage() {
                     </Card>
                 ) : (
                     <Card>
-                        <div className="divide-y divide-gray-100">
+                        <div className="divide-y divide-warm-100">
                             {notifications.map((notif) => (
                                 <div
                                     key={notif.id}
                                     className={cn(
                                         'flex items-start gap-4 px-4 py-4 transition-colors',
                                         !notif.isRead && 'bg-primary-50/50',
-                                        notif.link && 'cursor-pointer hover:bg-gray-50',
+                                        notif.link && 'cursor-pointer hover:bg-warm-50',
                                     )}
                                     onClick={() => handleClick(notif)}
                                 >
@@ -209,11 +209,11 @@ export default function NotificationsPage() {
                                                 'w-9 h-9 rounded-full flex items-center justify-center',
                                                 !notif.isRead
                                                     ? 'bg-primary-100'
-                                                    : 'bg-gray-100',
+                                                    : 'bg-warm-100',
                                             )}
                                         >
                                             {typeIcons[notif.type] || (
-                                                <Bell className="w-4 h-4 text-gray-500" />
+                                                <Bell className="w-4 h-4 text-warm-500" />
                                             )}
                                         </div>
                                     </div>
@@ -225,16 +225,16 @@ export default function NotificationsPage() {
                                                     className={cn(
                                                         'text-sm',
                                                         !notif.isRead
-                                                            ? 'font-semibold text-gray-900'
-                                                            : 'font-medium text-gray-700',
+                                                            ? 'font-semibold text-warm-900'
+                                                            : 'font-medium text-warm-700',
                                                     )}
                                                 >
                                                     {notif.title}
                                                 </p>
-                                                <p className="text-sm text-gray-600 mt-0.5">
+                                                <p className="text-sm text-warm-600 mt-0.5">
                                                     {notif.message}
                                                 </p>
-                                                <p className="text-xs text-gray-400 mt-1">
+                                                <p className="text-xs text-warm-400 mt-1">
                                                     {timeAgo(notif.createdAt)}
                                                 </p>
                                             </div>
@@ -246,7 +246,7 @@ export default function NotificationsPage() {
                                                             e.stopPropagation();
                                                             handleMarkAsRead(notif.id);
                                                         }}
-                                                        className="p-1.5 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                                                        className="p-1.5 text-warm-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
                                                         title="Mark as read"
                                                     >
                                                         <Check className="w-4 h-4" />
@@ -257,7 +257,7 @@ export default function NotificationsPage() {
                                                         e.stopPropagation();
                                                         handleDelete(notif.id);
                                                     }}
-                                                    className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                    className="p-1.5 text-warm-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                                     title="Delete"
                                                 >
                                                     <Trash2 className="w-4 h-4" />
@@ -271,8 +271,8 @@ export default function NotificationsPage() {
 
                         {/* Pagination */}
                         {totalPages > 1 && (
-                            <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100">
-                                <p className="text-sm text-gray-500">
+                            <div className="flex items-center justify-between px-4 py-3 border-t border-warm-100">
+                                <p className="text-sm text-warm-500">
                                     Page {page} of {totalPages}
                                 </p>
                                 <div className="flex gap-2">

@@ -276,4 +276,61 @@ describe('AdminService', () => {
       });
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // getAnalytics
+  // ---------------------------------------------------------------------------
+  describe('getAnalytics', () => {
+    it('should return analytics data with all 4 sections', async () => {
+      // Mock groupBy for department headcount
+      prisma.employee.groupBy.mockResolvedValueOnce([
+        { departmentId: 'dept-1', _count: { id: 10 } },
+        { departmentId: null, _count: { id: 2 } },
+      ]);
+      // Mock groupBy for employment type
+      prisma.employee.groupBy.mockResolvedValueOnce([
+        { employmentType: 'PERMANENT', _count: { id: 8 } },
+        { employmentType: 'CONTRACT', _count: { id: 4 } },
+      ]);
+      // Mock findMany for monthly joins
+      prisma.employee.findMany.mockResolvedValue([]);
+      // Mock groupBy for leave utilization
+      prisma.leaveRequest.groupBy.mockResolvedValue([]);
+      // Mock department name resolution
+      prisma.department.findMany.mockResolvedValue([
+        { id: 'dept-1', name: 'Engineering' },
+      ]);
+
+      const result = await service.getAnalytics('tenant-1');
+
+      expect(result).toHaveProperty('headcountByDepartment');
+      expect(result).toHaveProperty('employmentTypeDistribution');
+      expect(result).toHaveProperty('monthlyJoins');
+      expect(result).toHaveProperty('leaveUtilization');
+      expect(result.headcountByDepartment).toEqual([
+        { department: 'Engineering', count: 10 },
+        { department: 'Unassigned', count: 2 },
+      ]);
+      expect(result.employmentTypeDistribution).toEqual([
+        { type: 'PERMANENT', count: 8 },
+        { type: 'CONTRACT', count: 4 },
+      ]);
+      expect(result.monthlyJoins).toHaveLength(6);
+    });
+
+    it('should handle empty data', async () => {
+      prisma.employee.groupBy
+        .mockResolvedValueOnce([])   // department headcount
+        .mockResolvedValueOnce([]);  // employment type
+      prisma.employee.findMany.mockResolvedValue([]);
+      prisma.leaveRequest.groupBy.mockResolvedValue([]);
+
+      const result = await service.getAnalytics('tenant-1');
+
+      expect(result.headcountByDepartment).toEqual([]);
+      expect(result.employmentTypeDistribution).toEqual([]);
+      expect(result.monthlyJoins).toHaveLength(6);
+      expect(result.leaveUtilization).toEqual([]);
+    });
+  });
 });

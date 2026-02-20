@@ -131,8 +131,8 @@ export function LeaveCalendar() {
         const colors: Record<string, string> = {
             'CL': 'bg-blue-500',
             'SL': 'bg-red-500',
-            'PL': 'bg-green-500',
-            'LOP': 'bg-gray-500',
+            'PL': 'bg-emerald-500',
+            'LOP': 'bg-warm-500',
             'ML': 'bg-pink-500',
             'PFL': 'bg-purple-500',
         };
@@ -155,7 +155,7 @@ export function LeaveCalendar() {
 
     return (
         <Card>
-            <CardHeader className="border-b border-gray-100">
+            <CardHeader className="border-b border-warm-100">
                 <div className="flex items-center justify-between">
                     <CardTitle className="flex items-center gap-2">
                         <CalendarIcon className="w-5 h-5 text-primary-600" />
@@ -186,13 +186,13 @@ export function LeaveCalendar() {
                 ) : (
                     <>
                         {/* Day Headers */}
-                        <div className="grid grid-cols-7 border-b border-gray-100">
+                        <div className="grid grid-cols-7 border-b border-warm-100">
                             {DAYS.map((day, index) => (
                                 <div
                                     key={day}
                                     className={cn(
                                         'py-3 text-center text-xs font-semibold uppercase tracking-wider',
-                                        index === 0 || index === 6 ? 'text-gray-400' : 'text-gray-600'
+                                        index === 0 || index === 6 ? 'text-warm-400' : 'text-warm-600'
                                     )}
                                 >
                                     {day}
@@ -206,18 +206,18 @@ export function LeaveCalendar() {
                                 <div
                                     key={index}
                                     className={cn(
-                                        'min-h-[80px] p-1 border-b border-r border-gray-100',
-                                        !day.isCurrentMonth && 'bg-gray-50',
-                                        day.isWeekend && day.isCurrentMonth && 'bg-gray-50/50'
+                                        'min-h-[80px] p-1 border-b border-r border-warm-100',
+                                        !day.isCurrentMonth && 'bg-warm-50',
+                                        day.isWeekend && day.isCurrentMonth && 'bg-warm-50/50'
                                     )}
                                 >
                                     <div
                                         className={cn(
                                             'text-sm mb-1 w-7 h-7 flex items-center justify-center rounded-full',
-                                            !day.isCurrentMonth && 'text-gray-400',
-                                            day.isWeekend && 'text-gray-400',
+                                            !day.isCurrentMonth && 'text-warm-400',
+                                            day.isWeekend && 'text-warm-400',
                                             day.isToday && 'bg-primary-600 text-white font-semibold',
-                                            day.isCurrentMonth && !day.isToday && !day.isWeekend && 'text-gray-900',
+                                            day.isCurrentMonth && !day.isToday && !day.isWeekend && 'text-warm-900',
                                         )}
                                     >
                                         {day.date.getDate()}
@@ -238,7 +238,7 @@ export function LeaveCalendar() {
                                             </div>
                                         ))}
                                         {day.leaves.length > 2 && (
-                                            <div className="text-xs text-gray-500 pl-1">
+                                            <div className="text-xs text-warm-500 pl-1">
                                                 +{day.leaves.length - 2} more
                                             </div>
                                         )}
@@ -248,23 +248,23 @@ export function LeaveCalendar() {
                         </div>
 
                         {/* Legend */}
-                        <div className="p-4 border-t border-gray-100 flex items-center gap-4 flex-wrap">
-                            <span className="text-xs font-medium text-gray-500">Legend:</span>
+                        <div className="p-4 border-t border-warm-100 flex items-center gap-4 flex-wrap">
+                            <span className="text-xs font-medium text-warm-500">Legend:</span>
                             <div className="flex items-center gap-1">
                                 <div className="w-3 h-3 rounded bg-blue-500" />
-                                <span className="text-xs text-gray-600">CL</span>
+                                <span className="text-xs text-warm-600">CL</span>
                             </div>
                             <div className="flex items-center gap-1">
                                 <div className="w-3 h-3 rounded bg-red-500" />
-                                <span className="text-xs text-gray-600">SL</span>
+                                <span className="text-xs text-warm-600">SL</span>
                             </div>
                             <div className="flex items-center gap-1">
-                                <div className="w-3 h-3 rounded bg-green-500" />
-                                <span className="text-xs text-gray-600">PL</span>
+                                <div className="w-3 h-3 rounded bg-emerald-500" />
+                                <span className="text-xs text-warm-600">PL</span>
                             </div>
                             <div className="flex items-center gap-1">
                                 <div className="w-3 h-3 rounded bg-yellow-400" />
-                                <span className="text-xs text-gray-600">Pending</span>
+                                <span className="text-xs text-warm-600">Pending</span>
                             </div>
                         </div>
                     </>

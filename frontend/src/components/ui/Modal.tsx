@@ -14,11 +14,11 @@ interface ModalProps {
 }
 
 const sizeClasses = {
-  sm: 'max-w-sm',
-  md: 'max-w-md',
-  lg: 'max-w-lg',
-  xl: 'max-w-xl',
-  '2xl': 'max-w-2xl',
+  sm: 'max-w-[calc(100vw-2rem)] sm:max-w-sm',
+  md: 'max-w-[calc(100vw-2rem)] sm:max-w-md',
+  lg: 'max-w-[calc(100vw-2rem)] sm:max-w-lg',
+  xl: 'max-w-[calc(100vw-2rem)] sm:max-w-xl',
+  '2xl': 'max-w-[calc(100vw-2rem)] sm:max-w-2xl',
 };
 
 export function Modal({ isOpen, onClose, title, children, size = 'md', className }: ModalProps) {
@@ -52,10 +52,11 @@ export function Modal({ isOpen, onClose, title, children, size = 'md', className
       />
 
       {/* Modal */}
-      <div className="flex min-h-full items-center justify-center p-4">
+      <div className="flex min-h-full items-end sm:items-center justify-center p-0 sm:p-4">
         <div
           className={cn(
-            'relative w-full bg-white rounded-2xl shadow-dropdown border border-warm-200 transform transition-all animate-scale-in',
+            'relative w-full bg-white rounded-t-2xl sm:rounded-2xl shadow-dropdown border border-warm-200 transform transition-all animate-scale-in',
+            'max-h-[90vh] sm:max-h-[85vh] flex flex-col',
             sizeClasses[size],
             className
           )}
@@ -63,11 +64,11 @@ export function Modal({ isOpen, onClose, title, children, size = 'md', className
         >
           {/* Header */}
           {title && (
-            <div className="flex items-center justify-between p-5 border-b border-warm-200">
-              <h3 className="text-lg font-semibold text-warm-900">{title}</h3>
+            <div className="flex items-center justify-between p-4 sm:p-5 border-b border-warm-200 flex-shrink-0">
+              <h3 className="text-base sm:text-lg font-semibold text-warm-900">{title}</h3>
               <button
                 onClick={onClose}
-                className="p-1.5 rounded-lg text-warm-400 hover:text-warm-600 hover:bg-warm-100 transition-colors"
+                className="p-1.5 rounded-lg text-warm-400 hover:text-warm-600 hover:bg-warm-100 transition-colors active:scale-95"
               >
                 <X className="h-4 w-4" />
               </button>
@@ -75,7 +76,7 @@ export function Modal({ isOpen, onClose, title, children, size = 'md', className
           )}
 
           {/* Content */}
-          <div className="p-5">
+          <div className="p-4 sm:p-5 overflow-y-auto overscroll-contain flex-1">
             {children}
           </div>
         </div>
@@ -91,7 +92,7 @@ interface ModalFooterProps {
 
 export function ModalFooter({ children, className }: ModalFooterProps) {
   return (
-    <div className={cn('flex justify-end gap-3 mt-4 pt-4 border-t border-warm-200', className)}>
+    <div className={cn('flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3 mt-4 pt-4 border-t border-warm-200', className)}>
       {children}
     </div>
   );

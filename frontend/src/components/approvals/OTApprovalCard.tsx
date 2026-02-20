@@ -47,7 +47,7 @@ export function OTApprovalCard({ record, onApprove }: OTApprovalCardProps) {
           {/* Header - OT Badge */}
           <div className={cn(
             'px-4 py-3 text-white bg-gradient-to-r rounded-t-lg',
-            isApproved ? 'from-green-500 to-green-600' : 'from-orange-500 to-orange-600'
+            isApproved ? 'from-emerald-500 to-emerald-600' : 'from-orange-500 to-orange-600'
           )}>
             <div className="flex items-center justify-between">
               <span className="font-semibold">Overtime Approval</span>
@@ -64,14 +64,14 @@ export function OTApprovalCard({ record, onApprove }: OTApprovalCardProps) {
           <div className="p-4 space-y-4">
             {/* Employee Info */}
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center">
-                <User className="w-5 h-5 text-gray-500" />
+              <div className="w-10 h-10 bg-warm-100 rounded-full flex items-center justify-center">
+                <User className="w-5 h-5 text-warm-500" />
               </div>
               <div>
-                <div className="font-medium text-gray-900">
+                <div className="font-medium text-warm-900">
                   {record.employee?.firstName} {record.employee?.lastName}
                 </div>
-                <div className="text-sm text-gray-500">
+                <div className="text-sm text-warm-500">
                   {record.employee?.employeeCode}
                 </div>
               </div>
@@ -79,18 +79,18 @@ export function OTApprovalCard({ record, onApprove }: OTApprovalCardProps) {
 
             {/* Date & Time Details */}
             <div className="grid grid-cols-2 gap-3 text-sm">
-              <div className="flex items-center gap-2 text-gray-600">
+              <div className="flex items-center gap-2 text-warm-600">
                 <Calendar className="w-4 h-4" />
                 <span>{formatDate(record.date)}</span>
               </div>
-              <div className="flex items-center gap-2 text-gray-600">
+              <div className="flex items-center gap-2 text-warm-600">
                 <Clock className="w-4 h-4" />
                 <span>
                   {record.clockInTime && formatTime(record.clockInTime)} - {record.clockOutTime && formatTime(record.clockOutTime)}
                 </span>
               </div>
               {record.employee?.department && (
-                <div className="flex items-center gap-2 text-gray-600 col-span-2">
+                <div className="flex items-center gap-2 text-warm-600 col-span-2">
                   <Building className="w-4 h-4" />
                   <span className="truncate">{record.employee.department.name}</span>
                 </div>
@@ -98,25 +98,25 @@ export function OTApprovalCard({ record, onApprove }: OTApprovalCardProps) {
             </div>
 
             {/* Work Summary */}
-            <div className="p-3 bg-gray-50 rounded-lg space-y-2">
+            <div className="p-3 bg-warm-50 rounded-lg space-y-2">
               <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Standard Work:</span>
+                <span className="text-warm-600">Standard Work:</span>
                 <span className="font-medium">{formatMinutesToHours(record.standardWorkMinutes)}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Actual Work:</span>
+                <span className="text-warm-600">Actual Work:</span>
                 <span className="font-medium">{formatMinutesToHours(record.workedMinutes)}</span>
               </div>
               <div className="border-t pt-2 flex justify-between text-sm">
-                <span className="text-gray-900 font-semibold">Calculated OT:</span>
+                <span className="text-warm-900 font-semibold">Calculated OT:</span>
                 <span className="font-bold text-orange-600">
                   {formatMinutesToHours(record.otMinutesCalculated)}
                 </span>
               </div>
               {isApproved && (
                 <div className="flex justify-between text-sm border-t pt-2">
-                  <span className="text-gray-900 font-semibold">Approved OT:</span>
-                  <span className="font-bold text-green-600">
+                  <span className="text-warm-900 font-semibold">Approved OT:</span>
+                  <span className="font-bold text-emerald-600">
                     {formatMinutesToHours(record.otMinutesApproved || 0)}
                   </span>
                 </div>
@@ -138,7 +138,7 @@ export function OTApprovalCard({ record, onApprove }: OTApprovalCardProps) {
 
             {/* Actions */}
             {!isApproved && (
-              <div className="pt-2 border-t border-gray-100">
+              <div className="pt-2 border-t border-warm-100">
                 <Button
                   className="w-full bg-orange-600 hover:bg-orange-700"
                   onClick={() => setShowModal(true)}
@@ -165,16 +165,16 @@ export function OTApprovalCard({ record, onApprove }: OTApprovalCardProps) {
       >
         <div className="space-y-4">
           {/* Employee Summary */}
-          <div className="p-4 bg-gray-50 rounded-lg">
+          <div className="p-4 bg-warm-50 rounded-lg">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center border border-gray-200">
-                <User className="w-5 h-5 text-gray-500" />
+              <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center border border-warm-200">
+                <User className="w-5 h-5 text-warm-500" />
               </div>
               <div>
-                <div className="font-medium text-gray-900">
+                <div className="font-medium text-warm-900">
                   {record.employee?.firstName} {record.employee?.lastName}
                 </div>
-                <div className="text-sm text-gray-500">
+                <div className="text-sm text-warm-500">
                   {formatDate(record.date)} • {formatMinutesToHours(record.otMinutesCalculated)} OT
                 </div>
               </div>
@@ -183,7 +183,7 @@ export function OTApprovalCard({ record, onApprove }: OTApprovalCardProps) {
 
           {/* OT Adjustment */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-warm-700 mb-2">
               Approved OT Minutes
             </label>
             <div className="space-y-3">
@@ -194,12 +194,12 @@ export function OTApprovalCard({ record, onApprove }: OTApprovalCardProps) {
                 max={record.otMinutesCalculated}
                 value={approvedMinutes}
                 onChange={(e) => setApprovedMinutes(Number(e.target.value))}
-                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-orange-600"
+                className="w-full h-2 bg-warm-200 rounded-lg appearance-none cursor-pointer accent-orange-600"
               />
 
               {/* Value Display */}
               <div className="flex items-center justify-between">
-                <div className="text-sm text-gray-600">
+                <div className="text-sm text-warm-600">
                   {formatMinutesToHours(approvedMinutes)} ({percentage}%)
                 </div>
                 <input
@@ -208,7 +208,7 @@ export function OTApprovalCard({ record, onApprove }: OTApprovalCardProps) {
                   max={record.otMinutesCalculated}
                   value={approvedMinutes}
                   onChange={(e) => setApprovedMinutes(Math.min(record.otMinutesCalculated, Math.max(0, Number(e.target.value))))}
-                  className="w-20 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+                  className="w-20 px-2 py-1 text-sm border border-warm-300 rounded focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
                 />
               </div>
 
@@ -216,19 +216,19 @@ export function OTApprovalCard({ record, onApprove }: OTApprovalCardProps) {
               <div className="flex gap-2">
                 <button
                   onClick={() => setApprovedMinutes(0)}
-                  className="px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50"
+                  className="px-3 py-1 text-xs border border-warm-300 rounded hover:bg-warm-50"
                 >
                   0%
                 </button>
                 <button
                   onClick={() => setApprovedMinutes(Math.floor(record.otMinutesCalculated / 2))}
-                  className="px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50"
+                  className="px-3 py-1 text-xs border border-warm-300 rounded hover:bg-warm-50"
                 >
                   50%
                 </button>
                 <button
                   onClick={() => setApprovedMinutes(record.otMinutesCalculated)}
-                  className="px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-50"
+                  className="px-3 py-1 text-xs border border-warm-300 rounded hover:bg-warm-50"
                 >
                   100%
                 </button>
@@ -238,7 +238,7 @@ export function OTApprovalCard({ record, onApprove }: OTApprovalCardProps) {
 
           {/* Remarks */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-warm-700 mb-2">
               Remarks (optional)
             </label>
             <textarea
@@ -246,7 +246,7 @@ export function OTApprovalCard({ record, onApprove }: OTApprovalCardProps) {
               onChange={(e) => setRemarks(e.target.value)}
               placeholder="Add any notes or comments..."
               rows={3}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 resize-none"
+              className="w-full px-4 py-3 border border-warm-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500 resize-none"
             />
           </div>
         </div>

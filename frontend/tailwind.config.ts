@@ -85,6 +85,12 @@ const config: Config = {
       },
     },
   },
+  safelist: [
+    'md:col-span-1', 'md:col-span-2', 'md:col-span-3', 'md:col-span-4',
+    'lg:col-span-1', 'lg:col-span-2', 'lg:col-span-3', 'lg:col-span-4',
+    'sm:table-cell', 'md:table-cell', 'lg:table-cell',
+    'hidden',
+  ],
   plugins: [],
 }
 export default config

@@ -7,6 +7,7 @@ import { UserRole } from '@prisma/client';
 const mockAdminService = {
   getDashboardStats: jest.fn(),
   getManagerDashboardStats: jest.fn(),
+  getAnalytics: jest.fn(),
   getOtRules: jest.fn(),
   getOtRule: jest.fn(),
   createOtRule: jest.fn(),
@@ -188,6 +189,26 @@ describe('AdminController', () => {
       const result = await controller.deleteOtRule(hrAdminUser, 'ot-1');
 
       expect(service.deleteOtRule).toHaveBeenCalledWith('tenant-1', 'ot-1');
+      expect(result).toEqual(mockResult);
+    });
+  });
+
+  // ==========================================
+  // getAnalytics
+  // ==========================================
+  describe('getAnalytics', () => {
+    it('should call adminService.getAnalytics with tenantId', async () => {
+      const mockResult = {
+        headcountByDepartment: [{ department: 'Engineering', count: 10 }],
+        employmentTypeDistribution: [{ type: 'PERMANENT', count: 8 }],
+        monthlyJoins: [{ month: 'Jan 25', count: 3 }],
+        leaveUtilization: [{ type: 'Casual', days: 15 }],
+      };
+      service.getAnalytics.mockResolvedValue(mockResult);
+
+      const result = await controller.getAnalytics(hrAdminUser);
+
+      expect(service.getAnalytics).toHaveBeenCalledWith('tenant-1');
       expect(result).toEqual(mockResult);
     });
   });

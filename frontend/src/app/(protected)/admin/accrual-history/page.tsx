@@ -44,10 +44,10 @@ const MONTH_NAMES = [
 ];
 
 const STATUS_COLORS = {
-  COMPLETED: 'text-green-600 bg-green-50',
+  COMPLETED: 'text-emerald-600 bg-emerald-50',
   PENDING: 'text-yellow-600 bg-yellow-50',
   FAILED: 'text-red-600 bg-red-50',
-  ROLLED_BACK: 'text-gray-600 bg-gray-50',
+  ROLLED_BACK: 'text-warm-600 bg-warm-50',
 };
 
 const TRIGGER_TYPE_LABELS = {
@@ -79,7 +79,7 @@ export default function AccrualHistoryPage() {
   const loadRuns = async () => {
     setLoading(true);
     try {
-      const response = await accrualApi.getRuns({ limit: 100, sortOrder: 'desc' });
+      const response = await accrualApi.getRuns({ limit: 100 });
       setRuns(response.data.data || []);
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Failed to load accrual history');
@@ -141,11 +141,11 @@ export default function AccrualHistoryPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+          <h1 className="text-2xl font-bold text-warm-900 flex items-center gap-2">
             <Clock className="w-7 h-7 text-primary-600" />
             Leave Accrual History
           </h1>
-          <p className="text-gray-600 mt-1">
+          <p className="text-warm-600 mt-1">
             View accrual runs and manually trigger calculations
           </p>
         </div>
@@ -165,11 +165,11 @@ export default function AccrualHistoryPage() {
       <Card padding="none">
         {runs.length === 0 ? (
           <div className="p-12 text-center">
-            <Clock className="w-16 h-16 mx-auto text-gray-300 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
+            <Clock className="w-16 h-16 mx-auto text-warm-300 mb-4" />
+            <h3 className="text-lg font-medium text-warm-900 mb-2">
               No Accrual History
             </h3>
-            <p className="text-gray-500 mb-4">
+            <p className="text-warm-500 mb-4">
               Run your first accrual calculation to see history
             </p>
             <Button onClick={() => setCalculateModalOpen(true)}>
@@ -179,72 +179,72 @@ export default function AccrualHistoryPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-warm-200">
+              <thead className="bg-warm-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500">
+                  <th className="px-6 py-3 text-left text-xs font-medium uppercase text-warm-500">
                     Period
                   </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-gray-500">
+                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-warm-500">
                     Fiscal Year
                   </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-gray-500">
+                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-warm-500">
                     Trigger
                   </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-gray-500">
+                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-warm-500">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-gray-500">
+                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-warm-500">
                     Employees
                   </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-gray-500">
+                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-warm-500">
                     Accruals
                   </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-gray-500">
+                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-warm-500">
                     Errors
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500">
+                  <th className="px-6 py-3 text-left text-xs font-medium uppercase text-warm-500">
                     Run At
                   </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium uppercase text-gray-500">
+                  <th className="px-6 py-3 text-right text-xs font-medium uppercase text-warm-500">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 bg-white">
+              <tbody className="divide-y divide-warm-100 bg-white">
                 {runs.map((run) => (
-                  <tr key={run.id} className="hover:bg-gray-50">
+                  <tr key={run.id} className="hover:bg-warm-50">
                     <td className="px-6 py-4">
-                      <div className="font-medium text-gray-900">
+                      <div className="font-medium text-warm-900">
                         {MONTH_NAMES[run.month - 1]} {run.year}
                       </div>
                       {run.runByUser && (
-                        <div className="text-xs text-gray-500">
+                        <div className="text-xs text-warm-500">
                           by {run.runByUser.firstName} {run.runByUser.lastName}
                         </div>
                       )}
                     </td>
                     <td className="px-6 py-4 text-center">
-                      <span className="font-medium text-gray-900">
+                      <span className="font-medium text-warm-900">
                         FY {run.fiscalYear}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-center">
-                      <span className="text-sm text-gray-600">
+                      <span className="text-sm text-warm-600">
                         {TRIGGER_TYPE_LABELS[run.triggerType as keyof typeof TRIGGER_TYPE_LABELS] || run.triggerType}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-center">
                       <span
                         className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                          STATUS_COLORS[run.status as keyof typeof STATUS_COLORS] || 'text-gray-600 bg-gray-50'
+                          STATUS_COLORS[run.status as keyof typeof STATUS_COLORS] || 'text-warm-600 bg-warm-50'
                         }`}
                       >
                         {run.status}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-center">
-                      <span className="font-semibold text-gray-900">
+                      <span className="font-semibold text-warm-900">
                         {run.totalEmployeesProcessed}
                       </span>
                     </td>
@@ -259,14 +259,14 @@ export default function AccrualHistoryPage() {
                           {run.totalErrors}
                         </span>
                       ) : (
-                        <span className="text-gray-400">-</span>
+                        <span className="text-warm-400">-</span>
                       )}
                     </td>
                     <td className="px-6 py-4">
-                      <div className="text-sm text-gray-900">
+                      <div className="text-sm text-warm-900">
                         {new Date(run.runAt).toLocaleDateString()}
                       </div>
-                      <div className="text-xs text-gray-500">
+                      <div className="text-xs text-warm-500">
                         {new Date(run.runAt).toLocaleTimeString()}
                       </div>
                     </td>
@@ -295,14 +295,14 @@ export default function AccrualHistoryPage() {
         size="md"
       >
         <div className="space-y-4">
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-warm-600">
             This will calculate and apply leave accruals for all active employees based on the
             configured accrual rules for the selected month.
           </p>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-warm-700 mb-1">
                 Month *
               </label>
               <select
@@ -310,7 +310,7 @@ export default function AccrualHistoryPage() {
                 onChange={(e) =>
                   setFormData({ ...formData, month: Number(e.target.value) })
                 }
-                className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-primary-500"
+                className="w-full border border-warm-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-primary-500"
               >
                 {MONTH_NAMES.map((name, index) => (
                   <option key={index} value={index + 1}>
@@ -321,7 +321,7 @@ export default function AccrualHistoryPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="block text-sm font-medium text-warm-700 mb-1">
                 Year *
               </label>
               <input
@@ -332,7 +332,7 @@ export default function AccrualHistoryPage() {
                 onChange={(e) =>
                   setFormData({ ...formData, year: Number(e.target.value) })
                 }
-                className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-primary-500"
+                className="w-full border border-warm-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-primary-500"
               />
             </div>
           </div>
@@ -376,28 +376,28 @@ export default function AccrualHistoryPage() {
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary-600 border-t-transparent" />
           </div>
         ) : entries.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">
+          <div className="text-center py-8 text-warm-500">
             No accrual entries found for this run
           </div>
         ) : (
           <div className="space-y-4">
             {/* Summary */}
             {selectedRun && (
-              <div className="bg-gray-50 rounded-lg p-4 grid grid-cols-3 gap-4">
+              <div className="bg-warm-50 rounded-lg p-4 grid grid-cols-3 gap-4">
                 <div>
-                  <div className="text-xs text-gray-500 uppercase">Total Employees</div>
-                  <div className="text-xl font-bold text-gray-900">
+                  <div className="text-xs text-warm-500 uppercase">Total Employees</div>
+                  <div className="text-xl font-bold text-warm-900">
                     {selectedRun.totalEmployeesProcessed}
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs text-gray-500 uppercase">Accruals Created</div>
+                  <div className="text-xs text-warm-500 uppercase">Accruals Created</div>
                   <div className="text-xl font-bold text-primary-600">
                     {selectedRun.totalAccrualsCreated}
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs text-gray-500 uppercase">Errors</div>
+                  <div className="text-xs text-warm-500 uppercase">Errors</div>
                   <div className="text-xl font-bold text-red-600">
                     {selectedRun.totalErrors}
                   </div>
@@ -407,51 +407,51 @@ export default function AccrualHistoryPage() {
 
             {/* Entries Table */}
             <div className="overflow-x-auto max-h-96">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50 sticky top-0">
+              <table className="min-w-full divide-y divide-warm-200">
+                <thead className="bg-warm-50 sticky top-0">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase text-warm-500">
                       Employee
                     </th>
-                    <th className="px-4 py-3 text-left text-xs font-medium uppercase text-gray-500">
+                    <th className="px-4 py-3 text-left text-xs font-medium uppercase text-warm-500">
                       Leave Type
                     </th>
-                    <th className="px-4 py-3 text-center text-xs font-medium uppercase text-gray-500">
+                    <th className="px-4 py-3 text-center text-xs font-medium uppercase text-warm-500">
                       Before
                     </th>
-                    <th className="px-4 py-3 text-center text-xs font-medium uppercase text-gray-500">
+                    <th className="px-4 py-3 text-center text-xs font-medium uppercase text-warm-500">
                       Accrued
                     </th>
-                    <th className="px-4 py-3 text-center text-xs font-medium uppercase text-gray-500">
+                    <th className="px-4 py-3 text-center text-xs font-medium uppercase text-warm-500">
                       After
                     </th>
-                    <th className="px-4 py-3 text-center text-xs font-medium uppercase text-gray-500">
+                    <th className="px-4 py-3 text-center text-xs font-medium uppercase text-warm-500">
                       Cap
                     </th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100 bg-white">
+                <tbody className="divide-y divide-warm-100 bg-white">
                   {entries.map((entry) => (
-                    <tr key={entry.id} className="hover:bg-gray-50">
+                    <tr key={entry.id} className="hover:bg-warm-50">
                       <td className="px-4 py-3">
-                        <div className="text-sm font-medium text-gray-900">
+                        <div className="text-sm font-medium text-warm-900">
                           {entry.employee.firstName} {entry.employee.lastName}
                         </div>
                       </td>
                       <td className="px-4 py-3">
-                        <div className="text-sm text-gray-900">{entry.leaveType.name}</div>
-                        <div className="text-xs text-gray-500">{entry.leaveType.code}</div>
+                        <div className="text-sm text-warm-900">{entry.leaveType.name}</div>
+                        <div className="text-xs text-warm-500">{entry.leaveType.code}</div>
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <span className="text-sm text-gray-600">{entry.balanceBefore}</span>
+                        <span className="text-sm text-warm-600">{entry.balanceBefore}</span>
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <span className="text-sm font-semibold text-green-600">
+                        <span className="text-sm font-semibold text-emerald-600">
                           +{entry.accrualDays}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-center">
-                        <span className="text-sm font-medium text-gray-900">
+                        <span className="text-sm font-medium text-warm-900">
                           {entry.balanceAfter}
                         </span>
                       </td>
@@ -459,7 +459,7 @@ export default function AccrualHistoryPage() {
                         {entry.capApplied ? (
                           <span className="text-xs text-orange-600 font-medium">Applied</span>
                         ) : (
-                          <span className="text-xs text-gray-400">-</span>
+                          <span className="text-xs text-warm-400">-</span>
                         )}
                       </td>
                     </tr>

@@ -109,11 +109,11 @@ export default function OtApprovalsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+          <h1 className="text-2xl font-bold text-warm-900 flex items-center gap-2">
             <Clock className="w-7 h-7 text-orange-600" />
             OT Approvals
           </h1>
-          <p className="text-gray-600 mt-1">
+          <p className="text-warm-600 mt-1">
             Review and approve overtime hours for your team
           </p>
         </div>
@@ -135,19 +135,19 @@ export default function OtApprovalsPage() {
               <Clock className="w-6 h-6 text-orange-600" />
             </div>
             <div>
-              <div className="text-2xl font-bold text-gray-900">{stats.pending}</div>
-              <div className="text-sm text-gray-500">Pending Approvals</div>
+              <div className="text-2xl font-bold text-warm-900">{stats.pending}</div>
+              <div className="text-sm text-warm-500">Pending Approvals</div>
             </div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="flex items-center gap-4">
             <div className="p-3 bg-green-100 rounded-lg">
-              <CheckCircle className="w-6 h-6 text-green-600" />
+              <CheckCircle className="w-6 h-6 text-emerald-600" />
             </div>
             <div>
-              <div className="text-2xl font-bold text-gray-900">{stats.approvedToday}</div>
-              <div className="text-sm text-gray-500">Approved Today</div>
+              <div className="text-2xl font-bold text-warm-900">{stats.approvedToday}</div>
+              <div className="text-sm text-warm-500">Approved Today</div>
             </div>
           </CardContent>
         </Card>
@@ -157,10 +157,10 @@ export default function OtApprovalsPage() {
               <TrendingUp className="w-6 h-6 text-blue-600" />
             </div>
             <div>
-              <div className="text-2xl font-bold text-gray-900">
+              <div className="text-2xl font-bold text-warm-900">
                 {formatMinutesToHours(stats.totalOtMinutes)}
               </div>
-              <div className="text-sm text-gray-500">Total OT Pending</div>
+              <div className="text-sm text-warm-500">Total OT Pending</div>
             </div>
           </CardContent>
         </Card>
@@ -169,21 +169,21 @@ export default function OtApprovalsPage() {
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-warm-400" />
           <input
             type="text"
             placeholder="Search by employee name or code..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+            className="w-full pl-10 pr-4 py-2.5 border border-warm-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
           />
         </div>
         <div className="flex items-center gap-2">
-          <Filter className="w-4 h-4 text-gray-400" />
+          <Filter className="w-4 h-4 text-warm-400" />
           <select
             value={dateFilter}
             onChange={(e) => setDateFilter(e.target.value as any)}
-            className="border border-gray-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
+            className="border border-warm-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-orange-500 focus:border-orange-500"
           >
             <option value="all">All Time</option>
             <option value="today">Today</option>
@@ -198,17 +198,17 @@ export default function OtApprovalsPage() {
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <div className="h-12 w-12 animate-spin rounded-full border-4 border-orange-600 border-t-transparent mx-auto" />
-            <p className="mt-4 text-gray-600">Loading pending approvals...</p>
+            <p className="mt-4 text-warm-600">Loading pending approvals...</p>
           </div>
         </div>
       ) : filteredRecords.length === 0 ? (
         <Card>
           <CardContent className="py-16 text-center">
-            <Clock className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+            <Clock className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-warm-900 mb-2">
               {records.length === 0 ? 'No Pending OT Approvals' : 'No Matching Records'}
             </h3>
-            <p className="text-gray-600">
+            <p className="text-warm-600">
               {records.length === 0
                 ? "You don't have any overtime waiting for approval."
                 : 'Try adjusting your search or filter criteria.'}

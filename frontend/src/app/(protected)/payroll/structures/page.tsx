@@ -128,19 +128,19 @@ export default function SalaryStructuresPage() {
         <>
             <div className="space-y-6">
                 {/* Header */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
                     <div>
                         <button
                             onClick={() => router.push('/payroll')}
-                            className="flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 mb-2"
+                            className="flex items-center gap-1 text-sm text-warm-500 hover:text-warm-700 mb-2"
                         >
                             <ArrowLeft className="w-4 h-4" /> Back to Payroll
                         </button>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                        <h1 className="text-xl sm:text-2xl font-bold text-warm-900 flex items-center gap-2">
                             <Calculator className="w-7 h-7 text-primary-600" />
                             Salary Structures
                         </h1>
-                        <p className="text-gray-600 mt-1">
+                        <p className="text-warm-600 mt-1">
                             Define salary components and assign to employees
                         </p>
                     </div>
@@ -158,11 +158,11 @@ export default function SalaryStructuresPage() {
                 ) : structures.length === 0 ? (
                     <Card>
                         <CardContent className="py-16 text-center">
-                            <Calculator className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                            <Calculator className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+                            <h3 className="text-lg font-semibold text-warm-900 mb-2">
                                 No Salary Structures
                             </h3>
-                            <p className="text-gray-600">
+                            <p className="text-warm-600">
                                 Create a salary structure to define earnings and deductions.
                             </p>
                         </CardContent>
@@ -177,16 +177,16 @@ export default function SalaryStructuresPage() {
                                     <CardContent className="py-5">
                                         <div className="flex items-start justify-between mb-3">
                                             <div>
-                                                <h3 className="font-semibold text-gray-900">{s.name}</h3>
+                                                <h3 className="font-semibold text-warm-900">{s.name}</h3>
                                                 {s.description && (
-                                                    <p className="text-sm text-gray-500 mt-0.5">{s.description}</p>
+                                                    <p className="text-sm text-warm-500 mt-0.5">{s.description}</p>
                                                 )}
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 <Badge variant={s.isActive ? 'success' : 'gray'}>
                                                     {s.isActive ? 'Active' : 'Inactive'}
                                                 </Badge>
-                                                <span className="text-xs text-gray-400">
+                                                <span className="text-xs text-warm-400">
                                                     {s._count?.employeeSalaries || 0} employees
                                                 </span>
                                             </div>
@@ -196,11 +196,11 @@ export default function SalaryStructuresPage() {
                                         <div className="space-y-2 mb-4">
                                             {earnings.length > 0 && (
                                                 <div>
-                                                    <p className="text-xs font-semibold text-green-700 uppercase mb-1">Earnings</p>
+                                                    <p className="text-xs font-semibold text-emerald-700 uppercase mb-1">Earnings</p>
                                                     {earnings.map((c, i) => (
                                                         <div key={i} className="flex justify-between text-sm py-0.5">
-                                                            <span className="text-gray-600">{c.name}</span>
-                                                            <span className="text-green-700 font-medium">
+                                                            <span className="text-warm-600">{c.name}</span>
+                                                            <span className="text-emerald-700 font-medium">
                                                                 {c.calcType === 'percentage' ? `${c.value}%` : `₹${c.value}`}
                                                             </span>
                                                         </div>
@@ -212,7 +212,7 @@ export default function SalaryStructuresPage() {
                                                     <p className="text-xs font-semibold text-red-700 uppercase mb-1">Deductions</p>
                                                     {deductions.map((c, i) => (
                                                         <div key={i} className="flex justify-between text-sm py-0.5">
-                                                            <span className="text-gray-600">{c.name}</span>
+                                                            <span className="text-warm-600">{c.name}</span>
                                                             <span className="text-red-700 font-medium">
                                                                 {c.calcType === 'percentage' ? `${c.value}%` : `₹${c.value}`}
                                                             </span>
@@ -222,7 +222,7 @@ export default function SalaryStructuresPage() {
                                             )}
                                         </div>
 
-                                        <div className="flex gap-2 pt-2 border-t border-gray-100">
+                                        <div className="flex gap-2 pt-2 border-t border-warm-100">
                                             <Button variant="secondary" size="sm" onClick={() => openEdit(s)}>
                                                 <Edit2 className="w-3.5 h-3.5 mr-1" /> Edit
                                             </Button>
@@ -247,29 +247,29 @@ export default function SalaryStructuresPage() {
             <Modal isOpen={showModal} onClose={() => setShowModal(false)} title={`${editingId ? 'Edit' : 'Create'} Salary Structure`} size="lg">
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                        <label className="block text-sm font-medium text-warm-700 mb-1">Name</label>
                         <input
                             type="text"
                             value={name}
                             onChange={(e) => setName(e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
                             placeholder="e.g., Standard CTC Package"
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-medium text-warm-700 mb-1">
                             Description (optional)
                         </label>
                         <input
                             type="text"
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
                         />
                     </div>
                     <div>
                         <div className="flex items-center justify-between mb-2">
-                            <label className="text-sm font-medium text-gray-700">Components</label>
+                            <label className="text-sm font-medium text-warm-700">Components</label>
                             <Button
                                 variant="secondary"
                                 size="sm"
@@ -280,19 +280,19 @@ export default function SalaryStructuresPage() {
                         </div>
                         <div className="space-y-3 max-h-64 overflow-y-auto">
                             {components.map((comp, idx) => (
-                                <div key={idx} className="flex gap-2 items-start p-3 bg-gray-50 rounded-lg">
+                                <div key={idx} className="flex gap-2 items-start p-3 bg-warm-50 rounded-lg">
                                     <div className="flex-1 grid grid-cols-2 gap-2">
                                         <input
                                             type="text"
                                             placeholder="Component Name"
                                             value={comp.name}
                                             onChange={(e) => updateComponent(idx, 'name', e.target.value)}
-                                            className="col-span-2 px-2 py-1.5 border border-gray-300 rounded text-sm"
+                                            className="col-span-2 px-2 py-1.5 border border-warm-300 rounded text-sm"
                                         />
                                         <select
                                             value={comp.type}
                                             onChange={(e) => updateComponent(idx, 'type', e.target.value)}
-                                            className="px-2 py-1.5 border border-gray-300 rounded text-sm"
+                                            className="px-2 py-1.5 border border-warm-300 rounded text-sm"
                                         >
                                             <option value="earning">Earning</option>
                                             <option value="deduction">Deduction</option>
@@ -300,7 +300,7 @@ export default function SalaryStructuresPage() {
                                         <select
                                             value={comp.calcType}
                                             onChange={(e) => updateComponent(idx, 'calcType', e.target.value)}
-                                            className="px-2 py-1.5 border border-gray-300 rounded text-sm"
+                                            className="px-2 py-1.5 border border-warm-300 rounded text-sm"
                                         >
                                             <option value="percentage">% of Base</option>
                                             <option value="fixed">Fixed Amount</option>
@@ -310,13 +310,13 @@ export default function SalaryStructuresPage() {
                                             placeholder="Value"
                                             value={comp.value || ''}
                                             onChange={(e) => updateComponent(idx, 'value', parseFloat(e.target.value) || 0)}
-                                            className="col-span-2 px-2 py-1.5 border border-gray-300 rounded text-sm"
+                                            className="col-span-2 px-2 py-1.5 border border-warm-300 rounded text-sm"
                                             min={0}
                                         />
                                     </div>
                                     <button
                                         onClick={() => removeComponent(idx)}
-                                        className="p-1 text-gray-400 hover:text-red-500"
+                                        className="p-1 text-warm-400 hover:text-red-500"
                                     >
                                         <X className="w-4 h-4" />
                                     </button>

@@ -10,8 +10,8 @@ import {
   ArrowLeft, ArrowRight, Save, CheckCircle2, User, Phone, Users,
   GraduationCap, Building2, DollarSign
 } from 'lucide-react';
-import { employeesApi, departmentsApi } from '@/lib/api';
-import { Department, Employee, EmploymentType, EmployeeStatus, PayType } from '@/types';
+import { employeesApi, departmentsApi, designationsApi, branchesApi } from '@/lib/api';
+import { Department, Employee, Designation, Branch, EmploymentType, EmployeeStatus, PayType } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface EmployeeFormData {
@@ -57,8 +57,8 @@ interface EmployeeFormData {
   
   // Company Details
   company: string;
-  designation: string;
-  branch: string;
+  designationId: string;
+  branchId: string;
   departmentId: string;
   reportsTo: string;
   employeeType: EmploymentType;
@@ -127,8 +127,8 @@ const initialFormData: EmployeeFormData = {
   
   // Company Details
   company: '',
-  designation: '',
-  branch: '',
+  designationId: '',
+  branchId: '',
   departmentId: '',
   reportsTo: '',
   employeeType: EmploymentType.PERMANENT,
@@ -161,7 +161,8 @@ const steps = [
   { id: 4, name: 'Education', icon: GraduationCap },
   { id: 5, name: 'Company Details', icon: Building2 },
   { id: 6, name: 'Salary', icon: DollarSign },
-  { id: 7, name: 'Review', icon: CheckCircle2 },
+  { id: 7, name: 'Salary Structure', icon: DollarSign },
+  { id: 8, name: 'Review', icon: CheckCircle2 },
 ];
 
 export default function NewEmployeePage() {
@@ -170,6 +171,8 @@ export default function NewEmployeePage() {
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState<EmployeeFormData>(initialFormData);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [designations, setDesignations] = useState<Designation[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [managers, setManagers] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -177,6 +180,8 @@ export default function NewEmployeePage() {
 
   useEffect(() => {
     fetchDepartments();
+    fetchDesignations();
+    fetchBranches();
     fetchManagers();
     generateEmployeeCode();
   }, []);
@@ -187,6 +192,24 @@ export default function NewEmployeePage() {
       setDepartments(response.data);
     } catch (err) {
       console.error('Failed to fetch departments:', err);
+    }
+  };
+
+  const fetchDesignations = async () => {
+    try {
+      const response = await designationsApi.getAll();
+      setDesignations(response.data.filter((d: Designation) => d.isActive));
+    } catch (err) {
+      console.error('Failed to fetch designations:', err);
+    }
+  };
+
+  const fetchBranches = async () => {
+    try {
+      const response = await branchesApi.getAll();
+      setBranches(response.data.filter((b: Branch) => b.isActive));
+    } catch (err) {
+      console.error('Failed to fetch branches:', err);
     }
   };
 
@@ -307,7 +330,7 @@ export default function NewEmployeePage() {
         break;
         
       case 5: // Company Details
-        if (!formData.designation.trim()) {
+        if (!formData.designationId) {
           setError('Designation is required');
           return false;
         }
@@ -419,7 +442,8 @@ export default function NewEmployeePage() {
         hourlyRate: undefined,
         otMultiplier: 1.5,
         departmentId: formData.departmentId || undefined,
-        designation: formData.designation || undefined,
+        designationId: formData.designationId || undefined,
+        branchId: formData.branchId || undefined,
         managerId: formData.reportsTo || undefined,
         // User account creation fields
         createUser: formData.createUser,
@@ -450,7 +474,7 @@ export default function NewEmployeePage() {
       case 1: // Personal Info
         return (
           <div className="space-y-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <h3 className="text-lg font-semibold text-warm-900 mb-4 flex items-center gap-2">
               <User className="h-5 w-5 text-primary-600" />
               Personal Information
             </h3>
@@ -492,7 +516,7 @@ export default function NewEmployeePage() {
                   value={formData.employeeCode}
                   onChange={(e) => handleInputChange('employeeCode', e.target.value)}
                   placeholder="Auto-generated"
-                  className="bg-gray-50"
+                  className="bg-warm-50"
                   readOnly
                 />
               </FormRow>
@@ -589,7 +613,7 @@ export default function NewEmployeePage() {
       case 2: // Contact Details
         return (
           <div className="space-y-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <h3 className="text-lg font-semibold text-warm-900 mb-4 flex items-center gap-2">
               <Phone className="h-5 w-5 text-primary-600" />
               Contact Details
             </h3>
@@ -624,7 +648,7 @@ export default function NewEmployeePage() {
             </FormGrid>
 
             <div className="pt-4 border-t">
-              <h4 className="text-md font-medium text-gray-800 mb-3">Current Address</h4>
+              <h4 className="text-md font-medium text-warm-800 mb-3">Current Address</h4>
               <FormGrid cols={1}>
                 <FormRow label="Address" required>
                   <Input
@@ -672,13 +696,13 @@ export default function NewEmployeePage() {
 
             <div className="pt-4 border-t">
               <div className="flex items-center justify-between mb-3">
-                <h4 className="text-md font-medium text-gray-800">Permanent Address</h4>
-                <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                <h4 className="text-md font-medium text-warm-800">Permanent Address</h4>
+                <label className="flex items-center gap-2 text-sm text-warm-600 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={formData.sameAsCurrent}
                     onChange={(e) => handleInputChange('sameAsCurrent', e.target.checked)}
-                    className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    className="rounded border-warm-300 text-primary-600 focus:ring-primary-500"
                   />
                   Same as Current Address
                 </label>
@@ -739,7 +763,7 @@ export default function NewEmployeePage() {
       case 3: // Emergency Contact
         return (
           <div className="space-y-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <h3 className="text-lg font-semibold text-warm-900 mb-4 flex items-center gap-2">
               <Users className="h-5 w-5 text-primary-600" />
               Emergency Contact
             </h3>
@@ -783,7 +807,7 @@ export default function NewEmployeePage() {
       case 4: // Education Details
         return (
           <div className="space-y-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <h3 className="text-lg font-semibold text-warm-900 mb-4 flex items-center gap-2">
               <GraduationCap className="h-5 w-5 text-primary-600" />
               Education Details
             </h3>
@@ -815,7 +839,7 @@ export default function NewEmployeePage() {
                   value={formData.previousWorkExperience}
                   onChange={(e) => handleInputChange('previousWorkExperience', e.target.value)}
                   placeholder="Describe previous work experience, roles, and responsibilities..."
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                   rows={4}
                 />
               </FormRow>
@@ -825,7 +849,7 @@ export default function NewEmployeePage() {
                   value={formData.historyInCompany}
                   onChange={(e) => handleInputChange('historyInCompany', e.target.value)}
                   placeholder="Describe the employee's history and progression in the company..."
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                  className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                   rows={4}
                 />
               </FormRow>
@@ -836,7 +860,7 @@ export default function NewEmployeePage() {
       case 5: // Company Details
         return (
           <div className="space-y-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <h3 className="text-lg font-semibold text-warm-900 mb-4 flex items-center gap-2">
               <Building2 className="h-5 w-5 text-primary-600" />
               Company Details
             </h3>
@@ -846,24 +870,32 @@ export default function NewEmployeePage() {
                 <Input
                   value={user?.tenantId || ''}
                   disabled
-                  className="bg-gray-50"
+                  className="bg-warm-50"
                 />
               </FormRow>
 
               <FormRow label="Designation" required>
-                <Input
-                  value={formData.designation}
-                  onChange={(e) => handleInputChange('designation', e.target.value)}
-                  placeholder="e.g., Software Engineer, HR Manager"
-                />
+                <Select
+                  value={formData.designationId}
+                  onChange={(e) => handleInputChange('designationId', e.target.value)}
+                >
+                  <option value="">Select Designation</option>
+                  {designations.map((d) => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </Select>
               </FormRow>
 
               <FormRow label="Branch">
-                <Input
-                  value={formData.branch}
-                  onChange={(e) => handleInputChange('branch', e.target.value)}
-                  placeholder="e.g., Head Office, Mumbai Branch"
-                />
+                <Select
+                  value={formData.branchId}
+                  onChange={(e) => handleInputChange('branchId', e.target.value)}
+                >
+                  <option value="">Select Branch (optional)</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </Select>
               </FormRow>
 
               <FormRow label="Department" required>
@@ -912,7 +944,7 @@ export default function NewEmployeePage() {
       case 6: // Salary
         return (
           <div className="space-y-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <h3 className="text-lg font-semibold text-warm-900 mb-4 flex items-center gap-2">
               <DollarSign className="h-5 w-5 text-primary-600" />
               Salary Details
             </h3>
@@ -962,7 +994,7 @@ export default function NewEmployeePage() {
 
             {/* User Account Creation Section */}
             <div className="pt-6 border-t mt-8">
-              <h4 className="text-md font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <h4 className="text-md font-semibold text-warm-900 mb-4 flex items-center gap-2">
                 <User className="h-5 w-5 text-primary-600" />
                 HRMS User Account
               </h4>
@@ -973,7 +1005,7 @@ export default function NewEmployeePage() {
                     type="checkbox"
                     checked={formData.createUser}
                     onChange={(e) => handleInputChange('createUser', e.target.checked)}
-                    className="mt-1 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    className="mt-1 rounded border-warm-300 text-primary-600 focus:ring-primary-500"
                   />
                   <div>
                     <span className="text-sm font-medium text-blue-900">
@@ -1024,16 +1056,48 @@ export default function NewEmployeePage() {
           </div>
         );
 
-      case 7: // Review
+      case 7: // Salary Structure (Optional - can be done after employee creation)
         return (
           <div className="space-y-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <h3 className="text-lg font-semibold text-warm-900 mb-4 flex items-center gap-2">
+              <DollarSign className="h-5 w-5 text-primary-600" />
+              Salary Structure Assignment
+            </h3>
+
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <h4 className="font-medium text-blue-900 mb-2">Assign Salary After Creation</h4>
+              <p className="text-sm text-blue-800 mb-3">
+                Salary structures can be assigned after the employee is created. This step is optional during the initial setup.
+              </p>
+              <p className="text-sm text-blue-800">
+                You will be able to assign salary structures from the employee edit page once the employee profile is created.
+              </p>
+            </div>
+
+            <Card>
+              <CardContent className="py-12 text-center">
+                <DollarSign className="h-16 w-16 text-warm-300 mx-auto mb-4" />
+                <p className="text-warm-600 mb-2">
+                  Salary assignment requires an employee ID
+                </p>
+                <p className="text-sm text-warm-500">
+                  Complete employee creation first, then assign salary structures from the edit page
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        );
+
+      case 8: // Review
+        return (
+          <div className="space-y-6">
+            <h3 className="text-lg font-semibold text-warm-900 mb-4 flex items-center gap-2">
               <CheckCircle2 className="h-5 w-5 text-primary-600" />
               Review Employee Details
             </h3>
             
-            <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
-              <p className="text-sm text-green-800">
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4 mb-6">
+              <p className="text-sm text-emerald-800">
                 Please review all the information before submitting. You can go back to edit any section.
               </p>
             </div>
@@ -1041,59 +1105,59 @@ export default function NewEmployeePage() {
             {/* Personal Information Summary */}
             <Card>
               <CardContent>
-                <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <h4 className="font-semibold text-warm-900 mb-3 flex items-center gap-2">
                   <User className="h-4 w-4" />
                   Personal Information
                 </h4>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <span className="text-gray-600">Name:</span>
+                    <span className="text-warm-600">Name:</span>
                     <span className="ml-2 font-medium">
                       {formData.salutation} {formData.firstName} {formData.lastName}
                     </span>
                   </div>
                   <div>
-                    <span className="text-gray-600">Employee Code:</span>
+                    <span className="text-warm-600">Employee Code:</span>
                     <span className="ml-2 font-medium">{formData.employeeCode}</span>
                   </div>
                   <div>
-                    <span className="text-gray-600">Gender:</span>
+                    <span className="text-warm-600">Gender:</span>
                     <span className="ml-2 font-medium">{formData.gender}</span>
                   </div>
                   <div>
-                    <span className="text-gray-600">Date of Birth:</span>
+                    <span className="text-warm-600">Date of Birth:</span>
                     <span className="ml-2 font-medium">{formData.dateOfBirth}</span>
                   </div>
                   {formData.fatherName && (
                     <div>
-                      <span className="text-gray-600">Father's Name:</span>
+                      <span className="text-warm-600">Father's Name:</span>
                       <span className="ml-2 font-medium">{formData.fatherName}</span>
                     </div>
                   )}
                   {formData.aadhaarNumber && (
                     <div>
-                      <span className="text-gray-600">Aadhaar:</span>
+                      <span className="text-warm-600">Aadhaar:</span>
                       <span className="ml-2 font-medium">{formData.aadhaarNumber}</span>
                     </div>
                   )}
                   {formData.maritalStatus && (
                     <div>
-                      <span className="text-gray-600">Marital Status:</span>
+                      <span className="text-warm-600">Marital Status:</span>
                       <span className="ml-2 font-medium">{formData.maritalStatus}</span>
                     </div>
                   )}
                   {formData.bloodGroup && (
                     <div>
-                      <span className="text-gray-600">Blood Group:</span>
+                      <span className="text-warm-600">Blood Group:</span>
                       <span className="ml-2 font-medium">{formData.bloodGroup}</span>
                     </div>
                   )}
                   <div>
-                    <span className="text-gray-600">Join Date:</span>
+                    <span className="text-warm-600">Join Date:</span>
                     <span className="ml-2 font-medium">{formData.joinDate}</span>
                   </div>
                   <div>
-                    <span className="text-gray-600">Status:</span>
+                    <span className="text-warm-600">Status:</span>
                     <span className="ml-2 font-medium">{formData.status}</span>
                   </div>
                 </div>
@@ -1103,27 +1167,27 @@ export default function NewEmployeePage() {
             {/* Contact Details Summary */}
             <Card>
               <CardContent>
-                <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <h4 className="font-semibold text-warm-900 mb-3 flex items-center gap-2">
                   <Phone className="h-4 w-4" />
                   Contact Details
                 </h4>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <span className="text-gray-600">Mobile:</span>
+                    <span className="text-warm-600">Mobile:</span>
                     <span className="ml-2 font-medium">{formData.mobileNumber}</span>
                   </div>
                   <div>
-                    <span className="text-gray-600">Work Email:</span>
+                    <span className="text-warm-600">Work Email:</span>
                     <span className="ml-2 font-medium">{formData.workEmail}</span>
                   </div>
                   {formData.personalEmail && (
                     <div className="col-span-2">
-                      <span className="text-gray-600">Personal Email:</span>
+                      <span className="text-warm-600">Personal Email:</span>
                       <span className="ml-2 font-medium">{formData.personalEmail}</span>
                     </div>
                   )}
                   <div className="col-span-2">
-                    <span className="text-gray-600">Current Address:</span>
+                    <span className="text-warm-600">Current Address:</span>
                     <span className="ml-2 font-medium">
                       {formData.currentAddress}
                       {formData.currentCity && `, ${formData.currentCity}`}
@@ -1134,7 +1198,7 @@ export default function NewEmployeePage() {
                   </div>
                   {formData.permanentAddress && (
                     <div className="col-span-2">
-                      <span className="text-gray-600">Permanent Address:</span>
+                      <span className="text-warm-600">Permanent Address:</span>
                       <span className="ml-2 font-medium">
                         {formData.permanentAddress}
                         {formData.permanentCity && `, ${formData.permanentCity}`}
@@ -1151,22 +1215,22 @@ export default function NewEmployeePage() {
             {/* Emergency Contact Summary */}
             <Card>
               <CardContent>
-                <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <h4 className="font-semibold text-warm-900 mb-3 flex items-center gap-2">
                   <Users className="h-4 w-4" />
                   Emergency Contact
                 </h4>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <span className="text-gray-600">Name:</span>
+                    <span className="text-warm-600">Name:</span>
                     <span className="ml-2 font-medium">{formData.emergencyContactName}</span>
                   </div>
                   <div>
-                    <span className="text-gray-600">Number:</span>
+                    <span className="text-warm-600">Number:</span>
                     <span className="ml-2 font-medium">{formData.emergencyContactNumber}</span>
                   </div>
                   {formData.emergencyContactRelation && (
                     <div className="col-span-2">
-                      <span className="text-gray-600">Relationship:</span>
+                      <span className="text-warm-600">Relationship:</span>
                       <span className="ml-2 font-medium">{formData.emergencyContactRelation}</span>
                     </div>
                   )}
@@ -1177,25 +1241,25 @@ export default function NewEmployeePage() {
             {/* Education Details Summary */}
             <Card>
               <CardContent>
-                <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <h4 className="font-semibold text-warm-900 mb-3 flex items-center gap-2">
                   <GraduationCap className="h-4 w-4" />
                   Education Details
                 </h4>
                 <div className="space-y-3 text-sm">
                   <div>
-                    <span className="text-gray-600">Highest Qualification:</span>
+                    <span className="text-warm-600">Highest Qualification:</span>
                     <span className="ml-2 font-medium">{formData.highestQualification}</span>
                   </div>
                   {formData.previousWorkExperience && (
                     <div>
-                      <span className="text-gray-600">Previous Work Experience:</span>
-                      <p className="mt-1 text-gray-800">{formData.previousWorkExperience}</p>
+                      <span className="text-warm-600">Previous Work Experience:</span>
+                      <p className="mt-1 text-warm-800">{formData.previousWorkExperience}</p>
                     </div>
                   )}
                   {formData.historyInCompany && (
                     <div>
-                      <span className="text-gray-600">History in Company:</span>
-                      <p className="mt-1 text-gray-800">{formData.historyInCompany}</p>
+                      <span className="text-warm-600">History in Company:</span>
+                      <p className="mt-1 text-warm-800">{formData.historyInCompany}</p>
                     </div>
                   )}
                 </div>
@@ -1205,33 +1269,37 @@ export default function NewEmployeePage() {
             {/* Company Details Summary */}
             <Card>
               <CardContent>
-                <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <h4 className="font-semibold text-warm-900 mb-3 flex items-center gap-2">
                   <Building2 className="h-4 w-4" />
                   Company Details
                 </h4>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <span className="text-gray-600">Designation:</span>
-                    <span className="ml-2 font-medium">{formData.designation}</span>
+                    <span className="text-warm-600">Designation:</span>
+                    <span className="ml-2 font-medium">
+                      {designations.find(d => d.id === formData.designationId)?.name || 'N/A'}
+                    </span>
                   </div>
                   <div>
-                    <span className="text-gray-600">Department:</span>
+                    <span className="text-warm-600">Department:</span>
                     <span className="ml-2 font-medium">
                       {departments.find(d => d.id === formData.departmentId)?.name || 'N/A'}
                     </span>
                   </div>
-                  {formData.branch && (
+                  {formData.branchId && (
                     <div>
-                      <span className="text-gray-600">Branch:</span>
-                      <span className="ml-2 font-medium">{formData.branch}</span>
+                      <span className="text-warm-600">Branch:</span>
+                      <span className="ml-2 font-medium">
+                        {branches.find(b => b.id === formData.branchId)?.name || ''}
+                      </span>
                     </div>
                   )}
                   <div>
-                    <span className="text-gray-600">Employee Type:</span>
+                    <span className="text-warm-600">Employee Type:</span>
                     <span className="ml-2 font-medium">{formData.employeeType}</span>
                   </div>
                   <div className="col-span-2">
-                    <span className="text-gray-600">Reports To:</span>
+                    <span className="text-warm-600">Reports To:</span>
                     <span className="ml-2 font-medium">
                       {managers.find(m => m.id === formData.reportsTo)?.firstName || 'N/A'}{' '}
                       {managers.find(m => m.id === formData.reportsTo)?.lastName || ''}
@@ -1244,30 +1312,30 @@ export default function NewEmployeePage() {
             {/* Salary Details Summary */}
             <Card>
               <CardContent>
-                <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                <h4 className="font-semibold text-warm-900 mb-3 flex items-center gap-2">
                   <DollarSign className="h-4 w-4" />
                   Salary Details
                 </h4>
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
-                    <span className="text-gray-600">CTC (Annual):</span>
+                    <span className="text-warm-600">CTC (Annual):</span>
                     <span className="ml-2 font-medium">
                       ₹ {parseFloat(formData.ctc).toLocaleString('en-IN')}
                     </span>
                   </div>
                   <div>
-                    <span className="text-gray-600">PAN Number:</span>
+                    <span className="text-warm-600">PAN Number:</span>
                     <span className="ml-2 font-medium">{formData.panNumber}</span>
                   </div>
                   {formData.pfa && (
                     <div>
-                      <span className="text-gray-600">PFA:</span>
+                      <span className="text-warm-600">PFA:</span>
                       <span className="ml-2 font-medium">{formData.pfa}</span>
                     </div>
                   )}
                   {formData.accountNumber && (
                     <div>
-                      <span className="text-gray-600">Account Number:</span>
+                      <span className="text-warm-600">Account Number:</span>
                       <span className="ml-2 font-medium">{formData.accountNumber}</span>
                     </div>
                   )}
@@ -1279,26 +1347,26 @@ export default function NewEmployeePage() {
             {formData.createUser && (
               <Card>
                 <CardContent>
-                  <h4 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+                  <h4 className="font-semibold text-warm-900 mb-3 flex items-center gap-2">
                     <User className="h-4 w-4" />
                     HRMS User Account
                   </h4>
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-3">
-                    <p className="text-sm text-green-800">
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 mb-3">
+                    <p className="text-sm text-emerald-800">
                       ✓ User account will be created for HRMS access
                     </p>
                   </div>
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
-                      <span className="text-gray-600">User Email:</span>
+                      <span className="text-warm-600">User Email:</span>
                       <span className="ml-2 font-medium">{formData.userEmail}</span>
                     </div>
                     <div>
-                      <span className="text-gray-600">User Role:</span>
+                      <span className="text-warm-600">User Role:</span>
                       <span className="ml-2 font-medium">{formData.userRole}</span>
                     </div>
                     <div className="col-span-2">
-                      <span className="text-gray-600">Password:</span>
+                      <span className="text-warm-600">Password:</span>
                       <span className="ml-2 font-medium">••••••••</span>
                     </div>
                   </div>
@@ -1320,13 +1388,13 @@ export default function NewEmployeePage() {
         <div className="flex items-center gap-4 mb-4">
           <button
             onClick={() => router.back()}
-            className="text-gray-600 hover:text-gray-900"
+            className="text-warm-600 hover:text-warm-900"
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Add New Employee</h1>
-            <p className="text-sm text-gray-600 mt-1">
+            <h1 className="text-2xl font-bold text-warm-900">Add New Employee</h1>
+            <p className="text-sm text-warm-600 mt-1">
               Step {currentStep} of {steps.length}: {steps[currentStep - 1].name}
             </p>
           </div>
@@ -1347,8 +1415,8 @@ export default function NewEmployeePage() {
                       isActive
                         ? 'border-primary-600 bg-primary-50 text-primary-600'
                         : isCompleted
-                        ? 'border-green-600 bg-green-50 text-green-600'
-                        : 'border-gray-300 bg-white text-gray-400'
+                        ? 'border-emerald-600 bg-emerald-50 text-emerald-600'
+                        : 'border-warm-300 bg-white text-warm-400'
                     }`}
                   >
                     {isCompleted ? (
@@ -1359,7 +1427,7 @@ export default function NewEmployeePage() {
                   </div>
                   <span
                     className={`text-xs mt-1 text-center ${
-                      isActive || isCompleted ? 'text-gray-900 font-medium' : 'text-gray-500'
+                      isActive || isCompleted ? 'text-warm-900 font-medium' : 'text-warm-500'
                     }`}
                   >
                     {step.name}
@@ -1368,7 +1436,7 @@ export default function NewEmployeePage() {
                 {index < steps.length - 1 && (
                   <div
                     className={`h-0.5 flex-1 mx-2 ${
-                      isCompleted ? 'bg-green-600' : 'bg-gray-300'
+                      isCompleted ? 'bg-emerald-600' : 'bg-warm-300'
                     }`}
                   />
                 )}

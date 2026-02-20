@@ -3,6 +3,7 @@ import { NotFoundException, ConflictException, ForbiddenException } from '@nestj
 import { CompaniesService } from './companies.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createMockPrismaService } from '../../test/helpers';
+import { StorageService } from '../../common/storage/storage.service';
 import { CreateCompanyDto, UpdateCompanyDto, CompanyQueryDto } from './dto/company.dto';
 import { UserRole } from '@prisma/client';
 
@@ -19,6 +20,7 @@ describe('CompaniesService', () => {
       providers: [
         CompaniesService,
         { provide: PrismaService, useValue: createMockPrismaService() },
+        { provide: StorageService, useValue: { upload: jest.fn(), delete: jest.fn(), getFilePath: jest.fn() } },
       ],
     }).compile();
 
@@ -191,17 +193,17 @@ describe('CompaniesService', () => {
     const companyId = 'tenant-1';
     const dto: UpdateCompanyDto = { name: 'Updated Corp' };
 
-    it('should update and return the company', async () => {
-      // findOne internals
-      prisma.tenant.findUnique.mockResolvedValue({
+    it('should update and return enriched company data', async () => {
+      // findOne is called twice: once as guard, once to return enriched result
+      const companyData = {
         id: companyId,
+        name: 'Updated Corp',
         isActive: true,
         _count: { employees: 0, users: 0, departments: 0, leaveTypes: 0, otRules: 0 },
-      });
+      };
+      prisma.tenant.findUnique.mockResolvedValue(companyData);
       prisma.employee.count.mockResolvedValue(0);
-
-      const updated = { id: companyId, name: 'Updated Corp' };
-      prisma.tenant.update.mockResolvedValue(updated);
+      prisma.tenant.update.mockResolvedValue({ id: companyId, name: 'Updated Corp' });
 
       const result = await service.update(companyId, dto);
 
@@ -209,7 +211,14 @@ describe('CompaniesService', () => {
         where: { id: companyId },
         data: dto,
       });
-      expect(result).toEqual(updated);
+      // Returns enriched data from findOne (with stats), not raw update result
+      expect(result).toMatchObject({
+        id: companyId,
+        employeeCount: 0,
+        activeEmployeeCount: 0,
+        userCount: 0,
+        departmentCount: 0,
+      });
     });
 
     it('should throw NotFoundException if company does not exist', async () => {

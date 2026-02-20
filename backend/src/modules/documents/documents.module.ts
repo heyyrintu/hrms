@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
 import { DocumentsController } from './documents.controller';
+import { DocumentExpiryController } from './document-expiry.controller';
 import { DocumentsService } from './documents.service';
 
 @Module({
-  controllers: [DocumentsController],
+  controllers: [DocumentExpiryController, DocumentsController],
   providers: [DocumentsService],
   exports: [DocumentsService],
 })

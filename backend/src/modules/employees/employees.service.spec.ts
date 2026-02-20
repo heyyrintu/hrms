@@ -2,7 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException, ConflictException } from '@nestjs/common';
 import { EmployeesService } from './employees.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { createMockPrismaService } from '../../test/helpers';
+import { EmailService } from '../../common/email/email.service';
+import { createMockPrismaService, createMockEmailService } from '../../test/helpers';
 
 describe('EmployeesService', () => {
   let service: EmployeesService;
@@ -15,6 +16,7 @@ describe('EmployeesService', () => {
       providers: [
         EmployeesService,
         { provide: PrismaService, useValue: createMockPrismaService() },
+        { provide: EmailService, useValue: createMockEmailService() },
       ],
     }).compile();
 
@@ -74,6 +76,11 @@ describe('EmployeesService', () => {
   // ---------------------------------------------------------------------------
 
   describe('create', () => {
+    beforeEach(() => {
+      // Mock tenant lookup for welcome email
+      prisma.tenant.findUnique.mockResolvedValue({ name: 'Test Corp' });
+    });
+
     it('should create an employee successfully', async () => {
       prisma.employee.findFirst.mockResolvedValue(null);
       // $transaction calls the callback with the mock itself
@@ -493,6 +500,116 @@ describe('EmployeesService', () => {
       const result = await service.getDirectReports(tenantId, 'mgr-no-reports');
 
       expect(result).toEqual([]);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // getOrgChart
+  // ---------------------------------------------------------------------------
+  describe('getOrgChart', () => {
+    it('should build a tree from flat employee list', async () => {
+      const employees = [
+        {
+          id: 'ceo',
+          firstName: 'Alice',
+          lastName: 'Boss',
+          employeeCode: 'CEO001',
+          designation: { name: 'CEO' },
+          department: { name: 'Executive' },
+          managerId: null,
+          email: 'alice@test.com',
+        },
+        {
+          id: 'mgr1',
+          firstName: 'Bob',
+          lastName: 'Manager',
+          employeeCode: 'MGR001',
+          designation: { name: 'Director' },
+          department: { name: 'Engineering' },
+          managerId: 'ceo',
+          email: 'bob@test.com',
+        },
+        {
+          id: 'dev1',
+          firstName: 'Charlie',
+          lastName: 'Dev',
+          employeeCode: 'DEV001',
+          designation: { name: 'Developer' },
+          department: { name: 'Engineering' },
+          managerId: 'mgr1',
+          email: 'charlie@test.com',
+        },
+      ];
+      prisma.employee.findMany.mockResolvedValue(employees);
+
+      const result = await service.getOrgChart(tenantId);
+
+      // Should have one root node (CEO)
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('Alice Boss');
+      expect(result[0].children).toHaveLength(1);
+      expect(result[0].children[0].name).toBe('Bob Manager');
+      expect(result[0].children[0].children).toHaveLength(1);
+      expect(result[0].children[0].children[0].name).toBe('Charlie Dev');
+    });
+
+    it('should return empty array when no employees exist', async () => {
+      prisma.employee.findMany.mockResolvedValue([]);
+
+      const result = await service.getOrgChart(tenantId);
+
+      expect(result).toEqual([]);
+    });
+
+    it('should handle multiple root nodes (no manager)', async () => {
+      const employees = [
+        {
+          id: 'a',
+          firstName: 'A',
+          lastName: 'Root',
+          employeeCode: 'A001',
+          designation: null,
+          department: null,
+          managerId: null,
+          email: 'a@test.com',
+        },
+        {
+          id: 'b',
+          firstName: 'B',
+          lastName: 'Root',
+          employeeCode: 'B001',
+          designation: null,
+          department: null,
+          managerId: null,
+          email: 'b@test.com',
+        },
+      ];
+      prisma.employee.findMany.mockResolvedValue(employees);
+
+      const result = await service.getOrgChart(tenantId);
+
+      expect(result).toHaveLength(2);
+    });
+
+    it('should treat employees with manager outside tenant as roots', async () => {
+      const employees = [
+        {
+          id: 'orphan',
+          firstName: 'Orphan',
+          lastName: 'Node',
+          employeeCode: 'ORP001',
+          designation: null,
+          department: null,
+          managerId: 'external-manager-id',
+          email: 'orphan@test.com',
+        },
+      ];
+      prisma.employee.findMany.mockResolvedValue(employees);
+
+      const result = await service.getOrgChart(tenantId);
+
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe('Orphan Node');
     });
   });
 });

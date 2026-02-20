@@ -53,12 +53,55 @@ export interface Company {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+
+  // Basic info
+  legalName?: string | null;
+  description?: string | null;
+  website?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  logoUrl?: string | null;
+  industry?: string | null;
+  companyType?: string | null;
+
+  // Registered address
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pinCode?: string | null;
+  country?: string | null;
+
+  // Legal / Tax identifiers
+  pan?: string | null;
+  gstin?: string | null;
+  tan?: string | null;
+  cin?: string | null;
+  pfRegistrationNumber?: string | null;
+  esiRegistrationNumber?: string | null;
+
+  // HR & Payroll settings
+  timezone?: string;
+  currency?: string;
+  financialYearStartMonth?: number;
+  leaveYearStartMonth?: number;
+  workDaysPerWeek?: number;
+  standardWorkHoursPerDay?: number;
+  payrollFrequency?: string;
+  payrollProcessingDay?: number;
+
+  // Stats (populated by list/detail endpoints)
   employeeCount?: number;
   activeEmployeeCount?: number;
   userCount?: number;
   departmentCount?: number;
   leaveTypeCount?: number;
   otRuleCount?: number;
+
+  // Geofencing
+  officeLatitude?: number | null;
+  officeLongitude?: number | null;
+  officeRadiusMeters?: number | null;
 }
 
 export interface CreateCompanyPayload {
@@ -119,7 +162,10 @@ export interface Employee {
   otMultiplier: number;
   departmentId?: string;
   department?: Department;
-  designation?: string;
+  designationId?: string;
+  designation?: Designation;
+  branchId?: string;
+  branch?: Branch;
   managerId?: string;
   manager?: Employee;
   directReports?: Employee[];
@@ -157,6 +203,40 @@ export interface Department {
 }
 
 // ============================================
+// DESIGNATION TYPES
+// ============================================
+
+export interface Designation {
+  id: string;
+  tenantId: string;
+  name: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  _count?: { employees: number };
+}
+
+// ============================================
+// BRANCH TYPES
+// ============================================
+
+export interface Branch {
+  id: string;
+  tenantId: string;
+  name: string;
+  type: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+  country?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  _count?: { employees: number };
+}
+
+// ============================================
 // ATTENDANCE TYPES
 // ============================================
 
@@ -183,6 +263,10 @@ export interface AttendanceRecord {
   otMinutesApproved?: number;
   status: AttendanceStatus;
   remarks?: string;
+  clockInLatitude?: number;
+  clockInLongitude?: number;
+  clockOutLatitude?: number;
+  clockOutLongitude?: number;
   sessions?: AttendanceSession[];
 }
 
@@ -279,6 +363,8 @@ export interface LeaveRequest {
   endDate: string;
   totalDays: number;
   reason?: string;
+  isHalfDay?: boolean;
+  halfDayPeriod?: 'FIRST_HALF' | 'SECOND_HALF';
   status: LeaveRequestStatus;
   approverId?: string;
   approver?: Employee;
@@ -293,6 +379,38 @@ export interface CreateLeaveRequest {
   startDate: string;
   endDate: string;
   reason?: string;
+  isHalfDay?: boolean;
+  halfDayPeriod?: 'FIRST_HALF' | 'SECOND_HALF';
+}
+
+// ============================================
+// COMP-OFF TYPES
+// ============================================
+
+export enum CompOffStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  AVAILED = 'AVAILED',
+  EXPIRED = 'EXPIRED',
+}
+
+export interface CompOffRequest {
+  id: string;
+  tenantId: string;
+  employeeId: string;
+  workedDate: string;
+  reason: string;
+  expiryDate?: string;
+  earnedDays: number;
+  status: CompOffStatus;
+  approverId?: string;
+  approverNote?: string;
+  approvedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  employee?: { id: string; firstName: string; lastName: string; employeeCode: string; department?: { name: string } };
+  approver?: { id: string; firstName: string; lastName: string };
 }
 
 // ============================================
@@ -598,6 +716,15 @@ export interface EmployeeSalary {
   updatedAt: string;
 }
 
+export interface SalaryBreakdown {
+  basePay: number;
+  earnings: Array<{ name: string; amount: number }>;
+  deductions: Array<{ name: string; amount: number }>;
+  grossPay: number;
+  totalDeductions: number;
+  netPay: number;
+}
+
 export interface PayrollRun {
   id: string;
   tenantId: string;
@@ -870,4 +997,133 @@ export interface Goal {
     status: PerformanceReviewStatus;
     cycle?: { id: string; name: string };
   };
+}
+
+// ============================================
+// ATTENDANCE REGULARIZATION
+// ============================================
+
+export enum RegularizationStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+}
+
+export interface AttendanceRegularization {
+  id: string;
+  tenantId: string;
+  employeeId: string;
+  date: string;
+  originalClockIn?: string;
+  originalClockOut?: string;
+  requestedClockIn: string;
+  requestedClockOut: string;
+  reason: string;
+  status: RegularizationStatus;
+  approverId?: string;
+  approverNote?: string;
+  approvedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  employee?: { id: string; firstName: string; lastName: string; employeeCode: string; department?: { name: string } };
+  approver?: { id: string; firstName: string; lastName: string };
+}
+
+// ============================================
+// LETTER TYPES
+// ============================================
+
+export enum LetterType {
+  OFFER_LETTER = 'OFFER_LETTER',
+  APPOINTMENT_LETTER = 'APPOINTMENT_LETTER',
+  INCREMENT_LETTER = 'INCREMENT_LETTER',
+  CONFIRMATION_LETTER = 'CONFIRMATION_LETTER',
+  RELIEVING_LETTER = 'RELIEVING_LETTER',
+  EXPERIENCE_LETTER = 'EXPERIENCE_LETTER',
+  TRANSFER_LETTER = 'TRANSFER_LETTER',
+  PROMOTION_LETTER = 'PROMOTION_LETTER',
+  WARNING_LETTER = 'WARNING_LETTER',
+  TERMINATION_LETTER = 'TERMINATION_LETTER',
+  OTHER = 'OTHER',
+}
+
+export interface LetterTemplate {
+  id: string;
+  tenantId: string;
+  name: string;
+  type: LetterType;
+  content: string;
+  description?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LetterGenerated {
+  id: string;
+  tenantId: string;
+  templateId: string;
+  employeeId: string;
+  content: string;
+  generatedBy: string;
+  generatedAt: string;
+  template?: { name: string; type: LetterType };
+  employee?: {
+    firstName: string;
+    lastName: string;
+    employeeCode: string;
+    department?: { name: string };
+  };
+}
+
+// ============================================
+// EXIT / SEPARATION TYPES
+// ============================================
+
+export enum SeparationType {
+  RESIGNATION = 'RESIGNATION',
+  TERMINATION = 'TERMINATION',
+  RETIREMENT = 'RETIREMENT',
+  END_OF_CONTRACT = 'END_OF_CONTRACT',
+  MUTUAL_SEPARATION = 'MUTUAL_SEPARATION',
+  ABSCONDING = 'ABSCONDING',
+}
+
+export enum SeparationStatus {
+  INITIATED = 'INITIATED',
+  NOTICE_PERIOD = 'NOTICE_PERIOD',
+  CLEARANCE_PENDING = 'CLEARANCE_PENDING',
+  COMPLETED = 'COMPLETED',
+  CANCELLED = 'CANCELLED',
+}
+
+export interface Separation {
+  id: string;
+  tenantId: string;
+  employeeId: string;
+  type: SeparationType;
+  status: SeparationStatus;
+  reason?: string;
+  initiatedDate: string;
+  lastWorkingDate?: string;
+  noticePeriodDays: number;
+  isNoticePeriodWaived: boolean;
+  exitInterviewDone: boolean;
+  exitInterviewNotes?: string;
+  clearanceNotes?: string;
+  processedBy?: string;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  employee?: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    employeeCode: string;
+    email: string;
+    designation?: { name: string } | string;
+    department?: { name: string };
+    joinDate?: string;
+  };
+  processor?: { id: string; firstName: string; lastName: string };
 }

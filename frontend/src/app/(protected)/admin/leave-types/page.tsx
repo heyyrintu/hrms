@@ -127,8 +127,8 @@ export default function LeaveTypesAdminPage() {
         const colors: Record<string, string> = {
             'CL': 'bg-blue-500',
             'SL': 'bg-red-500',
-            'PL': 'bg-green-500',
-            'LOP': 'bg-gray-500',
+            'PL': 'bg-emerald-500',
+            'LOP': 'bg-warm-500',
             'ML': 'bg-pink-500',
             'PFL': 'bg-purple-500',
         };
@@ -141,11 +141,11 @@ export default function LeaveTypesAdminPage() {
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                        <h1 className="text-2xl font-bold text-warm-900 flex items-center gap-2">
                             <Settings className="w-7 h-7 text-primary-600" />
                             Leave Types Configuration
                         </h1>
-                        <p className="text-gray-600 mt-1">
+                        <p className="text-warm-600 mt-1">
                             Manage leave types available to employees
                         </p>
                     </div>
@@ -169,11 +169,11 @@ export default function LeaveTypesAdminPage() {
                 ) : leaveTypes.length === 0 ? (
                     <Card>
                         <CardContent className="py-16 text-center">
-                            <Calendar className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                            <Calendar className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+                            <h3 className="text-lg font-semibold text-warm-900 mb-2">
                                 No Leave Types Configured
                             </h3>
-                            <p className="text-gray-600 mb-4">
+                            <p className="text-warm-600 mb-4">
                                 Start by creating your first leave type.
                             </p>
                             <Button onClick={openCreateModal}>
@@ -197,19 +197,19 @@ export default function LeaveTypesAdminPage() {
                                             </div>
                                             <div>
                                                 <CardTitle className="text-base">{type.name}</CardTitle>
-                                                <span className="text-xs text-gray-500">{type.code}</span>
+                                                <span className="text-xs text-warm-500">{type.code}</span>
                                             </div>
                                         </div>
                                         <div className="flex gap-1">
                                             <button
                                                 onClick={() => openEditModal(type)}
-                                                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                                                className="p-2 text-warm-400 hover:text-warm-600 hover:bg-warm-100 rounded-lg transition-colors"
                                             >
                                                 <Edit2 className="w-4 h-4" />
                                             </button>
                                             <button
                                                 onClick={() => openDeleteModal(type)}
-                                                className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                className="p-2 text-warm-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                             >
                                                 <Trash2 className="w-4 h-4" />
                                             </button>
@@ -218,41 +218,41 @@ export default function LeaveTypesAdminPage() {
                                 </CardHeader>
                                 <CardContent>
                                     {type.description && (
-                                        <p className="text-sm text-gray-600 mb-3">{type.description}</p>
+                                        <p className="text-sm text-warm-600 mb-3">{type.description}</p>
                                     )}
                                     <div className="grid grid-cols-2 gap-2 text-sm">
                                         <div className="flex items-center gap-2">
-                                            <Calendar className="w-4 h-4 text-gray-400" />
-                                            <span className="text-gray-600">{type.defaultDays} days/year</span>
+                                            <Calendar className="w-4 h-4 text-warm-400" />
+                                            <span className="text-warm-600">{type.defaultDays} days/year</span>
                                         </div>
                                         <div className="flex items-center gap-2">
                                             {type.isPaid ? (
                                                 <>
-                                                    <Check className="w-4 h-4 text-green-500" />
-                                                    <span className="text-green-600">Paid</span>
+                                                    <Check className="w-4 h-4 text-emerald-500" />
+                                                    <span className="text-emerald-600">Paid</span>
                                                 </>
                                             ) : (
                                                 <>
-                                                    <X className="w-4 h-4 text-gray-400" />
-                                                    <span className="text-gray-500">Unpaid</span>
+                                                    <X className="w-4 h-4 text-warm-400" />
+                                                    <span className="text-warm-500">Unpaid</span>
                                                 </>
                                             )}
                                         </div>
                                         <div className="flex items-center gap-2">
                                             {type.carryForward ? (
                                                 <>
-                                                    <Check className="w-4 h-4 text-green-500" />
-                                                    <span className="text-green-600">Carry Forward</span>
+                                                    <Check className="w-4 h-4 text-emerald-500" />
+                                                    <span className="text-emerald-600">Carry Forward</span>
                                                 </>
                                             ) : (
                                                 <>
-                                                    <X className="w-4 h-4 text-gray-400" />
-                                                    <span className="text-gray-500">No Carry</span>
+                                                    <X className="w-4 h-4 text-warm-400" />
+                                                    <span className="text-warm-500">No Carry</span>
                                                 </>
                                             )}
                                         </div>
                                         {type.carryForward && type.maxCarryForward && (
-                                            <div className="text-gray-600">
+                                            <div className="text-warm-600">
                                                 Max: {type.maxCarryForward} days
                                             </div>
                                         )}
@@ -274,7 +274,7 @@ export default function LeaveTypesAdminPage() {
                 <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 Name *
                             </label>
                             <input
@@ -282,11 +282,11 @@ export default function LeaveTypesAdminPage() {
                                 value={formData.name}
                                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                                 placeholder="e.g., Casual Leave"
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 Code *
                             </label>
                             <input
@@ -295,13 +295,13 @@ export default function LeaveTypesAdminPage() {
                                 onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
                                 placeholder="e.g., CL"
                                 maxLength={5}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-medium text-warm-700 mb-1">
                             Description
                         </label>
                         <textarea
@@ -309,13 +309,13 @@ export default function LeaveTypesAdminPage() {
                             onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                             placeholder="Brief description of this leave type..."
                             rows={2}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
                         />
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 Default Days Per Year
                             </label>
                             <input
@@ -323,11 +323,11 @@ export default function LeaveTypesAdminPage() {
                                 value={formData.defaultDays}
                                 onChange={(e) => setFormData({ ...formData, defaultDays: parseInt(e.target.value) || 0 })}
                                 min={0}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 Max Carry Forward Days
                             </label>
                             <input
@@ -336,7 +336,7 @@ export default function LeaveTypesAdminPage() {
                                 onChange={(e) => setFormData({ ...formData, maxCarryForward: parseInt(e.target.value) || 0 })}
                                 min={0}
                                 disabled={!formData.carryForward}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 disabled:bg-gray-100"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 disabled:bg-warm-100"
                             />
                         </div>
                     </div>
@@ -347,18 +347,18 @@ export default function LeaveTypesAdminPage() {
                                 type="checkbox"
                                 checked={formData.isPaid}
                                 onChange={(e) => setFormData({ ...formData, isPaid: e.target.checked })}
-                                className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                                className="w-4 h-4 text-primary-600 border-warm-300 rounded focus:ring-primary-500"
                             />
-                            <span className="text-sm text-gray-700">Paid Leave</span>
+                            <span className="text-sm text-warm-700">Paid Leave</span>
                         </label>
                         <label className="flex items-center gap-2 cursor-pointer">
                             <input
                                 type="checkbox"
                                 checked={formData.carryForward}
                                 onChange={(e) => setFormData({ ...formData, carryForward: e.target.checked })}
-                                className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                                className="w-4 h-4 text-primary-600 border-warm-300 rounded focus:ring-primary-500"
                             />
-                            <span className="text-sm text-gray-700">Allow Carry Forward</span>
+                            <span className="text-sm text-warm-700">Allow Carry Forward</span>
                         </label>
                     </div>
                 </div>
@@ -380,7 +380,7 @@ export default function LeaveTypesAdminPage() {
                 title="Delete Leave Type"
                 size="sm"
             >
-                <p className="text-gray-600">
+                <p className="text-warm-600">
                     Are you sure you want to delete <strong>{deletingType?.name}</strong>?
                     This will deactivate the leave type. Existing leave records will not be affected.
                 </p>

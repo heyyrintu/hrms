@@ -9,9 +9,9 @@ interface CardProps {
 
 const paddingClasses = {
   none: '',
-  sm: 'p-3',
-  md: 'p-4',
-  lg: 'p-6',
+  sm: 'p-2.5 sm:p-3',
+  md: 'p-3 sm:p-4',
+  lg: 'p-4 sm:p-6',
 };
 
 export function Card({ children, className, padding = 'md' }: CardProps) {
@@ -33,7 +33,7 @@ interface CardHeaderProps {
 
 export function CardHeader({ children, className }: CardHeaderProps) {
   return (
-    <div className={cn('mb-4', className)}>
+    <div className={cn('mb-3 sm:mb-4', className)}>
       {children}
     </div>
   );
@@ -46,7 +46,7 @@ interface CardTitleProps {
 
 export function CardTitle({ children, className }: CardTitleProps) {
   return (
-    <h3 className={cn('text-lg font-semibold text-warm-900', className)}>
+    <h3 className={cn('text-base sm:text-lg font-semibold text-warm-900', className)}>
       {children}
     </h3>
   );
@@ -85,7 +85,7 @@ interface CardFooterProps {
 
 export function CardFooter({ children, className }: CardFooterProps) {
   return (
-    <div className={cn('mt-4 pt-4 border-t border-warm-100', className)}>
+    <div className={cn('mt-3 sm:mt-4 pt-3 sm:pt-4 border-t border-warm-100', className)}>
       {children}
     </div>
   );

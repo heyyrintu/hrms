@@ -148,6 +148,106 @@ export class AdminService {
   }
 
   /**
+   * Get analytics data for charts
+   */
+  async getAnalytics(tenantId: string) {
+    const now = new Date();
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+
+    const [
+      departmentHeadcount,
+      employmentTypeDist,
+      monthlyJoinsRaw,
+      leaveTypeUsage,
+    ] = await Promise.all([
+      this.prisma.employee.groupBy({
+        by: ['departmentId'],
+        where: { tenantId, status: 'ACTIVE' },
+        _count: { id: true },
+      }),
+      this.prisma.employee.groupBy({
+        by: ['employmentType'],
+        where: { tenantId, status: 'ACTIVE' },
+        _count: { id: true },
+      }),
+      this.prisma.employee.findMany({
+        where: {
+          tenantId,
+          joinDate: { gte: sixMonthsAgo },
+        },
+        select: { joinDate: true },
+      }),
+      this.prisma.leaveRequest.groupBy({
+        by: ['leaveTypeId'],
+        where: {
+          tenantId,
+          status: 'APPROVED',
+          startDate: { gte: new Date(now.getFullYear(), 0, 1) },
+        },
+        _sum: { totalDays: true },
+      }),
+    ]);
+
+    // Resolve department names
+    const deptIds = departmentHeadcount
+      .map((d) => d.departmentId)
+      .filter((id): id is string => !!id);
+    const departments = deptIds.length
+      ? await this.prisma.department.findMany({
+          where: { id: { in: deptIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const deptMap = new Map(departments.map((d) => [d.id, d.name]));
+
+    const headcountByDepartment = departmentHeadcount.map((d) => ({
+      department: d.departmentId ? (deptMap.get(d.departmentId) || 'Unknown') : 'Unassigned',
+      count: d._count.id,
+    }));
+
+    const employmentTypeDistribution = employmentTypeDist.map((e) => ({
+      type: e.employmentType,
+      count: e._count.id,
+    }));
+
+    // Aggregate monthly joins
+    const monthlyJoins: { month: string; count: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const label = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' });
+      const start = new Date(d.getFullYear(), d.getMonth(), 1);
+      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+      const count = monthlyJoinsRaw.filter((e) => {
+        const jd = new Date(e.joinDate);
+        return jd >= start && jd <= end;
+      }).length;
+      monthlyJoins.push({ month: label, count });
+    }
+
+    // Resolve leave type names
+    const leaveTypeIds = leaveTypeUsage.map((l) => l.leaveTypeId);
+    const leaveTypes = leaveTypeIds.length
+      ? await this.prisma.leaveType.findMany({
+          where: { id: { in: leaveTypeIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const leaveTypeMap = new Map(leaveTypes.map((l) => [l.id, l.name]));
+
+    const leaveUtilization = leaveTypeUsage.map((l) => ({
+      type: leaveTypeMap.get(l.leaveTypeId) || 'Unknown',
+      days: l._sum.totalDays || 0,
+    }));
+
+    return {
+      headcountByDepartment,
+      employmentTypeDistribution,
+      monthlyJoins,
+      leaveUtilization,
+    };
+  }
+
+  /**
    * Get dashboard stats for a manager (their team only)
    */
   async getManagerDashboardStats(tenantId: string, managerId: string) {

@@ -73,6 +73,9 @@ describe('AttendanceService', () => {
   // clockIn
   // -----------------------------------------------------------
   describe('clockIn', () => {
+    // Valid GPS coordinates used in all clockIn tests (no geofencing: tenant.findUnique returns undefined by default)
+    const mockCoords = { latitude: 28.6139, longitude: 77.209 };
+
     it('should create a new attendance record when none exists for today', async () => {
       const createdRecord = {
         id: 'att-1',
@@ -86,6 +89,7 @@ describe('AttendanceService', () => {
       };
 
       prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+      prisma.tenant.findUnique.mockResolvedValue(null); // no geofencing
       prisma.attendanceRecord.findUnique.mockResolvedValue(null);
       prisma.attendanceRecord.create.mockResolvedValue(createdRecord);
       // getAttendanceById is called at the end
@@ -94,7 +98,7 @@ describe('AttendanceService', () => {
         employee: mockEmployee,
       });
 
-      const result = await service.clockIn(tenantId, employeeId, {});
+      const result = await service.clockIn(tenantId, employeeId, { ...mockCoords });
 
       expect(prisma.employee.findFirst).toHaveBeenCalledWith({
         where: { id: employeeId, tenantId, status: 'ACTIVE' },
@@ -107,22 +111,23 @@ describe('AttendanceService', () => {
     it('should throw NotFoundException when employee not found', async () => {
       prisma.employee.findFirst.mockResolvedValue(null);
 
-      await expect(service.clockIn(tenantId, employeeId, {})).rejects.toThrow(
+      await expect(service.clockIn(tenantId, employeeId, { ...mockCoords })).rejects.toThrow(
         NotFoundException,
       );
     });
 
     it('should throw BadRequestException when already clocked in (open session exists)', async () => {
       prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+      prisma.tenant.findUnique.mockResolvedValue(null); // no geofencing
       prisma.attendanceRecord.findUnique.mockResolvedValue({
         id: 'att-1',
         sessions: [{ id: 'sess-1', inTime: new Date(), outTime: null }],
       });
 
-      await expect(service.clockIn(tenantId, employeeId, {})).rejects.toThrow(
+      await expect(service.clockIn(tenantId, employeeId, { ...mockCoords })).rejects.toThrow(
         BadRequestException,
       );
-      await expect(service.clockIn(tenantId, employeeId, {})).rejects.toThrow(
+      await expect(service.clockIn(tenantId, employeeId, { ...mockCoords })).rejects.toThrow(
         'Already clocked in',
       );
     });
@@ -137,6 +142,7 @@ describe('AttendanceService', () => {
       };
 
       prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+      prisma.tenant.findUnique.mockResolvedValue(null); // no geofencing
       prisma.attendanceRecord.findUnique.mockResolvedValue(existingAttendance);
       prisma.attendanceSession.create.mockResolvedValue({ id: 'sess-2' });
       prisma.attendanceRecord.findFirst.mockResolvedValue({
@@ -144,7 +150,7 @@ describe('AttendanceService', () => {
         employee: mockEmployee,
       });
 
-      const result = await service.clockIn(tenantId, employeeId, {});
+      const result = await service.clockIn(tenantId, employeeId, { ...mockCoords });
 
       expect(prisma.attendanceSession.create).toHaveBeenCalledWith({
         data: {
@@ -165,6 +171,7 @@ describe('AttendanceService', () => {
       };
 
       prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+      prisma.tenant.findUnique.mockResolvedValue(null); // no geofencing
       prisma.attendanceRecord.findUnique.mockResolvedValue(existingAttendance);
       prisma.attendanceSession.create.mockResolvedValue({ id: 'sess-2' });
       prisma.attendanceRecord.update.mockResolvedValue({});
@@ -173,21 +180,22 @@ describe('AttendanceService', () => {
         employee: mockEmployee,
       });
 
-      await service.clockIn(tenantId, employeeId, { source: 'MOBILE' as any, remarks: 'late' });
+      await service.clockIn(tenantId, employeeId, { ...mockCoords, source: 'MOBILE' as any, remarks: 'late' });
 
       expect(prisma.attendanceRecord.update).toHaveBeenCalledWith({
         where: { id: 'att-1' },
-        data: {
+        data: expect.objectContaining({
           clockInTime: expect.any(Date),
           status: 'PRESENT',
           source: 'MOBILE',
           remarks: 'late',
-        },
+        }),
       });
     });
 
     it('should use WEB as default source when not provided', async () => {
       prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+      prisma.tenant.findUnique.mockResolvedValue(null); // no geofencing
       prisma.attendanceRecord.findUnique.mockResolvedValue(null);
       prisma.attendanceRecord.create.mockResolvedValue({
         id: 'att-1',
@@ -199,7 +207,7 @@ describe('AttendanceService', () => {
         sessions: [],
       });
 
-      await service.clockIn(tenantId, employeeId, {});
+      await service.clockIn(tenantId, employeeId, { ...mockCoords });
 
       expect(prisma.attendanceRecord.create).toHaveBeenCalledWith(
         expect.objectContaining({

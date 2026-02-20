@@ -1,18 +1,26 @@
 import { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
+const colSpanClasses: Record<number, string> = {
+  1: 'md:col-span-1',
+  2: 'md:col-span-2',
+  3: 'md:col-span-3',
+  4: 'md:col-span-4',
+};
+
 interface FormRowProps {
   children: ReactNode;
   className?: string;
   label?: string;
   required?: boolean;
   colSpan?: number;
+  error?: string;
 }
 
-export function FormRow({ children, className, label, required, colSpan }: FormRowProps) {
-  const colSpanClass = colSpan ? `md:col-span-${colSpan}` : '';
+export function FormRow({ children, className, label, required, colSpan, error }: FormRowProps) {
+  const colSpanClass = colSpan ? colSpanClasses[colSpan] || '' : '';
   return (
-    <div className={cn('mb-4', colSpanClass, className)}>
+    <div className={cn('mb-3 sm:mb-4', colSpanClass, className)}>
       {label && (
         <label className="block text-sm font-medium text-warm-700 mb-1.5">
           {label}
@@ -20,6 +28,7 @@ export function FormRow({ children, className, label, required, colSpan }: FormR
         </label>
       )}
       {children}
+      {error && <p className="mt-1 text-sm text-red-600">{error}</p>}
     </div>
   );
 }
@@ -32,14 +41,14 @@ interface FormGridProps {
 
 const colClasses = {
   1: 'grid-cols-1',
-  2: 'grid-cols-1 md:grid-cols-2',
-  3: 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3',
-  4: 'grid-cols-1 md:grid-cols-2 lg:grid-cols-4',
+  2: 'grid-cols-1 sm:grid-cols-2',
+  3: 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3',
+  4: 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-4',
 };
 
 export function FormGrid({ children, cols = 2, className }: FormGridProps) {
   return (
-    <div className={cn('grid gap-4', colClasses[cols], className)}>
+    <div className={cn('grid gap-3 sm:gap-4', colClasses[cols], className)}>
       {children}
     </div>
   );
@@ -52,7 +61,7 @@ interface FormActionsProps {
 
 export function FormActions({ children, className }: FormActionsProps) {
   return (
-    <div className={cn('flex justify-end gap-3 mt-6 pt-4 border-t border-warm-100', className)}>
+    <div className={cn('flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3 mt-5 sm:mt-6 pt-4 border-t border-warm-100', className)}>
       {children}
     </div>
   );

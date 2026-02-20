@@ -21,11 +21,11 @@ export function BulkApprovalBar({
   if (selectedCount === 0) return null;
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg p-4 z-40 lg:left-64">
-      <div className="max-w-7xl mx-auto flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-medium text-gray-900">
-            {selectedCount} request{selectedCount > 1 ? 's' : ''} selected
+    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-warm-200 shadow-elevated p-3 sm:p-4 z-40 lg:left-[260px] safe-bottom">
+      <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-0">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <span className="text-sm font-medium text-warm-900">
+            {selectedCount} selected
           </span>
           <Button
             variant="secondary"
@@ -33,8 +33,8 @@ export function BulkApprovalBar({
             onClick={onClearSelection}
             disabled={loading}
           >
-            <Trash2 className="w-4 h-4 mr-1" />
-            Clear
+            <Trash2 className="w-4 h-4 sm:mr-1" />
+            <span className="hidden sm:inline">Clear</span>
           </Button>
         </div>
         <div className="flex items-center gap-2">
@@ -43,18 +43,19 @@ export function BulkApprovalBar({
             size="sm"
             onClick={onRejectSelected}
             disabled={loading}
+            className="flex-1 sm:flex-none"
           >
-            <X className="w-4 h-4 mr-1" />
-            Reject Selected
+            <X className="w-4 h-4 sm:mr-1" />
+            Reject
           </Button>
           <Button
             size="sm"
             onClick={onApproveSelected}
             loading={loading}
-            className="bg-green-600 hover:bg-green-700"
+            className="bg-emerald-600 hover:bg-emerald-700 flex-1 sm:flex-none"
           >
-            <Check className="w-4 h-4 mr-1" />
-            Approve Selected
+            <Check className="w-4 h-4 sm:mr-1" />
+            Approve
           </Button>
         </div>
       </div>

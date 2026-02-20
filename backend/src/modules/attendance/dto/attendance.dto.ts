@@ -13,6 +13,18 @@ import { AttendanceStatus, AttendanceSource } from '@prisma/client';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class ClockInDto {
+  @ApiProperty({ description: 'GPS latitude (-90 to 90)', example: 28.6139 })
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  latitude: number;
+
+  @ApiProperty({ description: 'GPS longitude (-180 to 180)', example: 77.209 })
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitude: number;
+
   @ApiPropertyOptional({ enum: AttendanceSource })
   @IsOptional()
   @IsEnum(AttendanceSource)
@@ -25,6 +37,20 @@ export class ClockInDto {
 }
 
 export class ClockOutDto {
+  @ApiPropertyOptional({ description: 'GPS latitude (-90 to 90)', example: 28.6139 })
+  @IsOptional()
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  latitude?: number;
+
+  @ApiPropertyOptional({ description: 'GPS longitude (-180 to 180)', example: 77.209 })
+  @IsOptional()
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitude?: number;
+
   @ApiPropertyOptional({ enum: AttendanceSource })
   @IsOptional()
   @IsEnum(AttendanceSource)

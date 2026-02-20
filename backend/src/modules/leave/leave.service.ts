@@ -4,8 +4,10 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { EmailService } from '../../common/email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '@prisma/client';
 import {
@@ -22,8 +24,11 @@ import { Decimal } from '@prisma/client/runtime/library';
 
 @Injectable()
 export class LeaveService {
+  private readonly logger = new Logger(LeaveService.name);
+
   constructor(
     private prisma: PrismaService,
+    private emailService: EmailService,
     private notificationsService: NotificationsService,
   ) {}
 
@@ -38,6 +43,7 @@ export class LeaveService {
         tenantId,
         employeeId,
         year: targetYear,
+        leaveType: { isActive: true },
       },
       include: {
         leaveType: true,
@@ -57,8 +63,18 @@ export class LeaveService {
       throw new BadRequestException('Start date cannot be after end date');
     }
 
+    // Half-day validation: start and end date must be the same
+    if (dto.isHalfDay) {
+      if (startDate.toDateString() !== endDate.toDateString()) {
+        throw new BadRequestException('Half-day leave must have the same start and end date');
+      }
+      if (!dto.halfDayPeriod) {
+        throw new BadRequestException('Half-day period (FIRST_HALF or SECOND_HALF) is required for half-day leave');
+      }
+    }
+
     // Calculate total days
-    const totalDays = this.calculateLeaveDays(startDate, endDate);
+    const totalDays = dto.isHalfDay ? 0.5 : this.calculateLeaveDays(startDate, endDate);
 
     // Check if leave type exists
     const leaveType = await this.prisma.leaveType.findFirst({
@@ -118,6 +134,8 @@ export class LeaveService {
         endDate,
         totalDays,
         reason: dto.reason,
+        isHalfDay: dto.isHalfDay || false,
+        halfDayPeriod: dto.isHalfDay ? (dto.halfDayPeriod as any) : null,
         status: 'PENDING',
       },
       include: {
@@ -141,6 +159,37 @@ export class LeaveService {
           pendingDays: { increment: totalDays },
         },
       });
+    }
+
+    // Email the manager about new leave request (fire and forget)
+    const employee = await this.prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: { managerId: true, firstName: true, lastName: true },
+    });
+    if (employee?.managerId) {
+      const manager = await this.prisma.employee.findUnique({
+        where: { id: employee.managerId },
+        select: { email: true, firstName: true },
+      });
+      if (manager?.email) {
+        const fmt = (d: Date) => d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+        this.emailService.sendEmail({
+          to: manager.email,
+          subject: `Leave Request from ${employee.firstName} ${employee.lastName}`,
+          template: 'leave-request',
+          context: {
+            approverName: manager.firstName,
+            employeeName: `${employee.firstName} ${employee.lastName}`,
+            leaveType: request.leaveType.name,
+            startDate: fmt(startDate),
+            endDate: fmt(endDate),
+            totalDays,
+            reason: dto.reason,
+          },
+        }).catch((err) => {
+          this.logger.error(`Failed to send leave request email: ${err}`);
+        });
+      }
     }
 
     return request;
@@ -312,7 +361,7 @@ export class LeaveService {
     // Mark attendance as LEAVE for the leave dates
     await this.markAttendanceAsLeave(tenantId, request.employeeId, request.startDate, request.endDate);
 
-    // Notify the employee
+    // Notify the employee (in-app + email)
     this.notificationsService.notifyEmployee(
       tenantId,
       request.employeeId,
@@ -321,6 +370,25 @@ export class LeaveService {
       `Your ${updated.leaveType.name} leave (${updated.totalDays} day(s)) has been approved.`,
       '/leave',
     ).catch(() => {}); // Fire and forget
+
+    const fmt = (d: Date) => d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    this.emailService.sendEmail({
+      to: updated.employee.email,
+      subject: 'Leave Request Approved',
+      template: 'leave-approved',
+      context: {
+        employeeName: `${updated.employee.firstName} ${updated.employee.lastName}`,
+        status: 'Approved',
+        statusClass: 'approved',
+        leaveType: updated.leaveType.name,
+        startDate: fmt(updated.startDate),
+        endDate: fmt(updated.endDate),
+        totalDays: Number(updated.totalDays),
+        approverNote: dto.approverNote,
+      },
+    }).catch((err) => {
+      this.logger.error(`Failed to send leave approved email: ${err}`);
+    });
 
     return updated;
   }
@@ -394,7 +462,7 @@ export class LeaveService {
       });
     }
 
-    // Notify the employee
+    // Notify the employee (in-app + email)
     this.notificationsService.notifyEmployee(
       tenantId,
       request.employeeId,
@@ -403,6 +471,23 @@ export class LeaveService {
       `Your ${updated.leaveType.name} leave (${updated.totalDays} day(s)) has been rejected.${dto.approverNote ? ' Note: ' + dto.approverNote : ''}`,
       '/leave',
     ).catch(() => {}); // Fire and forget
+
+    const fmt = (d: Date) => d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    this.emailService.sendEmail({
+      to: updated.employee.email,
+      subject: 'Leave Request Rejected',
+      template: 'leave-rejected',
+      context: {
+        employeeName: `${updated.employee.firstName} ${updated.employee.lastName}`,
+        leaveType: updated.leaveType.name,
+        startDate: fmt(updated.startDate),
+        endDate: fmt(updated.endDate),
+        totalDays: Number(updated.totalDays),
+        approverNote: dto.approverNote,
+      },
+    }).catch((err) => {
+      this.logger.error(`Failed to send leave rejected email: ${err}`);
+    });
 
     return updated;
   }
@@ -479,7 +564,7 @@ export class LeaveService {
       throw new ConflictException('Leave type code already exists');
     }
 
-    return this.prisma.leaveType.create({
+    const leaveType = await this.prisma.leaveType.create({
       data: {
         tenantId,
         name: dto.name,
@@ -491,6 +576,39 @@ export class LeaveService {
         isPaid: dto.isPaid !== false,
       },
     });
+
+    // Auto-initialize balances for all active employees for the current year
+    const currentYear = new Date().getFullYear();
+    const employees = await this.prisma.employee.findMany({
+      where: { tenantId, status: 'ACTIVE' },
+      select: { id: true },
+    });
+
+    for (const employee of employees) {
+      await this.prisma.leaveBalance.upsert({
+        where: {
+          tenantId_employeeId_leaveTypeId_year: {
+            tenantId,
+            employeeId: employee.id,
+            leaveTypeId: leaveType.id,
+            year: currentYear,
+          },
+        },
+        update: {},
+        create: {
+          tenantId,
+          employeeId: employee.id,
+          leaveTypeId: leaveType.id,
+          year: currentYear,
+          totalDays: leaveType.defaultDays,
+          usedDays: 0,
+          pendingDays: 0,
+          carriedOver: 0,
+        },
+      });
+    }
+
+    return leaveType;
   }
 
   /**

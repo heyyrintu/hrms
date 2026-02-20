@@ -22,6 +22,47 @@ model Tenant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // ---- Basic Info ----
+  legalName   String?  @db.VarChar(200)
+  description String?  @db.VarChar(2000)
+  website     String?  @db.VarChar(255)
+  phone       String?  @db.VarChar(20)
+  email       String?  @db.VarChar(100)
+  logoUrl     String?  @db.VarChar(500)
+  industry    String?  @db.VarChar(100)
+  companyType String?  @db.VarChar(50)
+
+  // ---- Registered Address ----
+  addressLine1 String? @db.VarChar(255)
+  addressLine2 String? @db.VarChar(255)
+  city         String? @db.VarChar(100)
+  state        String? @db.VarChar(100)
+  pinCode      String? @db.VarChar(10)
+  country      String? @db.VarChar(100)
+
+  // ---- Legal / Tax Identifiers ----
+  pan                   String? @db.VarChar(10)
+  gstin                 String? @db.VarChar(15)
+  tan                   String? @db.VarChar(10)
+  cin                   String? @db.VarChar(21)
+  pfRegistrationNumber  String? @db.VarChar(30)
+  esiRegistrationNumber String? @db.VarChar(20)
+
+  // ---- HR & Payroll Settings ----
+  timezone                String  @default("Asia/Kolkata") @db.VarChar(50)
+  currency                String  @default("INR") @db.VarChar(3)
+  financialYearStartMonth Int     @default(4)
+  leaveYearStartMonth     Int     @default(4)
+  workDaysPerWeek         Int     @default(5)
+  standardWorkHoursPerDay Decimal @default(8.0) @db.Decimal(4, 2)
+  payrollFrequency        String  @default("MONTHLY") @db.VarChar(20)
+  payrollProcessingDay    Int     @default(28)
+
+  // Office location for geofencing (nullable = geofencing disabled)
+  officeLatitude     Float?
+  officeLongitude    Float?
+  officeRadiusMeters Int?
+
   // Relations
   users             User[]
   employees         Employee[]
@@ -52,9 +93,20 @@ model Tenant {
   reviewCycles        ReviewCycle[]
   performanceReviews  PerformanceReview[]
   goals               Goal[]
-  accrualRules        LeaveAccrualRule[]
-  accrualRuns         LeaveAccrualRun[]
-  accrualEntries      LeaveAccrualEntry[]
+  accrualRules            LeaveAccrualRule[]
+  accrualRuns             LeaveAccrualRun[]
+  accrualEntries          LeaveAccrualEntry[]
+  attendanceRegularizations AttendanceRegularization[]
+  compOffRequests         CompOffRequest[]
+  letterTemplates         LetterTemplate[]
+  lettersGenerated        LetterGenerated[]
+  feedbacks               Feedback[]
+  improvementPlans        ImprovementPlan[]
+  webhooks                Webhook[]
+  webhookLogs             WebhookLog[]
+  separations             Separation[]
+  designations            Designation[]
+  branches                Branch[]
 
   @@map("tenants")
 }
@@ -112,6 +164,44 @@ model Department {
   @@unique([tenantId, code])
   @@index([tenantId])
   @@map("departments")
+}
+
+model Designation {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id])
+  employees Employee[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("designations")
+}
+
+model Branch {
+  id        String   @id @default(uuid())
+  tenantId  String
+  name      String
+  type      String   @default("HEAD_OFFICE")
+  address   String?
+  city      String?
+  state     String?
+  zipCode   String?
+  country   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id])
+  employees Employee[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("branches")
 }
 
 // ============================================
@@ -172,7 +262,8 @@ model Employee {
   hourlyRate     Decimal?       @db.Decimal(10, 2)
   otMultiplier   Decimal        @default(1.5) @db.Decimal(3, 2)
   departmentId   String?
-  designation    String?
+  designationId  String?
+  branchId       String?
   managerId      String?
   joinDate       DateTime
   exitDate       DateTime?
@@ -183,6 +274,8 @@ model Employee {
   // Relations
   tenant            Tenant             @relation(fields: [tenantId], references: [id])
   department        Department?        @relation(fields: [departmentId], references: [id])
+  designation       Designation?       @relation(fields: [designationId], references: [id])
+  branch            Branch?            @relation(fields: [branchId], references: [id])
   manager           Employee?          @relation("EmployeeManager", fields: [managerId], references: [id])
   directReports     Employee[]         @relation("EmployeeManager")
   user              User?
@@ -205,6 +298,17 @@ model Employee {
   conductedReviews    PerformanceReview[] @relation("ReviewReviewer")
   goals               Goal[]
   accrualEntries      LeaveAccrualEntry[]
+  regularizations       AttendanceRegularization[] @relation("RegularizationEmployee")
+  approvedRegularizations AttendanceRegularization[] @relation("RegularizationApprover")
+  compOffRequests       CompOffRequest[]           @relation("CompOffEmployee")
+  approvedCompOffs      CompOffRequest[]           @relation("CompOffApprover")
+  lettersGenerated      LetterGenerated[]
+  feedbacksGiven        Feedback[]                 @relation("FeedbackSender")
+  feedbacksReceived     Feedback[]                 @relation("FeedbackReceiver")
+  improvementPlans      ImprovementPlan[]          @relation("PIPEmployee")
+  managedPIPs           ImprovementPlan[]          @relation("PIPManager")
+  separations           Separation[]               @relation("SeparationEmployee")
+  processedSeparations  Separation[]               @relation("SeparationProcessedBy")
 
   @@unique([tenantId, employeeCode])
   @@unique([tenantId, email])
@@ -250,6 +354,10 @@ model AttendanceRecord {
   status              AttendanceStatus @default(PRESENT)
   source              AttendanceSource @default(WEB)
   remarks             String?
+  clockInLatitude     Float?
+  clockInLongitude    Float?
+  clockOutLatitude    Float?
+  clockOutLongitude   Float?
   createdAt           DateTime         @default(now())
   updatedAt           DateTime         @updatedAt
 
@@ -367,21 +475,28 @@ enum LeaveRequestStatus {
   CANCELLED
 }
 
+enum HalfDayPeriod {
+  FIRST_HALF
+  SECOND_HALF
+}
+
 model LeaveRequest {
-  id           String             @id @default(uuid())
-  tenantId     String
-  employeeId   String
-  leaveTypeId  String
-  startDate    DateTime           @db.Date
-  endDate      DateTime           @db.Date
-  totalDays    Decimal            @db.Decimal(5, 2)
-  reason       String?
-  status       LeaveRequestStatus @default(PENDING)
-  approverId   String?
-  approverNote String?
-  approvedAt   DateTime?
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
+  id            String             @id @default(uuid())
+  tenantId      String
+  employeeId    String
+  leaveTypeId   String
+  startDate     DateTime           @db.Date
+  endDate       DateTime           @db.Date
+  totalDays     Decimal            @db.Decimal(5, 2)
+  reason        String?
+  isHalfDay     Boolean            @default(false)
+  halfDayPeriod HalfDayPeriod?
+  status        LeaveRequestStatus @default(PENDING)
+  approverId    String?
+  approverNote  String?
+  approvedAt    DateTime?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
 
   // Relations
   tenant    Tenant    @relation(fields: [tenantId], references: [id])
@@ -703,6 +818,16 @@ enum NotificationType {
   REVIEW_CYCLE_LAUNCHED
   REVIEW_SUBMITTED
   REVIEW_COMPLETED
+  ATTENDANCE_REGULARIZATION_APPROVED
+  ATTENDANCE_REGULARIZATION_REJECTED
+  COMP_OFF_APPROVED
+  COMP_OFF_REJECTED
+  DOCUMENT_EXPIRING
+  FEEDBACK_RECEIVED
+  PIP_CREATED
+  PIP_UPDATED
+  LETTER_GENERATED
+  WEBHOOK_DELIVERY_FAILED
   GENERAL
 }
 
@@ -1176,4 +1301,328 @@ model Goal {
   @@index([employeeId])
   @@index([status])
   @@map("goals")
+}
+
+// ============================================
+// ATTENDANCE REGULARIZATION
+// ============================================
+
+enum RegularizationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model AttendanceRegularization {
+  id              String               @id @default(uuid())
+  tenantId        String
+  employeeId      String
+  date            DateTime             @db.Date
+  originalClockIn  DateTime?
+  originalClockOut DateTime?
+  requestedClockIn DateTime
+  requestedClockOut DateTime
+  reason          String
+  status          RegularizationStatus @default(PENDING)
+  approverId      String?
+  approverNote    String?
+  approvedAt      DateTime?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  // Relations
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  employee Employee  @relation("RegularizationEmployee", fields: [employeeId], references: [id])
+  approver Employee? @relation("RegularizationApprover", fields: [approverId], references: [id])
+
+  @@unique([tenantId, employeeId, date])
+  @@index([tenantId])
+  @@index([employeeId])
+  @@index([status])
+  @@map("attendance_regularizations")
+}
+
+// ============================================
+// COMPENSATORY OFF
+// ============================================
+
+enum CompOffStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  AVAILED
+  EXPIRED
+}
+
+model CompOffRequest {
+  id            String       @id @default(uuid())
+  tenantId      String
+  employeeId    String
+  workedDate    DateTime     @db.Date
+  reason        String
+  expiryDate    DateTime?    @db.Date
+  earnedDays    Decimal      @default(1.0) @db.Decimal(3, 1)
+  status        CompOffStatus @default(PENDING)
+  approverId    String?
+  approverNote  String?
+  approvedAt    DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  // Relations
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  employee Employee  @relation("CompOffEmployee", fields: [employeeId], references: [id])
+  approver Employee? @relation("CompOffApprover", fields: [approverId], references: [id])
+
+  @@unique([tenantId, employeeId, workedDate])
+  @@index([tenantId])
+  @@index([employeeId])
+  @@index([status])
+  @@map("comp_off_requests")
+}
+
+// ============================================
+// LETTER TEMPLATES
+// ============================================
+
+enum LetterType {
+  OFFER_LETTER
+  APPOINTMENT_LETTER
+  INCREMENT_LETTER
+  CONFIRMATION_LETTER
+  RELIEVING_LETTER
+  EXPERIENCE_LETTER
+  TRANSFER_LETTER
+  PROMOTION_LETTER
+  WARNING_LETTER
+  TERMINATION_LETTER
+  OTHER
+}
+
+model LetterTemplate {
+  id          String     @id @default(uuid())
+  tenantId    String
+  name        String
+  type        LetterType
+  content     String     @db.Text
+  description String?
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  tenant            Tenant            @relation(fields: [tenantId], references: [id])
+  lettersGenerated  LetterGenerated[]
+
+  @@index([tenantId])
+  @@index([type])
+  @@map("letter_templates")
+}
+
+model LetterGenerated {
+  id          String   @id @default(uuid())
+  tenantId    String
+  templateId  String
+  employeeId  String
+  content     String   @db.Text
+  generatedBy String
+  generatedAt DateTime @default(now())
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id])
+  template LetterTemplate  @relation(fields: [templateId], references: [id])
+  employee Employee        @relation(fields: [employeeId], references: [id])
+
+  @@index([tenantId])
+  @@index([employeeId])
+  @@map("letters_generated")
+}
+
+// ============================================
+// CONTINUOUS FEEDBACK
+// ============================================
+
+enum FeedbackType {
+  POSITIVE
+  CONSTRUCTIVE
+  GENERAL
+}
+
+enum FeedbackVisibility {
+  PRIVATE
+  VISIBLE_TO_MANAGER
+  PUBLIC
+}
+
+model Feedback {
+  id         String             @id @default(uuid())
+  tenantId   String
+  senderId   String
+  receiverId String
+  content    String             @db.Text
+  type       FeedbackType
+  visibility FeedbackVisibility @default(PRIVATE)
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  sender   Employee @relation("FeedbackSender", fields: [senderId], references: [id])
+  receiver Employee @relation("FeedbackReceiver", fields: [receiverId], references: [id])
+
+  @@index([tenantId])
+  @@index([receiverId])
+  @@index([senderId])
+  @@map("feedbacks")
+}
+
+// ============================================
+// PERFORMANCE IMPROVEMENT PLAN (PIP)
+// ============================================
+
+enum PIPStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  EXTENDED
+  TERMINATED
+}
+
+model ImprovementPlan {
+  id          String    @id @default(uuid())
+  tenantId    String
+  employeeId  String
+  managerId   String
+  title       String
+  description String    @db.Text
+  startDate   DateTime  @db.Date
+  endDate     DateTime  @db.Date
+  status      PIPStatus @default(DRAFT)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tenant   Tenant                @relation(fields: [tenantId], references: [id])
+  employee Employee              @relation("PIPEmployee", fields: [employeeId], references: [id])
+  manager  Employee              @relation("PIPManager", fields: [managerId], references: [id])
+  goals    ImprovementPlanGoal[]
+
+  @@index([tenantId])
+  @@index([employeeId])
+  @@index([managerId])
+  @@index([status])
+  @@map("improvement_plans")
+}
+
+model ImprovementPlanGoal {
+  id          String    @id @default(uuid())
+  planId      String
+  description String    @db.Text
+  targetDate  DateTime  @db.Date
+  isCompleted Boolean   @default(false)
+  completedAt DateTime?
+  notes       String?   @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  plan ImprovementPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId])
+  @@map("improvement_plan_goals")
+}
+
+// ============================================
+// WEBHOOKS
+// ============================================
+
+model Webhook {
+  id          String   @id @default(uuid())
+  tenantId    String
+  url         String
+  events      String[]
+  secret      String?
+  isActive    Boolean  @default(true)
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant       @relation(fields: [tenantId], references: [id])
+  logs   WebhookLog[]
+
+  @@index([tenantId])
+  @@map("webhooks")
+}
+
+enum WebhookLogStatus {
+  SUCCESS
+  FAILED
+  RETRYING
+}
+
+model WebhookLog {
+  id           String           @id @default(uuid())
+  tenantId     String
+  webhookId    String
+  event        String
+  payload      Json
+  status       WebhookLogStatus
+  httpStatus   Int?
+  responseBody String?          @db.Text
+  errorMessage String?          @db.Text
+  attemptCount Int              @default(1)
+  triggeredAt  DateTime         @default(now())
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([webhookId])
+  @@index([triggeredAt])
+  @@map("webhook_logs")
+}
+
+// ============================================
+// EXIT / SEPARATION MANAGEMENT
+// ============================================
+
+enum SeparationType {
+  RESIGNATION
+  TERMINATION
+  RETIREMENT
+  END_OF_CONTRACT
+  MUTUAL_SEPARATION
+  ABSCONDING
+}
+
+enum SeparationStatus {
+  INITIATED
+  NOTICE_PERIOD
+  CLEARANCE_PENDING
+  COMPLETED
+  CANCELLED
+}
+
+model Separation {
+  id              String           @id @default(uuid())
+  tenantId        String
+  employeeId      String
+  type            SeparationType
+  status          SeparationStatus @default(INITIATED)
+  reason          String?          @db.Text
+  initiatedDate   DateTime         @default(now())
+  lastWorkingDate DateTime?
+  noticePeriodDays Int             @default(0)
+  isNoticePeriodWaived Boolean     @default(false)
+  exitInterviewDone Boolean        @default(false)
+  exitInterviewNotes String?       @db.Text
+  clearanceNotes  String?          @db.Text
+  processedBy     String?
+  completedAt     DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  employee  Employee @relation("SeparationEmployee", fields: [employeeId], references: [id])
+  processor Employee? @relation("SeparationProcessedBy", fields: [processedBy], references: [id])
+
+  @@index([tenantId])
+  @@index([employeeId])
+  @@index([status])
+  @@map("separations")
 }

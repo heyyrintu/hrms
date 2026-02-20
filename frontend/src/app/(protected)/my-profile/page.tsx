@@ -217,7 +217,7 @@ export default function MyProfilePage() {
     const statusIcon = (status: string) => {
         switch (status) {
             case 'PENDING': return <Clock className="w-4 h-4 text-yellow-500" />;
-            case 'APPROVED': return <CheckCircle className="w-4 h-4 text-green-500" />;
+            case 'APPROVED': return <CheckCircle className="w-4 h-4 text-emerald-500" />;
             case 'REJECTED': return <XCircle className="w-4 h-4 text-red-500" />;
             default: return null;
         }
@@ -238,11 +238,11 @@ export default function MyProfilePage() {
             <>
                 <Card>
                     <CardContent className="py-16 text-center">
-                        <UserCircle className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                        <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                        <UserCircle className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+                        <h3 className="text-lg font-semibold text-warm-900 mb-2">
                             No Employee Profile
                         </h3>
-                        <p className="text-gray-600">
+                        <p className="text-warm-600">
                             Your account is not linked to an employee profile.
                         </p>
                     </CardContent>
@@ -255,20 +255,20 @@ export default function MyProfilePage() {
         <>
             <div className="space-y-6">
                 {/* Header */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                        <h1 className="text-xl sm:text-2xl font-bold text-warm-900 flex items-center gap-2">
                             <UserCircle className="w-7 h-7 text-primary-600" />
                             My Profile
                         </h1>
-                        <p className="text-gray-600 mt-1">
+                        <p className="text-warm-600 mt-1">
                             View your profile, documents, and change requests
                         </p>
                     </div>
                 </div>
 
                 {/* Tabs */}
-                <div className="border-b border-gray-200">
+                <div className="border-b border-warm-200">
                     <div className="flex gap-4">
                         {([
                             { key: 'profile', label: 'Profile', icon: UserCircle },
@@ -282,7 +282,7 @@ export default function MyProfilePage() {
                                     'pb-3 px-1 text-sm font-medium border-b-2 transition-colors',
                                     activeTab === key
                                         ? 'border-primary-600 text-primary-600'
-                                        : 'border-transparent text-gray-500 hover:text-gray-700'
+                                        : 'border-transparent text-warm-500 hover:text-warm-700'
                                 )}
                             >
                                 <Icon className="w-4 h-4 inline mr-2" />
@@ -303,44 +303,44 @@ export default function MyProfilePage() {
                             <CardContent>
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div className="flex items-center gap-3">
-                                        <UserCircle className="w-5 h-5 text-gray-400" />
+                                        <UserCircle className="w-5 h-5 text-warm-400" />
                                         <div>
-                                            <p className="text-xs text-gray-500">Full Name</p>
+                                            <p className="text-xs text-warm-500">Full Name</p>
                                             <p className="text-sm font-medium">{profile.firstName} {profile.lastName}</p>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-3">
-                                        <Mail className="w-5 h-5 text-gray-400" />
+                                        <Mail className="w-5 h-5 text-warm-400" />
                                         <div>
-                                            <p className="text-xs text-gray-500">Email</p>
+                                            <p className="text-xs text-warm-500">Email</p>
                                             <p className="text-sm font-medium">{profile.email}</p>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-3">
-                                        <Phone className="w-5 h-5 text-gray-400" />
+                                        <Phone className="w-5 h-5 text-warm-400" />
                                         <div>
-                                            <p className="text-xs text-gray-500">Phone</p>
+                                            <p className="text-xs text-warm-500">Phone</p>
                                             <p className="text-sm font-medium">{profile.phone || '—'}</p>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-3">
-                                        <Briefcase className="w-5 h-5 text-gray-400" />
+                                        <Briefcase className="w-5 h-5 text-warm-400" />
                                         <div>
-                                            <p className="text-xs text-gray-500">Designation</p>
+                                            <p className="text-xs text-warm-500">Designation</p>
                                             <p className="text-sm font-medium">{profile.designation || '—'}</p>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-3">
-                                        <Building2 className="w-5 h-5 text-gray-400" />
+                                        <Building2 className="w-5 h-5 text-warm-400" />
                                         <div>
-                                            <p className="text-xs text-gray-500">Department</p>
+                                            <p className="text-xs text-warm-500">Department</p>
                                             <p className="text-sm font-medium">{profile.department?.name || '—'}</p>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-3">
-                                        <CalendarDays className="w-5 h-5 text-gray-400" />
+                                        <CalendarDays className="w-5 h-5 text-warm-400" />
                                         <div>
-                                            <p className="text-xs text-gray-500">Join Date</p>
+                                            <p className="text-xs text-warm-500">Join Date</p>
                                             <p className="text-sm font-medium">{new Date(profile.joinDate).toLocaleDateString()}</p>
                                         </div>
                                     </div>
@@ -352,19 +352,19 @@ export default function MyProfilePage() {
                         <div className="space-y-4">
                             <Card>
                                 <CardContent className="py-4">
-                                    <p className="text-xs text-gray-500 mb-1">Employee Code</p>
+                                    <p className="text-xs text-warm-500 mb-1">Employee Code</p>
                                     <p className="text-lg font-bold text-primary-600">{profile.employeeCode}</p>
                                 </CardContent>
                             </Card>
                             <Card>
                                 <CardContent className="py-4">
-                                    <p className="text-xs text-gray-500 mb-1">Employment Type</p>
+                                    <p className="text-xs text-warm-500 mb-1">Employment Type</p>
                                     <Badge variant="info">{profile.employmentType}</Badge>
                                 </CardContent>
                             </Card>
                             <Card>
                                 <CardContent className="py-4">
-                                    <p className="text-xs text-gray-500 mb-1">Manager</p>
+                                    <p className="text-xs text-warm-500 mb-1">Manager</p>
                                     <p className="text-sm font-medium">
                                         {profile.manager
                                             ? `${profile.manager.firstName} ${profile.manager.lastName}`
@@ -375,7 +375,7 @@ export default function MyProfilePage() {
                             {profile.shiftAssignments?.[0] && (
                                 <Card>
                                     <CardContent className="py-4">
-                                        <p className="text-xs text-gray-500 mb-1">Current Shift</p>
+                                        <p className="text-xs text-warm-500 mb-1">Current Shift</p>
                                         <p className="text-sm font-medium">
                                             {profile.shiftAssignments[0].shift.name} ({profile.shiftAssignments[0].shift.startTime} - {profile.shiftAssignments[0].shift.endTime})
                                         </p>
@@ -403,9 +403,9 @@ export default function MyProfilePage() {
                         {documents.length === 0 ? (
                             <Card>
                                 <CardContent className="py-16 text-center">
-                                    <FileText className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                                    <h3 className="text-lg font-semibold text-gray-900 mb-2">No Documents</h3>
-                                    <p className="text-gray-600 mb-4">Upload your first document.</p>
+                                    <FileText className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+                                    <h3 className="text-lg font-semibold text-warm-900 mb-2">No Documents</h3>
+                                    <p className="text-warm-600 mb-4">Upload your first document.</p>
                                     <Button onClick={() => setUploadModalOpen(true)}>
                                         <Upload className="w-4 h-4 mr-2" />
                                         Upload Document
@@ -417,25 +417,25 @@ export default function MyProfilePage() {
                                 <div className="overflow-x-auto">
                                     <table className="w-full">
                                         <thead>
-                                            <tr className="border-b border-gray-200 bg-gray-50">
-                                                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Document</th>
-                                                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Category</th>
-                                                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Size</th>
-                                                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Status</th>
-                                                <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Actions</th>
+                                            <tr className="border-b border-warm-200 bg-warm-50">
+                                                <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">Document</th>
+                                                <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">Category</th>
+                                                <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">Size</th>
+                                                <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">Status</th>
+                                                <th className="text-right px-4 py-3 text-xs font-medium text-warm-500 uppercase">Actions</th>
                                             </tr>
                                         </thead>
-                                        <tbody className="divide-y divide-gray-200">
+                                        <tbody className="divide-y divide-warm-200">
                                             {documents.map((doc) => (
-                                                <tr key={doc.id} className="hover:bg-gray-50">
+                                                <tr key={doc.id} className="hover:bg-warm-50">
                                                     <td className="px-4 py-3">
-                                                        <p className="text-sm font-medium text-gray-900">{doc.name}</p>
-                                                        <p className="text-xs text-gray-500">{doc.upload.fileName}</p>
+                                                        <p className="text-sm font-medium text-warm-900">{doc.name}</p>
+                                                        <p className="text-xs text-warm-500">{doc.upload.fileName}</p>
                                                     </td>
                                                     <td className="px-4 py-3">
                                                         <Badge variant="gray">{doc.category.replace(/_/g, ' ')}</Badge>
                                                     </td>
-                                                    <td className="px-4 py-3 text-sm text-gray-600">
+                                                    <td className="px-4 py-3 text-sm text-warm-600">
                                                         {formatSize(doc.upload.size)}
                                                     </td>
                                                     <td className="px-4 py-3">
@@ -451,7 +451,7 @@ export default function MyProfilePage() {
                                                     <td className="px-4 py-3 text-right">
                                                         <button
                                                             onClick={() => handleDownload(doc)}
-                                                            className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                                                            className="p-2 text-warm-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
                                                         >
                                                             <Download className="w-4 h-4" />
                                                         </button>
@@ -479,9 +479,9 @@ export default function MyProfilePage() {
                         {changeRequests.length === 0 ? (
                             <Card>
                                 <CardContent className="py-16 text-center">
-                                    <Send className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                                    <h3 className="text-lg font-semibold text-gray-900 mb-2">No Change Requests</h3>
-                                    <p className="text-gray-600">You haven&apos;t submitted any profile change requests yet.</p>
+                                    <Send className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+                                    <h3 className="text-lg font-semibold text-warm-900 mb-2">No Change Requests</h3>
+                                    <p className="text-warm-600">You haven&apos;t submitted any profile change requests yet.</p>
                                 </CardContent>
                             </Card>
                         ) : (
@@ -493,17 +493,17 @@ export default function MyProfilePage() {
                                                 <div className="flex items-start gap-3">
                                                     {statusIcon(req.status)}
                                                     <div>
-                                                        <p className="text-sm font-medium text-gray-900">
+                                                        <p className="text-sm font-medium text-warm-900">
                                                             Change <span className="text-primary-600">{req.fieldName}</span>
                                                         </p>
-                                                        <p className="text-xs text-gray-500 mt-1">
+                                                        <p className="text-xs text-warm-500 mt-1">
                                                             {req.oldValue || '(empty)'} → <span className="font-medium">{req.newValue}</span>
                                                         </p>
                                                         {req.reason && (
-                                                            <p className="text-xs text-gray-400 mt-1">Reason: {req.reason}</p>
+                                                            <p className="text-xs text-warm-400 mt-1">Reason: {req.reason}</p>
                                                         )}
                                                         {req.reviewNote && (
-                                                            <p className="text-xs text-gray-500 mt-1 italic">Review: {req.reviewNote}</p>
+                                                            <p className="text-xs text-warm-500 mt-1 italic">Review: {req.reviewNote}</p>
                                                         )}
                                                     </div>
                                                 </div>
@@ -514,7 +514,7 @@ export default function MyProfilePage() {
                                                     }>
                                                         {req.status}
                                                     </Badge>
-                                                    <p className="text-xs text-gray-400 mt-1">
+                                                    <p className="text-xs text-warm-400 mt-1">
                                                         {new Date(req.createdAt).toLocaleDateString()}
                                                     </p>
                                                 </div>
@@ -537,21 +537,21 @@ export default function MyProfilePage() {
             >
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Document Name *</label>
+                        <label className="block text-sm font-medium text-warm-700 mb-1">Document Name *</label>
                         <input
                             type="text"
                             value={uploadForm.name}
                             onChange={(e) => setUploadForm({ ...uploadForm, name: e.target.value })}
                             placeholder="e.g., Aadhaar Card"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                        <label className="block text-sm font-medium text-warm-700 mb-1">Category</label>
                         <select
                             value={uploadForm.category}
                             onChange={(e) => setUploadForm({ ...uploadForm, category: e.target.value })}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         >
                             {categoryOptions.map((opt) => (
                                 <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -559,31 +559,31 @@ export default function MyProfilePage() {
                         </select>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">File *</label>
+                        <label className="block text-sm font-medium text-warm-700 mb-1">File *</label>
                         <input
                             type="file"
                             onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         />
-                        <p className="text-xs text-gray-500 mt-1">Max file size: 10MB</p>
+                        <p className="text-xs text-warm-500 mt-1">Max file size: 10MB</p>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Document Date</label>
+                            <label className="block text-sm font-medium text-warm-700 mb-1">Document Date</label>
                             <input
                                 type="date"
                                 value={uploadForm.documentDate}
                                 onChange={(e) => setUploadForm({ ...uploadForm, documentDate: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Expiry Date</label>
+                            <label className="block text-sm font-medium text-warm-700 mb-1">Expiry Date</label>
                             <input
                                 type="date"
                                 value={uploadForm.expiryDate}
                                 onChange={(e) => setUploadForm({ ...uploadForm, expiryDate: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                     </div>
@@ -605,11 +605,11 @@ export default function MyProfilePage() {
             >
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Field to Change *</label>
+                        <label className="block text-sm font-medium text-warm-700 mb-1">Field to Change *</label>
                         <select
                             value={changeForm.fieldName}
                             onChange={(e) => setChangeForm({ ...changeForm, fieldName: e.target.value })}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         >
                             {editableFields.map((f) => (
                                 <option key={f.value} value={f.value}>{f.label}</option>
@@ -617,31 +617,31 @@ export default function MyProfilePage() {
                         </select>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-medium text-warm-700 mb-1">
                             Current Value
                         </label>
-                        <p className="text-sm text-gray-600 bg-gray-50 px-3 py-2 rounded-lg">
+                        <p className="text-sm text-warm-600 bg-warm-50 px-3 py-2 rounded-lg">
                             {String((profile as unknown as Record<string, unknown>)?.[changeForm.fieldName] ?? '(empty)')}
                         </p>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">New Value *</label>
+                        <label className="block text-sm font-medium text-warm-700 mb-1">New Value *</label>
                         <input
                             type="text"
                             value={changeForm.newValue}
                             onChange={(e) => setChangeForm({ ...changeForm, newValue: e.target.value })}
                             placeholder="Enter new value"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Reason</label>
+                        <label className="block text-sm font-medium text-warm-700 mb-1">Reason</label>
                         <textarea
                             value={changeForm.reason}
                             onChange={(e) => setChangeForm({ ...changeForm, reason: e.target.value })}
                             placeholder="Why do you need this change?"
                             rows={2}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
                         />
                     </div>
                 </div>

@@ -20,6 +20,7 @@ import {
     Calculator,
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
 
 const monthNames = [
     '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -36,6 +37,7 @@ const statusColors: Record<PayrollRunStatus, string> = {
 
 export default function PayrollPage() {
     const router = useRouter();
+    const { isSuperAdmin } = useAuth();
     const [runs, setRuns] = useState<PayrollRun[]>([]);
     const [loading, setLoading] = useState(true);
     const [showCreate, setShowCreate] = useState(false);
@@ -110,8 +112,12 @@ export default function PayrollPage() {
         }
     };
 
-    const handleDelete = async (id: string) => {
-        if (!confirm('Delete this payroll run?')) return;
+    const handleDelete = async (id: string, status: PayrollRunStatus) => {
+        const isDraft = status === PayrollRunStatus.DRAFT;
+        const message = isDraft
+            ? 'Delete this payroll run?'
+            : `WARNING: This will permanently delete a ${status} payroll run and all its payslips. This action cannot be undone. Proceed?`;
+        if (!confirm(message)) return;
         try {
             await payrollApi.deleteRun(id);
             toast.success('Run deleted');
@@ -140,13 +146,13 @@ export default function PayrollPage() {
         <>
             <div className="space-y-6">
                 {/* Header */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                        <h1 className="text-xl sm:text-2xl font-bold text-warm-900 flex items-center gap-2">
                             <DollarSign className="w-7 h-7 text-primary-600" />
                             Payroll
                         </h1>
-                        <p className="text-gray-600 mt-1">
+                        <p className="text-warm-600 mt-1">
                             Manage payroll runs, process salaries, and generate payslips
                         </p>
                     </div>
@@ -166,23 +172,23 @@ export default function PayrollPage() {
                 </div>
 
                 {/* Stats */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                     <Card>
                         <CardContent className="py-4">
-                            <p className="text-sm text-gray-500">Total Runs</p>
-                            <p className="text-2xl font-bold text-gray-900">{runs.length}</p>
+                            <p className="text-sm text-warm-500">Total Runs</p>
+                            <p className="text-2xl font-bold text-warm-900">{runs.length}</p>
                         </CardContent>
                     </Card>
                     <Card>
                         <CardContent className="py-4">
-                            <p className="text-sm text-gray-500">Pending Actions</p>
+                            <p className="text-sm text-warm-500">Pending Actions</p>
                             <p className="text-2xl font-bold text-orange-600">{pendingRuns}</p>
                         </CardContent>
                     </Card>
                     <Card>
                         <CardContent className="py-4">
-                            <p className="text-sm text-gray-500">Total Paid Out</p>
-                            <p className="text-2xl font-bold text-green-600">{formatCurrency(totalPaid)}</p>
+                            <p className="text-sm text-warm-500">Total Paid Out</p>
+                            <p className="text-2xl font-bold text-emerald-600">{formatCurrency(totalPaid)}</p>
                         </CardContent>
                     </Card>
                 </div>
@@ -192,7 +198,7 @@ export default function PayrollPage() {
                     <select
                         value={filterYear}
                         onChange={(e) => setFilterYear(e.target.value)}
-                        className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
+                        className="px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
                     >
                         <option value="">All Years</option>
                         {[0, 1, 2].map((offset) => {
@@ -212,11 +218,11 @@ export default function PayrollPage() {
                 ) : runs.length === 0 ? (
                     <Card>
                         <CardContent className="py-16 text-center">
-                            <DollarSign className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                            <DollarSign className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+                            <h3 className="text-lg font-semibold text-warm-900 mb-2">
                                 No Payroll Runs
                             </h3>
-                            <p className="text-gray-600">
+                            <p className="text-warm-600">
                                 Create your first payroll run to get started.
                             </p>
                         </CardContent>
@@ -226,25 +232,25 @@ export default function PayrollPage() {
                         <div className="overflow-x-auto">
                             <table className="w-full">
                                 <thead>
-                                    <tr className="border-b border-gray-200 bg-gray-50">
-                                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Period</th>
-                                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Status</th>
-                                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Employees</th>
-                                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Gross</th>
-                                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Deductions</th>
-                                        <th className="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">Net Pay</th>
-                                        <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Actions</th>
+                                    <tr className="border-b border-warm-200 bg-warm-50">
+                                        <th className="px-4 py-3 text-left text-xs font-semibold text-warm-600 uppercase">Period</th>
+                                        <th className="px-4 py-3 text-left text-xs font-semibold text-warm-600 uppercase">Status</th>
+                                        <th className="px-4 py-3 text-right text-xs font-semibold text-warm-600 uppercase">Employees</th>
+                                        <th className="px-4 py-3 text-right text-xs font-semibold text-warm-600 uppercase">Gross</th>
+                                        <th className="px-4 py-3 text-right text-xs font-semibold text-warm-600 uppercase">Deductions</th>
+                                        <th className="px-4 py-3 text-right text-xs font-semibold text-warm-600 uppercase">Net Pay</th>
+                                        <th className="px-4 py-3 text-center text-xs font-semibold text-warm-600 uppercase">Actions</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-gray-100">
+                                <tbody className="divide-y divide-warm-100">
                                     {runs.map((run) => (
-                                        <tr key={run.id} className="hover:bg-gray-50">
+                                        <tr key={run.id} className="hover:bg-warm-50">
                                             <td className="px-4 py-3">
-                                                <p className="font-medium text-gray-900">
+                                                <p className="font-medium text-warm-900">
                                                     {monthNames[run.month]} {run.year}
                                                 </p>
                                                 {run.remarks && (
-                                                    <p className="text-xs text-gray-500">{run.remarks}</p>
+                                                    <p className="text-xs text-warm-500">{run.remarks}</p>
                                                 )}
                                             </td>
                                             <td className="px-4 py-3">
@@ -261,41 +267,41 @@ export default function PayrollPage() {
                                             <td className="px-4 py-3 text-right text-sm text-red-600">
                                                 {formatCurrency(Number(run.totalDeductions))}
                                             </td>
-                                            <td className="px-4 py-3 text-right text-sm font-bold text-green-700">
+                                            <td className="px-4 py-3 text-right text-sm font-bold text-emerald-700">
                                                 {formatCurrency(Number(run.totalNet))}
                                             </td>
                                             <td className="px-4 py-3">
                                                 <div className="flex items-center justify-center gap-1">
                                                     <button
                                                         onClick={() => router.push(`/payroll/runs/${run.id}`)}
-                                                        className="p-1.5 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
+                                                        className="p-1.5 text-warm-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-colors"
                                                         title="View payslips"
                                                     >
                                                         <Eye className="w-4 h-4" />
                                                     </button>
                                                     {run.status === PayrollRunStatus.DRAFT && (
-                                                        <>
-                                                            <button
-                                                                onClick={() => handleProcess(run.id)}
-                                                                disabled={processing === run.id}
-                                                                className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50"
-                                                                title="Process payroll"
-                                                            >
-                                                                <Play className="w-4 h-4" />
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleDelete(run.id)}
-                                                                className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                                                title="Delete"
-                                                            >
-                                                                <Trash2 className="w-4 h-4" />
-                                                            </button>
-                                                        </>
+                                                        <button
+                                                            onClick={() => handleProcess(run.id)}
+                                                            disabled={processing === run.id}
+                                                            className="p-1.5 text-warm-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50"
+                                                            title="Process payroll"
+                                                        >
+                                                            <Play className="w-4 h-4" />
+                                                        </button>
+                                                    )}
+                                                    {(run.status === PayrollRunStatus.DRAFT || isSuperAdmin) && (
+                                                        <button
+                                                            onClick={() => handleDelete(run.id, run.status)}
+                                                            className="p-1.5 text-warm-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                            title={isSuperAdmin && run.status !== PayrollRunStatus.DRAFT ? 'Force delete (superadmin)' : 'Delete'}
+                                                        >
+                                                            <Trash2 className="w-4 h-4" />
+                                                        </button>
                                                     )}
                                                     {run.status === PayrollRunStatus.COMPUTED && (
                                                         <button
                                                             onClick={() => handleApprove(run.id)}
-                                                            className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                                                            className="p-1.5 text-warm-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
                                                             title="Approve"
                                                         >
                                                             <CheckCircle className="w-4 h-4" />
@@ -304,7 +310,7 @@ export default function PayrollPage() {
                                                     {run.status === PayrollRunStatus.APPROVED && (
                                                         <button
                                                             onClick={() => handleMarkPaid(run.id)}
-                                                            className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                                                            className="p-1.5 text-warm-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
                                                             title="Mark as paid"
                                                         >
                                                             <CreditCard className="w-4 h-4" />
@@ -325,11 +331,11 @@ export default function PayrollPage() {
             <Modal isOpen={showCreate} onClose={() => setShowCreate(false)} title="Create Payroll Run">
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Month</label>
+                        <label className="block text-sm font-medium text-warm-700 mb-1">Month</label>
                         <select
                             value={newMonth}
                             onChange={(e) => setNewMonth(parseInt(e.target.value))}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
                         >
                             {monthNames.slice(1).map((name, i) => (
                                 <option key={i + 1} value={i + 1}>{name}</option>
@@ -337,11 +343,11 @@ export default function PayrollPage() {
                         </select>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Year</label>
+                        <label className="block text-sm font-medium text-warm-700 mb-1">Year</label>
                         <select
                             value={newYear}
                             onChange={(e) => setNewYear(parseInt(e.target.value))}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
                         >
                             {[0, 1].map((offset) => {
                                 const y = new Date().getFullYear() - offset;

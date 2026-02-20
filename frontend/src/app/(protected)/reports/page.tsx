@@ -126,7 +126,7 @@ export default function ReportsPage() {
         <select
             value={value}
             onChange={(e) => onChange(e.target.value as ReportFormat)}
-            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
+            className="px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
         >
             <option value={ReportFormat.XLSX}>Excel (.xlsx)</option>
             <option value={ReportFormat.CSV}>CSV (.csv)</option>
@@ -137,7 +137,7 @@ export default function ReportsPage() {
         <select
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
+            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
         >
             <option value="">All Departments</option>
             {departments.map((d) => (
@@ -153,11 +153,11 @@ export default function ReportsPage() {
             <div className="space-y-6">
                 {/* Header */}
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                    <h1 className="text-xl sm:text-2xl font-bold text-warm-900 flex items-center gap-2">
                         <FileSpreadsheet className="w-7 h-7 text-primary-600" />
                         Reports & Export
                     </h1>
-                    <p className="text-gray-600 mt-1">
+                    <p className="text-warm-600 mt-1">
                         Generate and download reports in Excel or CSV format
                     </p>
                 </div>
@@ -171,10 +171,10 @@ export default function ReportsPage() {
                                     <Clock className="w-5 h-5 text-blue-600" />
                                 </div>
                                 <div>
-                                    <h3 className="font-semibold text-gray-900">
+                                    <h3 className="font-semibold text-warm-900">
                                         Attendance Report
                                     </h3>
-                                    <p className="text-xs text-gray-500">
+                                    <p className="text-xs text-warm-500">
                                         Clock-in/out, hours, OT data
                                     </p>
                                 </div>
@@ -183,30 +183,30 @@ export default function ReportsPage() {
                             <div className="space-y-3">
                                 <div className="grid grid-cols-2 gap-3">
                                     <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        <label className="block text-xs font-medium text-warm-600 mb-1">
                                             From
                                         </label>
                                         <input
                                             type="date"
                                             value={attFrom}
                                             onChange={(e) => setAttFrom(e.target.value)}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
+                                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        <label className="block text-xs font-medium text-warm-600 mb-1">
                                             To
                                         </label>
                                         <input
                                             type="date"
                                             value={attTo}
                                             onChange={(e) => setAttTo(e.target.value)}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
+                                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
                                         />
                                     </div>
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                    <label className="block text-xs font-medium text-warm-600 mb-1">
                                         Department
                                     </label>
                                     {deptSelect(attDeptId, setAttDeptId)}
@@ -231,14 +231,14 @@ export default function ReportsPage() {
                     <Card>
                         <CardContent className="py-5">
                             <div className="flex items-center gap-3 mb-4">
-                                <div className="w-10 h-10 rounded-lg bg-green-100 flex items-center justify-center">
-                                    <Calendar className="w-5 h-5 text-green-600" />
+                                <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center">
+                                    <Calendar className="w-5 h-5 text-emerald-600" />
                                 </div>
                                 <div>
-                                    <h3 className="font-semibold text-gray-900">
+                                    <h3 className="font-semibold text-warm-900">
                                         Leave Report
                                     </h3>
-                                    <p className="text-xs text-gray-500">
+                                    <p className="text-xs text-warm-500">
                                         Balances, usage by type
                                     </p>
                                 </div>
@@ -246,13 +246,13 @@ export default function ReportsPage() {
 
                             <div className="space-y-3">
                                 <div>
-                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                    <label className="block text-xs font-medium text-warm-600 mb-1">
                                         Year
                                     </label>
                                     <select
                                         value={leaveYear}
                                         onChange={(e) => setLeaveYear(e.target.value)}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
+                                        className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
                                     >
                                         {[0, 1, 2].map((offset) => {
                                             const y = new Date().getFullYear() - offset;
@@ -265,7 +265,7 @@ export default function ReportsPage() {
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                    <label className="block text-xs font-medium text-warm-600 mb-1">
                                         Department
                                     </label>
                                     {deptSelect(leaveDeptId, setLeaveDeptId)}
@@ -293,10 +293,10 @@ export default function ReportsPage() {
                                     <Users className="w-5 h-5 text-purple-600" />
                                 </div>
                                 <div>
-                                    <h3 className="font-semibold text-gray-900">
+                                    <h3 className="font-semibold text-warm-900">
                                         Employee Report
                                     </h3>
-                                    <p className="text-xs text-gray-500">
+                                    <p className="text-xs text-warm-500">
                                         Headcount, demographics
                                     </p>
                                 </div>
@@ -304,20 +304,20 @@ export default function ReportsPage() {
 
                             <div className="space-y-3">
                                 <div>
-                                    <label className="block text-xs font-medium text-gray-600 mb-1">
+                                    <label className="block text-xs font-medium text-warm-600 mb-1">
                                         Department
                                     </label>
                                     {deptSelect(empDeptId, setEmpDeptId)}
                                 </div>
                                 <div className="grid grid-cols-2 gap-3">
                                     <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        <label className="block text-xs font-medium text-warm-600 mb-1">
                                             Status
                                         </label>
                                         <select
                                             value={empStatus}
                                             onChange={(e) => setEmpStatus(e.target.value)}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
+                                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
                                         >
                                             <option value="">All</option>
                                             <option value="ACTIVE">Active</option>
@@ -325,13 +325,13 @@ export default function ReportsPage() {
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                                        <label className="block text-xs font-medium text-warm-600 mb-1">
                                             Type
                                         </label>
                                         <select
                                             value={empType}
                                             onChange={(e) => setEmpType(e.target.value)}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
+                                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm"
                                         >
                                             <option value="">All</option>
                                             <option value="PERMANENT">Permanent</option>

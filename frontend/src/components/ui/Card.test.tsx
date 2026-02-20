@@ -15,7 +15,7 @@ describe('Card', () => {
 
   it('applies padding classes', () => {
     const { container } = render(<Card padding="lg">Content</Card>);
-    expect(container.firstChild).toHaveClass('p-6');
+    expect(container.firstChild).toHaveClass('p-4');
   });
 
   it('applies no padding when none', () => {

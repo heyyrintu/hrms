@@ -163,11 +163,11 @@ export default function LeaveBalancesAdminPage() {
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                        <h1 className="text-2xl font-bold text-warm-900 flex items-center gap-2">
                             <Users className="w-7 h-7 text-primary-600" />
                             Leave Balances Management
                         </h1>
-                        <p className="text-gray-600 mt-1">
+                        <p className="text-warm-600 mt-1">
                             View and manage employee leave balances
                         </p>
                     </div>
@@ -186,21 +186,21 @@ export default function LeaveBalancesAdminPage() {
                 {/* Filters */}
                 <div className="flex flex-col sm:flex-row gap-4">
                     <div className="relative flex-1">
-                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-warm-400" />
                         <input
                             type="text"
                             placeholder="Search by employee name or code..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                            className="w-full pl-10 pr-4 py-2.5 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                         />
                     </div>
                     <div className="flex items-center gap-2">
-                        <Calendar className="w-4 h-4 text-gray-400" />
+                        <Calendar className="w-4 h-4 text-warm-400" />
                         <select
                             value={selectedYear}
                             onChange={(e) => setSelectedYear(parseInt(e.target.value))}
-                            className="border border-gray-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                            className="border border-warm-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                         >
                             {years.map(year => (
                                 <option key={year} value={year}>{year}</option>
@@ -217,19 +217,19 @@ export default function LeaveBalancesAdminPage() {
                                 <Users className="w-6 h-6 text-blue-600" />
                             </div>
                             <div>
-                                <div className="text-2xl font-bold text-gray-900">{groupedBalances.length}</div>
-                                <div className="text-sm text-gray-500">Employees with Balances</div>
+                                <div className="text-2xl font-bold text-warm-900">{groupedBalances.length}</div>
+                                <div className="text-sm text-warm-500">Employees with Balances</div>
                             </div>
                         </CardContent>
                     </Card>
                     <Card>
                         <CardContent className="flex items-center gap-4">
-                            <div className="p-3 bg-green-100 rounded-lg">
-                                <Calendar className="w-6 h-6 text-green-600" />
+                            <div className="p-3 bg-emerald-100 rounded-lg">
+                                <Calendar className="w-6 h-6 text-emerald-600" />
                             </div>
                             <div>
-                                <div className="text-2xl font-bold text-gray-900">{leaveTypes.length}</div>
-                                <div className="text-sm text-gray-500">Leave Types</div>
+                                <div className="text-2xl font-bold text-warm-900">{leaveTypes.length}</div>
+                                <div className="text-sm text-warm-500">Leave Types</div>
                             </div>
                         </CardContent>
                     </Card>
@@ -239,8 +239,8 @@ export default function LeaveBalancesAdminPage() {
                                 <Filter className="w-6 h-6 text-purple-600" />
                             </div>
                             <div>
-                                <div className="text-2xl font-bold text-gray-900">{selectedYear}</div>
-                                <div className="text-sm text-gray-500">Selected Year</div>
+                                <div className="text-2xl font-bold text-warm-900">{selectedYear}</div>
+                                <div className="text-sm text-warm-500">Selected Year</div>
                             </div>
                         </CardContent>
                     </Card>
@@ -254,11 +254,11 @@ export default function LeaveBalancesAdminPage() {
                 ) : filteredGroups.length === 0 ? (
                     <Card>
                         <CardContent className="py-16 text-center">
-                            <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                            <Users className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+                            <h3 className="text-lg font-semibold text-warm-900 mb-2">
                                 {balances.length === 0 ? 'No Balances Found' : 'No Matching Results'}
                             </h3>
-                            <p className="text-gray-600 mb-4">
+                            <p className="text-warm-600 mb-4">
                                 {balances.length === 0
                                     ? 'Initialize balances to set up employee leave allocations.'
                                     : 'Try adjusting your search criteria.'}
@@ -274,32 +274,32 @@ export default function LeaveBalancesAdminPage() {
                 ) : (
                     <Card padding="none">
                         <div className="overflow-x-auto">
-                            <table className="min-w-full divide-y divide-gray-200">
-                                <thead className="bg-gray-50">
+                            <table className="min-w-full divide-y divide-warm-200">
+                                <thead className="bg-warm-50">
                                     <tr>
-                                        <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                                        <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-warm-500">
                                             Employee
                                         </th>
                                         {leaveTypes.map(type => (
-                                            <th key={type.id} className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500">
+                                            <th key={type.id} className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-warm-500">
                                                 {type.code}
                                             </th>
                                         ))}
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-gray-100 bg-white">
+                                <tbody className="divide-y divide-warm-100 bg-white">
                                     {filteredGroups.map((group) => (
-                                        <tr key={group.employee.id} className="hover:bg-gray-50">
+                                        <tr key={group.employee.id} className="hover:bg-warm-50">
                                             <td className="px-6 py-4 whitespace-nowrap">
                                                 <div className="flex items-center">
                                                     <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center text-primary-600 font-semibold">
                                                         {group.employee.firstName.charAt(0)}{group.employee.lastName.charAt(0)}
                                                     </div>
                                                     <div className="ml-3">
-                                                        <div className="font-medium text-gray-900">
+                                                        <div className="font-medium text-warm-900">
                                                             {group.employee.firstName} {group.employee.lastName}
                                                         </div>
-                                                        <div className="text-sm text-gray-500">
+                                                        <div className="text-sm text-warm-500">
                                                             {group.employee.employeeCode}
                                                             {group.employee.department && ` • ${group.employee.department.name}`}
                                                         </div>
@@ -310,7 +310,7 @@ export default function LeaveBalancesAdminPage() {
                                                 const balance = group.balances.find(b => b.leaveType.id === type.id);
                                                 if (!balance) {
                                                     return (
-                                                        <td key={type.id} className="px-4 py-4 text-center text-gray-400">
+                                                        <td key={type.id} className="px-4 py-4 text-center text-warm-400">
                                                             —
                                                         </td>
                                                     );
@@ -322,17 +322,17 @@ export default function LeaveBalancesAdminPage() {
                                                             <div className="text-center">
                                                                 <div className={cn(
                                                                     'text-lg font-bold',
-                                                                    available > 0 ? 'text-green-600' : 'text-red-600'
+                                                                    available > 0 ? 'text-emerald-600' : 'text-red-600'
                                                                 )}>
                                                                     {available}
                                                                 </div>
-                                                                <div className="text-xs text-gray-500">
+                                                                <div className="text-xs text-warm-500">
                                                                     of {balance.totalDays + balance.carriedOver}
                                                                 </div>
                                                             </div>
                                                             <button
                                                                 onClick={() => openEditModal(balance)}
-                                                                className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded"
+                                                                className="p-1 text-warm-400 hover:text-warm-600 hover:bg-warm-100 rounded"
                                                             >
                                                                 <Edit2 className="w-3 h-3" />
                                                             </button>
@@ -357,18 +357,18 @@ export default function LeaveBalancesAdminPage() {
                 size="md"
             >
                 <div className="space-y-4">
-                    <p className="text-gray-600">
+                    <p className="text-warm-600">
                         This will create leave balance entries for all active employees based on
                         the default days configured for each leave type.
                     </p>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-medium text-warm-700 mb-1">
                             Year
                         </label>
                         <select
                             value={initYear}
                             onChange={(e) => setInitYear(parseInt(e.target.value))}
-                            className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-primary-500"
+                            className="w-full border border-warm-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-primary-500"
                         >
                             {years.map(year => (
                                 <option key={year} value={year}>{year}</option>
@@ -399,18 +399,18 @@ export default function LeaveBalancesAdminPage() {
             >
                 {editingBalance && (
                     <div className="space-y-4">
-                        <div className="p-4 bg-gray-50 rounded-lg">
-                            <div className="font-medium text-gray-900">
+                        <div className="p-4 bg-warm-50 rounded-lg">
+                            <div className="font-medium text-warm-900">
                                 {editingBalance.employee.firstName} {editingBalance.employee.lastName}
                             </div>
-                            <div className="text-sm text-gray-500">
+                            <div className="text-sm text-warm-500">
                                 {editingBalance.leaveType.name} ({editingBalance.leaveType.code}) • {selectedYear}
                             </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                <label className="block text-sm font-medium text-warm-700 mb-1">
                                     Total Days
                                 </label>
                                 <input
@@ -419,11 +419,11 @@ export default function LeaveBalancesAdminPage() {
                                     onChange={(e) => setEditFormData({ ...editFormData, totalDays: parseFloat(e.target.value) || 0 })}
                                     min={0}
                                     step={0.5}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                    className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                <label className="block text-sm font-medium text-warm-700 mb-1">
                                     Carried Over
                                 </label>
                                 <input
@@ -432,14 +432,14 @@ export default function LeaveBalancesAdminPage() {
                                     onChange={(e) => setEditFormData({ ...editFormData, carriedOver: parseFloat(e.target.value) || 0 })}
                                     min={0}
                                     step={0.5}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                    className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                                 />
                             </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                <label className="block text-sm font-medium text-warm-700 mb-1">
                                     Used Days
                                 </label>
                                 <input
@@ -448,11 +448,11 @@ export default function LeaveBalancesAdminPage() {
                                     onChange={(e) => setEditFormData({ ...editFormData, usedDays: parseFloat(e.target.value) || 0 })}
                                     min={0}
                                     step={0.5}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                    className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                <label className="block text-sm font-medium text-warm-700 mb-1">
                                     Pending Days
                                 </label>
                                 <input
@@ -461,7 +461,7 @@ export default function LeaveBalancesAdminPage() {
                                     onChange={(e) => setEditFormData({ ...editFormData, pendingDays: parseFloat(e.target.value) || 0 })}
                                     min={0}
                                     step={0.5}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                    className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                                 />
                             </div>
                         </div>

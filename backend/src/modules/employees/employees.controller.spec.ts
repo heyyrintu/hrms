@@ -10,6 +10,7 @@ const mockEmployeesService = {
   findOne: jest.fn(),
   get360View: jest.fn(),
   getDirectReports: jest.fn(),
+  getOrgChart: jest.fn(),
   update: jest.fn(),
   remove: jest.fn(),
 };
@@ -144,6 +145,18 @@ describe('EmployeesController', () => {
 
       expect(service.remove).toHaveBeenCalledWith('tenant-1', 'emp-1');
       expect(result).toEqual(mockResult);
+    });
+  });
+
+  describe('getOrgChart', () => {
+    it('should call employeesService.getOrgChart with tenantId', async () => {
+      const tree = [{ id: 'ceo', name: 'Alice', children: [] }];
+      service.getOrgChart.mockResolvedValue(tree);
+
+      const result = await controller.getOrgChart(adminUser);
+
+      expect(service.getOrgChart).toHaveBeenCalledWith('tenant-1');
+      expect(result).toEqual(tree);
     });
   });
 });

@@ -14,26 +14,42 @@ export interface EmailOptions {
   text?: string;
 }
 
+type Transport = 'graph' | 'smtp' | 'console';
+
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
-  private transporter: nodemailer.Transporter | null = null;
-  private readonly from: string;
+  private smtpTransporter: nodemailer.Transporter | null = null;
+  private graphClient: any = null;
+  private readonly senderEmail: string;
   private readonly templatesDir: string;
-  private readonly isEnabled: boolean;
+  private readonly transport: Transport;
 
   constructor(private configService: ConfigService) {
-    const host = this.configService.get<string>('SMTP_HOST');
-    this.from = this.configService.get<string>(
+    this.templatesDir = path.join(__dirname, 'templates');
+
+    const graphTenantId = this.configService.get<string>('MS_GRAPH_TENANT_ID');
+    const graphClientId = this.configService.get<string>('MS_GRAPH_CLIENT_ID');
+    const graphClientSecret = this.configService.get<string>('MS_GRAPH_CLIENT_SECRET');
+    const graphSender = this.configService.get<string>('MS_GRAPH_SENDER_EMAIL');
+
+    if (graphTenantId && graphClientId && graphClientSecret && graphSender) {
+      this.senderEmail = graphSender;
+      this.transport = 'graph';
+      this.initGraphClient(graphTenantId, graphClientId, graphClientSecret);
+      return;
+    }
+
+    const smtpHost = this.configService.get<string>('SMTP_HOST');
+    this.senderEmail = this.configService.get<string>(
       'SMTP_FROM',
       'HRMS <noreply@hrms.local>',
     );
-    this.templatesDir = path.join(__dirname, 'templates');
-    this.isEnabled = !!host;
 
-    if (this.isEnabled) {
-      this.transporter = nodemailer.createTransport({
-        host,
+    if (smtpHost) {
+      this.transport = 'smtp';
+      this.smtpTransporter = nodemailer.createTransport({
+        host: smtpHost,
         port: this.configService.get<number>('SMTP_PORT', 587),
         secure: this.configService.get<number>('SMTP_PORT', 587) === 465,
         auth: {
@@ -42,10 +58,50 @@ export class EmailService {
         },
       });
       this.logger.log('Email service initialized with SMTP');
-    } else {
-      this.logger.warn(
-        'Email service disabled: SMTP_HOST not configured. Emails will be logged only.',
+      return;
+    }
+
+    this.transport = 'console';
+    this.logger.warn(
+      'Email service: no transport configured. Emails will be logged only.',
+    );
+  }
+
+  private async initGraphClient(
+    tenantId: string,
+    clientId: string,
+    clientSecret: string,
+  ) {
+    try {
+      const { ClientSecretCredential } = await import('@azure/identity');
+      const { Client } = await import('@microsoft/microsoft-graph-client');
+      const {
+        TokenCredentialAuthenticationProvider,
+      } = await import(
+        '@microsoft/microsoft-graph-client/authProviders/azureTokenCredentials'
       );
+
+      const credential = new ClientSecretCredential(
+        tenantId,
+        clientId,
+        clientSecret,
+      );
+
+      const authProvider = new TokenCredentialAuthenticationProvider(
+        credential,
+        { scopes: ['https://graph.microsoft.com/.default'] },
+      );
+
+      this.graphClient = Client.initWithMiddleware({ authProvider });
+      this.logger.log(
+        `Email service initialized with Microsoft Graph (sender: ${this.senderEmail})`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Failed to initialize Microsoft Graph client: ${error instanceof Error ? error.message : error}`,
+      );
+      this.logger.warn('Falling back to console-only email logging');
+      (this as any).transport = 'console';
     }
   }
 
@@ -56,30 +112,96 @@ export class EmailService {
       html = this.renderTemplate(options.template, options.context || {});
     }
 
-    if (!this.isEnabled || !this.transporter) {
+    const recipients = Array.isArray(options.to) ? options.to : [options.to];
+
+    switch (this.transport) {
+      case 'graph':
+        await this.sendViaGraph(recipients, options.subject, html, options.text);
+        break;
+      case 'smtp':
+        await this.sendViaSmtp(recipients, options.subject, html, options.text);
+        break;
+      default:
+        this.logEmail(recipients, options.subject, html, options.text);
+    }
+  }
+
+  private async sendViaGraph(
+    recipients: string[],
+    subject: string,
+    html: string,
+    text?: string,
+  ): Promise<void> {
+    if (!this.graphClient) {
+      this.logEmail(recipients, subject, html, text);
+      return;
+    }
+
+    const message = {
+      subject,
+      body: {
+        contentType: html ? 'HTML' : 'Text',
+        content: html || text || '',
+      },
+      toRecipients: recipients.map((email) => ({
+        emailAddress: { address: email },
+      })),
+    };
+
+    try {
+      await this.graphClient
+        .api(`/users/${this.senderEmail}/sendMail`)
+        .post({ message, saveToSentItems: false });
+
       this.logger.log(
-        `[Email Preview] To: ${Array.isArray(options.to) ? options.to.join(', ') : options.to} | Subject: ${options.subject}`,
+        `Email sent via Graph to ${recipients.join(', ')}: ${subject}`,
       );
-      this.logger.debug(`[Email Preview] Body: ${html || options.text}`);
+    } catch (error) {
+      this.logger.error(
+        `Graph email failed to ${recipients.join(', ')}: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+  }
+
+  private async sendViaSmtp(
+    recipients: string[],
+    subject: string,
+    html: string,
+    text?: string,
+  ): Promise<void> {
+    if (!this.smtpTransporter) {
+      this.logEmail(recipients, subject, html, text);
       return;
     }
 
     try {
-      await this.transporter.sendMail({
-        from: this.from,
-        to: Array.isArray(options.to) ? options.to.join(', ') : options.to,
-        subject: options.subject,
+      await this.smtpTransporter.sendMail({
+        from: this.senderEmail,
+        to: recipients.join(', '),
+        subject,
         html,
-        text: options.text,
+        text,
       });
       this.logger.log(
-        `Email sent to ${Array.isArray(options.to) ? options.to.join(', ') : options.to}: ${options.subject}`,
+        `Email sent via SMTP to ${recipients.join(', ')}: ${subject}`,
       );
     } catch (error) {
       this.logger.error(
-        `Failed to send email to ${options.to}: ${error instanceof Error ? error.message : error}`,
+        `SMTP email failed to ${recipients.join(', ')}: ${error instanceof Error ? error.message : error}`,
       );
     }
+  }
+
+  private logEmail(
+    recipients: string[],
+    subject: string,
+    html: string,
+    text?: string,
+  ): void {
+    this.logger.log(
+      `[Email Preview] To: ${recipients.join(', ')} | Subject: ${subject}`,
+    );
+    this.logger.debug(`[Email Preview] Body: ${html || text}`);
   }
 
   private renderTemplate(

@@ -166,6 +166,7 @@ export class ReportsService {
       where,
       include: {
         department: { select: { name: true } },
+        designation: { select: { name: true } },
         manager: { select: { firstName: true, lastName: true } },
       },
       orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
@@ -178,7 +179,7 @@ export class ReportsService {
       Email: e.email,
       Phone: e.phone || '—',
       Department: e.department?.name || '—',
-      Designation: e.designation || '—',
+      Designation: e.designation?.name || '—',
       'Employment Type': e.employmentType,
       'Pay Type': e.payType,
       Status: e.status,

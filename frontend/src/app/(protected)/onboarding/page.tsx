@@ -227,11 +227,11 @@ export default function OnboardingPage() {
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                        <h1 className="text-2xl font-bold text-warm-900 flex items-center gap-2">
                             <ClipboardList className="w-7 h-7 text-primary-600" />
                             Onboarding
                         </h1>
-                        <p className="text-gray-600 mt-1">
+                        <p className="text-warm-600 mt-1">
                             Manage employee onboarding and offboarding processes
                         </p>
                     </div>
@@ -257,7 +257,7 @@ export default function OnboardingPage() {
                                 </div>
                                 <div>
                                     <p className="text-2xl font-bold text-blue-600">{stats.total}</p>
-                                    <p className="text-sm text-gray-500">Total Processes</p>
+                                    <p className="text-sm text-warm-500">Total Processes</p>
                                 </div>
                             </div>
                         </CardContent>
@@ -270,7 +270,7 @@ export default function OnboardingPage() {
                                 </div>
                                 <div>
                                     <p className="text-2xl font-bold text-orange-600">{stats.inProgress}</p>
-                                    <p className="text-sm text-gray-500">In Progress</p>
+                                    <p className="text-sm text-warm-500">In Progress</p>
                                 </div>
                             </div>
                         </CardContent>
@@ -278,12 +278,12 @@ export default function OnboardingPage() {
                     <Card>
                         <CardContent className="py-4">
                             <div className="flex items-center gap-3">
-                                <div className="p-2 rounded-lg bg-green-50">
-                                    <CheckCircle2 className="w-5 h-5 text-green-600" />
+                                <div className="p-2 rounded-lg bg-emerald-50">
+                                    <CheckCircle2 className="w-5 h-5 text-emerald-600" />
                                 </div>
                                 <div>
-                                    <p className="text-2xl font-bold text-green-600">{stats.completed}</p>
-                                    <p className="text-sm text-gray-500">Completed</p>
+                                    <p className="text-2xl font-bold text-emerald-600">{stats.completed}</p>
+                                    <p className="text-sm text-warm-500">Completed</p>
                                 </div>
                             </div>
                         </CardContent>
@@ -293,19 +293,19 @@ export default function OnboardingPage() {
                 {/* Filters */}
                 <div className="flex flex-col sm:flex-row gap-3">
                     <div className="relative flex-1">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-warm-400" />
                         <input
                             type="text"
                             placeholder="Search by employee or template..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="w-full pl-10 pr-4 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         />
                     </div>
                     <select
                         value={statusFilter}
                         onChange={(e) => setStatusFilter(e.target.value)}
-                        className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                        className="px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                     >
                         <option value="">All Statuses</option>
                         <option value="NOT_STARTED">Not Started</option>
@@ -323,9 +323,9 @@ export default function OnboardingPage() {
                 ) : filteredProcesses.length === 0 ? (
                     <Card>
                         <CardContent className="py-16 text-center">
-                            <ClipboardList className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                            <h3 className="text-lg font-semibold text-gray-900 mb-2">No Processes</h3>
-                            <p className="text-gray-600">
+                            <ClipboardList className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+                            <h3 className="text-lg font-semibold text-warm-900 mb-2">No Processes</h3>
+                            <p className="text-warm-600">
                                 {searchQuery || statusFilter
                                     ? 'No processes match your filters.'
                                     : 'Start a new onboarding process for an employee.'}
@@ -340,7 +340,7 @@ export default function OnboardingPage() {
                                     <div className="flex items-start justify-between">
                                         <div className="flex-1">
                                             <div className="flex items-center gap-3 mb-1">
-                                                <h3 className="text-base font-semibold text-gray-900">
+                                                <h3 className="text-base font-semibold text-warm-900">
                                                     {process.employee?.firstName} {process.employee?.lastName}
                                                 </h3>
                                                 <Badge variant={statusColors[process.status] as 'success' | 'warning' | 'danger' | 'gray'}>
@@ -350,14 +350,14 @@ export default function OnboardingPage() {
                                                     {process.type}
                                                 </Badge>
                                             </div>
-                                            <div className="flex items-center gap-4 text-sm text-gray-500">
+                                            <div className="flex items-center gap-4 text-sm text-warm-500">
                                                 <span>{process.employee?.designation}</span>
                                                 {process.employee?.department?.name && (
                                                     <span>{process.employee.department.name}</span>
                                                 )}
                                                 <span>Template: {process.template?.name}</span>
                                             </div>
-                                            <div className="flex items-center gap-4 text-xs text-gray-400 mt-1">
+                                            <div className="flex items-center gap-4 text-xs text-warm-400 mt-1">
                                                 <span>Started: {formatDate(process.startDate)}</span>
                                                 {process.targetDate && <span>Target: {formatDate(process.targetDate)}</span>}
                                                 {process.completedAt && <span>Completed: {formatDate(process.completedAt)}</span>}
@@ -366,15 +366,15 @@ export default function OnboardingPage() {
                                             {/* Progress bar */}
                                             {process.status !== 'CANCELLED' && (
                                                 <div className="mt-2">
-                                                    <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                                                    <div className="flex items-center justify-between text-xs text-warm-500 mb-1">
                                                         <span>Progress</span>
                                                         <span>{getProgress(process)}% ({process.completedTaskCount || 0}/{process._count?.tasks || 0} tasks)</span>
                                                     </div>
-                                                    <div className="w-full bg-gray-200 rounded-full h-2">
+                                                    <div className="w-full bg-warm-200 rounded-full h-2">
                                                         <div
                                                             className={cn(
                                                                 'h-2 rounded-full transition-all',
-                                                                getProgress(process) === 100 ? 'bg-green-500' : 'bg-primary-500'
+                                                                getProgress(process) === 100 ? 'bg-emerald-500' : 'bg-primary-500'
                                                             )}
                                                             style={{ width: `${getProgress(process)}%` }}
                                                         />
@@ -425,26 +425,26 @@ export default function OnboardingPage() {
                                             ) : processDetail?.tasks && processDetail.tasks.length > 0 ? (
                                                 <div className="space-y-2">
                                                     {processDetail.tasks.map((task: OnboardingTask) => (
-                                                        <div key={task.id} className="flex items-start gap-3 bg-gray-50 rounded-lg p-3">
+                                                        <div key={task.id} className="flex items-start gap-3 bg-warm-50 rounded-lg p-3">
                                                             <div className={cn(
                                                                 'mt-0.5 w-5 h-5 rounded-full flex items-center justify-center text-white text-xs',
-                                                                task.status === 'COMPLETED' ? 'bg-green-500' :
+                                                                task.status === 'COMPLETED' ? 'bg-emerald-500' :
                                                                 task.status === 'IN_PROGRESS' ? 'bg-orange-500' :
-                                                                task.status === 'SKIPPED' ? 'bg-blue-400' : 'bg-gray-300'
+                                                                task.status === 'SKIPPED' ? 'bg-blue-400' : 'bg-warm-300'
                                                             )}>
                                                                 {task.status === 'COMPLETED' ? '✓' : task.status === 'SKIPPED' ? '—' : task.sortOrder + 1}
                                                             </div>
                                                             <div className="flex-1 min-w-0">
                                                                 <div className="flex items-center gap-2">
-                                                                    <p className="text-sm font-medium text-gray-900">{task.title}</p>
+                                                                    <p className="text-sm font-medium text-warm-900">{task.title}</p>
                                                                     <Badge variant={taskStatusColors[task.status] as 'success' | 'warning' | 'gray' | 'info'}>
                                                                         {task.status.replace('_', ' ')}
                                                                     </Badge>
                                                                 </div>
                                                                 {task.description && (
-                                                                    <p className="text-xs text-gray-500 mt-0.5">{task.description}</p>
+                                                                    <p className="text-xs text-warm-500 mt-0.5">{task.description}</p>
                                                                 )}
-                                                                <div className="flex items-center gap-3 text-xs text-gray-400 mt-1">
+                                                                <div className="flex items-center gap-3 text-xs text-warm-400 mt-1">
                                                                     <span>{task.category.replace('_', ' ')}</span>
                                                                     {task.assignee && (
                                                                         <span>Assignee: {task.assignee.firstName} {task.assignee.lastName}</span>
@@ -456,7 +456,7 @@ export default function OnboardingPage() {
                                                     ))}
                                                 </div>
                                             ) : (
-                                                <p className="text-sm text-gray-500 text-center py-4">No tasks found</p>
+                                                <p className="text-sm text-warm-500 text-center py-4">No tasks found</p>
                                             )}
                                         </div>
                                     )}
@@ -476,11 +476,11 @@ export default function OnboardingPage() {
             >
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Employee *</label>
+                        <label className="block text-sm font-medium text-warm-700 mb-1">Employee *</label>
                         <select
                             value={createForm.employeeId}
                             onChange={(e) => setCreateForm({ ...createForm, employeeId: e.target.value })}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         >
                             <option value="">Select employee...</option>
                             {employees.map((emp) => (
@@ -491,11 +491,11 @@ export default function OnboardingPage() {
                         </select>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Template *</label>
+                        <label className="block text-sm font-medium text-warm-700 mb-1">Template *</label>
                         <select
                             value={createForm.templateId}
                             onChange={(e) => setCreateForm({ ...createForm, templateId: e.target.value })}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         >
                             <option value="">Select template...</option>
                             {templates.map((t) => (
@@ -507,31 +507,31 @@ export default function OnboardingPage() {
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                            <label className="block text-sm font-medium text-warm-700 mb-1">Start Date</label>
                             <input
                                 type="date"
                                 value={createForm.startDate}
                                 onChange={(e) => setCreateForm({ ...createForm, startDate: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Target Date</label>
+                            <label className="block text-sm font-medium text-warm-700 mb-1">Target Date</label>
                             <input
                                 type="date"
                                 value={createForm.targetDate}
                                 onChange={(e) => setCreateForm({ ...createForm, targetDate: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                        <label className="block text-sm font-medium text-warm-700 mb-1">Notes</label>
                         <textarea
                             value={createForm.notes}
                             onChange={(e) => setCreateForm({ ...createForm, notes: e.target.value })}
                             rows={2}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
                             placeholder="Any special notes..."
                         />
                     </div>

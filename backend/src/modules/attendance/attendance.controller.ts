@@ -142,6 +142,20 @@ export class AttendanceController {
   }
 
   /**
+   * Get pending OT approvals
+   * GET /api/attendance/pending-ot-approvals
+   */
+  @Get('pending-ot-approvals')
+  @ApiOperation({ summary: 'Get pending OT approvals' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
+  async getPendingOtApprovals(@CurrentUser() user: AuthenticatedUser) {
+    return this.attendanceService.getPendingOtApprovals(user);
+  }
+
+  /**
    * Get attendance for a specific employee
    * GET /api/attendance/:employeeId
    */
@@ -219,20 +233,6 @@ export class AttendanceController {
     // SUPER_ADMIN and HR_ADMIN can view any employee's payable hours
 
     return this.attendanceService.getPayableHours(user.tenantId, employeeId, query);
-  }
-
-  /**
-   * Get pending OT approvals
-   * GET /api/attendance/pending-ot-approvals
-   */
-  @Get('pending-ot-approvals')
-  @ApiOperation({ summary: 'Get pending OT approvals' })
-  @ApiResponse({ status: 200, description: 'Success' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden' })
-  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
-  async getPendingOtApprovals(@CurrentUser() user: AuthenticatedUser) {
-    return this.attendanceService.getPendingOtApprovals(user);
   }
 
   /**

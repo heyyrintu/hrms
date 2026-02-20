@@ -128,11 +128,11 @@ export default function AccrualRulesPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+          <h1 className="text-2xl font-bold text-warm-900 flex items-center gap-2">
             <Calendar className="w-7 h-7 text-primary-600" />
             Leave Accrual Rules
           </h1>
-          <p className="text-gray-600 mt-1">
+          <p className="text-warm-600 mt-1">
             Configure automatic leave accrual per leave type
           </p>
         </div>
@@ -152,11 +152,11 @@ export default function AccrualRulesPage() {
       <Card padding="none">
         {rules.length === 0 ? (
           <div className="p-12 text-center">
-            <Calendar className="w-16 h-16 mx-auto text-gray-300 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
+            <Calendar className="w-16 h-16 mx-auto text-warm-300 mb-4" />
+            <h3 className="text-lg font-medium text-warm-900 mb-2">
               No Accrual Rules
             </h3>
-            <p className="text-gray-500 mb-4">
+            <p className="text-warm-500 mb-4">
               Create your first accrual rule to enable automatic leave accrual
             </p>
             <Button onClick={openCreateModal}>
@@ -166,34 +166,34 @@ export default function AccrualRulesPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-warm-200">
+              <thead className="bg-warm-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase text-gray-500">
+                  <th className="px-6 py-3 text-left text-xs font-medium uppercase text-warm-500">
                     Leave Type
                   </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-gray-500">
+                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-warm-500">
                     Monthly Accrual
                   </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-gray-500">
+                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-warm-500">
                     Max Cap
                   </th>
-                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-gray-500">
+                  <th className="px-6 py-3 text-center text-xs font-medium uppercase text-warm-500">
                     Apply Cap
                   </th>
-                  <th className="px-6 py-3 text-right text-xs font-medium uppercase text-gray-500">
+                  <th className="px-6 py-3 text-right text-xs font-medium uppercase text-warm-500">
                     Actions
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 bg-white">
+              <tbody className="divide-y divide-warm-100 bg-white">
                 {rules.map((rule) => (
-                  <tr key={rule.id} className="hover:bg-gray-50">
+                  <tr key={rule.id} className="hover:bg-warm-50">
                     <td className="px-6 py-4">
-                      <div className="font-medium text-gray-900">
+                      <div className="font-medium text-warm-900">
                         {rule.leaveType.name}
                       </div>
-                      <div className="text-sm text-gray-500">
+                      <div className="text-sm text-warm-500">
                         {rule.leaveType.code}
                       </div>
                     </td>
@@ -208,14 +208,14 @@ export default function AccrualRulesPage() {
                           {rule.maxBalanceCap} days
                         </span>
                       ) : (
-                        <span className="text-gray-400">No cap</span>
+                        <span className="text-warm-400">No cap</span>
                       )}
                     </td>
                     <td className="px-6 py-4 text-center">
                       {rule.applyCapOnAccrual ? (
-                        <span className="text-green-600">✓ On accrual</span>
+                        <span className="text-emerald-600">✓ On accrual</span>
                       ) : (
-                        <span className="text-gray-500">Year-end</span>
+                        <span className="text-warm-500">Year-end</span>
                       )}
                     </td>
                     <td className="px-6 py-4 text-right space-x-2">
@@ -251,7 +251,7 @@ export default function AccrualRulesPage() {
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-warm-700 mb-1">
               Leave Type *
             </label>
             <select
@@ -259,7 +259,7 @@ export default function AccrualRulesPage() {
               onChange={(e) =>
                 setFormData({ ...formData, leaveTypeId: e.target.value })
               }
-              className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-primary-500"
+              className="w-full border border-warm-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-primary-500"
               required
             >
               <option value="">Select leave type</option>
@@ -272,7 +272,7 @@ export default function AccrualRulesPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-warm-700 mb-1">
               Monthly Accrual Days *
             </label>
             <input
@@ -286,17 +286,17 @@ export default function AccrualRulesPage() {
                   monthlyAccrualDays: Number(e.target.value),
                 })
               }
-              className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-primary-500"
+              className="w-full border border-warm-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-primary-500"
               placeholder="e.g., 2"
               required
             />
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-warm-500 mt-1">
               Days to accrue per month (e.g., 2 for 2 sick leaves/month)
             </p>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label className="block text-sm font-medium text-warm-700 mb-1">
               Maximum Balance Cap (Optional)
             </label>
             <input
@@ -307,10 +307,10 @@ export default function AccrualRulesPage() {
               onChange={(e) =>
                 setFormData({ ...formData, maxBalanceCap: e.target.value })
               }
-              className="w-full border border-gray-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-primary-500"
+              className="w-full border border-warm-300 rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-primary-500"
               placeholder="e.g., 30"
             />
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-warm-500 mt-1">
               Maximum balance allowed (leave blank for no cap)
             </p>
           </div>
@@ -327,7 +327,7 @@ export default function AccrualRulesPage() {
               }
               className="w-4 h-4 text-primary-600 rounded"
             />
-            <label className="text-sm text-gray-700">
+            <label className="text-sm text-warm-700">
               Apply cap during accrual (vs. at year-end)
             </label>
           </div>

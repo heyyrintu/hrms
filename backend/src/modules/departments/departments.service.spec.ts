@@ -248,7 +248,7 @@ describe('DepartmentsService', () => {
               firstName: true,
               lastName: true,
               email: true,
-              designation: true,
+              designationId: true,
               status: true,
             },
           },

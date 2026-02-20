@@ -175,11 +175,11 @@ export default function HolidaysAdminPage() {
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                        <h1 className="text-2xl font-bold text-warm-900 flex items-center gap-2">
                             <CalendarDays className="w-7 h-7 text-primary-600" />
                             Holiday Calendar
                         </h1>
-                        <p className="text-gray-600 mt-1">
+                        <p className="text-warm-600 mt-1">
                             Manage company holidays and observances
                         </p>
                     </div>
@@ -198,19 +198,19 @@ export default function HolidaysAdminPage() {
                 {/* Filters */}
                 <div className="flex flex-col sm:flex-row gap-3">
                     <div className="relative flex-1">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-warm-400" />
                         <input
                             type="text"
                             placeholder="Search holidays..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="w-full pl-10 pr-4 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         />
                     </div>
                     <select
                         value={filterYear}
                         onChange={(e) => setFilterYear(Number(e.target.value))}
-                        className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                        className="px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                     >
                         {[0, 1, 2].map((offset) => {
                             const year = new Date().getFullYear() + offset;
@@ -224,7 +224,7 @@ export default function HolidaysAdminPage() {
                     <select
                         value={filterType}
                         onChange={(e) => setFilterType(e.target.value)}
-                        className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                        className="px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                     >
                         <option value="">All Types</option>
                         {holidayTypeOptions.map((opt) => (
@@ -239,8 +239,8 @@ export default function HolidaysAdminPage() {
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     <Card>
                         <CardContent className="py-4 text-center">
-                            <p className="text-2xl font-bold text-gray-900">{holidays.length}</p>
-                            <p className="text-sm text-gray-500">Total Holidays</p>
+                            <p className="text-2xl font-bold text-warm-900">{holidays.length}</p>
+                            <p className="text-sm text-warm-500">Total Holidays</p>
                         </CardContent>
                     </Card>
                     <Card>
@@ -248,7 +248,7 @@ export default function HolidaysAdminPage() {
                             <p className="text-2xl font-bold text-red-600">
                                 {holidays.filter((h) => h.type === HolidayType.NATIONAL).length}
                             </p>
-                            <p className="text-sm text-gray-500">National</p>
+                            <p className="text-sm text-warm-500">National</p>
                         </CardContent>
                     </Card>
                     <Card>
@@ -256,15 +256,15 @@ export default function HolidaysAdminPage() {
                             <p className="text-2xl font-bold text-blue-600">
                                 {holidays.filter((h) => h.type === HolidayType.COMPANY).length}
                             </p>
-                            <p className="text-sm text-gray-500">Company</p>
+                            <p className="text-sm text-warm-500">Company</p>
                         </CardContent>
                     </Card>
                     <Card>
                         <CardContent className="py-4 text-center">
-                            <p className="text-2xl font-bold text-gray-600">
+                            <p className="text-2xl font-bold text-warm-600">
                                 {holidays.filter((h) => h.isOptional).length}
                             </p>
-                            <p className="text-sm text-gray-500">Optional</p>
+                            <p className="text-sm text-warm-500">Optional</p>
                         </CardContent>
                     </Card>
                 </div>
@@ -277,11 +277,11 @@ export default function HolidaysAdminPage() {
                 ) : filteredHolidays.length === 0 ? (
                     <Card>
                         <CardContent className="py-16 text-center">
-                            <CalendarDays className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                            <CalendarDays className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+                            <h3 className="text-lg font-semibold text-warm-900 mb-2">
                                 No Holidays Found
                             </h3>
-                            <p className="text-gray-600 mb-4">
+                            <p className="text-warm-600 mb-4">
                                 {searchQuery
                                     ? 'No holidays match your search.'
                                     : `No holidays configured for ${filterYear}.`}
@@ -297,30 +297,30 @@ export default function HolidaysAdminPage() {
                         <div className="overflow-x-auto">
                             <table className="w-full">
                                 <thead>
-                                    <tr className="border-b border-gray-200 bg-gray-50">
-                                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">
+                                    <tr className="border-b border-warm-200 bg-warm-50">
+                                        <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">
                                             Date
                                         </th>
-                                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">
+                                        <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">
                                             Holiday
                                         </th>
-                                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">
+                                        <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">
                                             Type
                                         </th>
-                                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">
+                                        <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">
                                             Region
                                         </th>
-                                        <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">
+                                        <th className="text-right px-4 py-3 text-xs font-medium text-warm-500 uppercase">
                                             Actions
                                         </th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-gray-200">
+                                <tbody className="divide-y divide-warm-200">
                                     {filteredHolidays.map((holiday) => (
                                         <tr
                                             key={holiday.id}
                                             className={cn(
-                                                'hover:bg-gray-50 transition-colors',
+                                                'hover:bg-warm-50 transition-colors',
                                                 isPastDate(holiday.date) && 'opacity-60'
                                             )}
                                         >
@@ -329,11 +329,11 @@ export default function HolidaysAdminPage() {
                                             </td>
                                             <td className="px-4 py-3">
                                                 <div>
-                                                    <p className="text-sm font-medium text-gray-900">
+                                                    <p className="text-sm font-medium text-warm-900">
                                                         {holiday.name}
                                                     </p>
                                                     {holiday.description && (
-                                                        <p className="text-xs text-gray-500 mt-0.5">
+                                                        <p className="text-xs text-warm-500 mt-0.5">
                                                             {holiday.description}
                                                         </p>
                                                     )}
@@ -357,19 +357,19 @@ export default function HolidaysAdminPage() {
                                                     </Badge>
                                                 )}
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-500">
+                                            <td className="px-4 py-3 text-sm text-warm-500">
                                                 {holiday.region || '—'}
                                             </td>
                                             <td className="px-4 py-3 text-right whitespace-nowrap">
                                                 <button
                                                     onClick={() => openEditModal(holiday)}
-                                                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                                                    className="p-2 text-warm-400 hover:text-warm-600 hover:bg-warm-100 rounded-lg transition-colors"
                                                 >
                                                     <Edit2 className="w-4 h-4" />
                                                 </button>
                                                 <button
                                                     onClick={() => openDeleteModal(holiday)}
-                                                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                    className="p-2 text-warm-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                                 >
                                                     <Trash2 className="w-4 h-4" />
                                                 </button>
@@ -392,7 +392,7 @@ export default function HolidaysAdminPage() {
             >
                 <div className="space-y-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-medium text-warm-700 mb-1">
                             Holiday Name *
                         </label>
                         <input
@@ -400,13 +400,13 @@ export default function HolidaysAdminPage() {
                             value={formData.name}
                             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                             placeholder="e.g., Republic Day"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         />
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 Date *
                             </label>
                             <input
@@ -415,11 +415,11 @@ export default function HolidaysAdminPage() {
                                 onChange={(e) =>
                                     setFormData({ ...formData, date: e.target.value })
                                 }
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 Type
                             </label>
                             <select
@@ -430,7 +430,7 @@ export default function HolidaysAdminPage() {
                                         type: e.target.value as HolidayType,
                                     })
                                 }
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                             >
                                 {holidayTypeOptions.map((opt) => (
                                     <option key={opt.value} value={opt.value}>
@@ -442,7 +442,7 @@ export default function HolidaysAdminPage() {
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-medium text-warm-700 mb-1">
                             Region
                         </label>
                         <input
@@ -452,12 +452,12 @@ export default function HolidaysAdminPage() {
                                 setFormData({ ...formData, region: e.target.value })
                             }
                             placeholder="e.g., West Bengal (optional, for regional holidays)"
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         />
                     </div>
 
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label className="block text-sm font-medium text-warm-700 mb-1">
                             Description
                         </label>
                         <textarea
@@ -467,7 +467,7 @@ export default function HolidaysAdminPage() {
                             }
                             placeholder="Brief description..."
                             rows={2}
-                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
+                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
                         />
                     </div>
 
@@ -478,9 +478,9 @@ export default function HolidaysAdminPage() {
                             onChange={(e) =>
                                 setFormData({ ...formData, isOptional: e.target.checked })
                             }
-                            className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                            className="w-4 h-4 text-primary-600 border-warm-300 rounded focus:ring-primary-500"
                         />
-                        <span className="text-sm text-gray-700">Optional Holiday</span>
+                        <span className="text-sm text-warm-700">Optional Holiday</span>
                     </label>
                 </div>
 
@@ -509,7 +509,7 @@ export default function HolidaysAdminPage() {
                 title="Delete Holiday"
                 size="sm"
             >
-                <p className="text-gray-600">
+                <p className="text-warm-600">
                     Are you sure you want to delete{' '}
                     <strong>{deletingHoliday?.name}</strong>? This will deactivate
                     the holiday entry.

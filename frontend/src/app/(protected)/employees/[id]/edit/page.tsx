@@ -10,9 +10,10 @@ import {
   ArrowLeft, ArrowRight, Save, CheckCircle2, User, Briefcase, 
   DollarSign, FileText, Users
 } from 'lucide-react';
-import { employeesApi, departmentsApi } from '@/lib/api';
-import { Department, Employee, EmploymentType, EmployeeStatus, PayType } from '@/types';
+import { employeesApi, departmentsApi, designationsApi } from '@/lib/api';
+import { Department, Employee, Designation, EmploymentType, EmployeeStatus, PayType } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
+import { EmployeeSalarySection } from '@/components/salary';
 
 interface EmployeeFormData {
   // Personal Information
@@ -36,7 +37,7 @@ interface EmployeeFormData {
   // Employment Details
   employmentType: EmploymentType;
   departmentId: string;
-  designation: string;
+  designationId: string;
   managerId: string;
   joinDate: string;
   probationEndDate: string;
@@ -66,7 +67,8 @@ const steps = [
   { id: 2, name: 'Employment', icon: Briefcase },
   { id: 3, name: 'Compensation', icon: DollarSign },
   { id: 4, name: 'Additional', icon: FileText },
-  { id: 5, name: 'Review', icon: CheckCircle2 },
+  { id: 5, name: 'Salary Assignment', icon: DollarSign },
+  { id: 6, name: 'Review', icon: CheckCircle2 },
 ];
 
 export default function EditEmployeePage() {
@@ -78,6 +80,7 @@ export default function EditEmployeePage() {
   const [currentStep, setCurrentStep] = useState(1);
   const [formData, setFormData] = useState<EmployeeFormData | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [designations, setDesignations] = useState<Designation[]>([]);
   const [managers, setManagers] = useState<Employee[]>([]);
   const [formError, setFormError] = useState('');
   const [formSuccess, setFormSuccess] = useState('');
@@ -92,6 +95,7 @@ export default function EditEmployeePage() {
     }
     loadEmployee();
     loadDepartments();
+    loadDesignations();
     loadManagers();
   }, [isAdmin, employeeId]);
 
@@ -117,7 +121,7 @@ export default function EditEmployeePage() {
         country: '',
         employmentType: employee.employmentType,
         departmentId: employee.departmentId || '',
-        designation: employee.designation || '',
+        designationId: employee.designationId || '',
         managerId: employee.managerId || '',
         joinDate: employee.joinDate ? new Date(employee.joinDate).toISOString().split('T')[0] : '',
         probationEndDate: '',
@@ -152,6 +156,15 @@ export default function EditEmployeePage() {
     }
   };
 
+  const loadDesignations = async () => {
+    try {
+      const response = await designationsApi.getAll();
+      setDesignations(response.data.filter((d: Designation) => d.isActive));
+    } catch (error) {
+      console.error('Failed to load designations:', error);
+    }
+  };
+
   const loadManagers = async () => {
     try {
       const response = await employeesApi.getAll({ limit: 1000 });
@@ -183,7 +196,7 @@ export default function EditEmployeePage() {
     }
 
     if (step === 2) {
-      if (!formData.designation.trim()) errors.designation = 'Designation is required';
+      if (!formData.designationId) errors.designationId = 'Designation is required';
       if (!formData.joinDate) errors.joinDate = 'Join date is required';
     }
 
@@ -227,7 +240,7 @@ export default function EditEmployeePage() {
         hourlyRate: formData.hourlyRate ? parseFloat(formData.hourlyRate) : undefined,
         otMultiplier: formData.otMultiplier ? parseFloat(formData.otMultiplier) : 1.5,
         departmentId: formData.departmentId || undefined,
-        designation: formData.designation || undefined,
+        designationId: formData.designationId || undefined,
         managerId: formData.managerId || undefined,
         status: formData.status,
       };
@@ -253,7 +266,7 @@ export default function EditEmployeePage() {
         return (
           <div className="space-y-6">
             <div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <h3 className="text-lg font-semibold text-warm-900 mb-4 flex items-center gap-2">
                 <User className="h-5 w-5 text-primary-600" />
                 Personal Information
               </h3>
@@ -343,7 +356,7 @@ export default function EditEmployeePage() {
             </div>
 
             <div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Address Information</h3>
+              <h3 className="text-lg font-semibold text-warm-900 mb-4">Address Information</h3>
               <FormGrid cols={1}>
                 <FormRow>
                   <Input
@@ -395,7 +408,7 @@ export default function EditEmployeePage() {
       case 2:
         return (
           <div className="space-y-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <h3 className="text-lg font-semibold text-warm-900 mb-4 flex items-center gap-2">
               <Briefcase className="h-5 w-5 text-primary-600" />
               Employment Details
             </h3>
@@ -405,16 +418,19 @@ export default function EditEmployeePage() {
                   label="Employee Code"
                   value={formData.employeeCode}
                   disabled
-                  className="font-mono bg-gray-50"
+                  className="font-mono bg-warm-50"
                 />
               </FormRow>
               <FormRow>
-                <Input
-                  label="Designation/Job Title *"
-                  value={formData.designation}
-                  onChange={(e) => handleInputChange('designation', e.target.value)}
-                  placeholder="Software Engineer"
-                  error={validationErrors.designation}
+                <Select
+                  label="Designation *"
+                  value={formData.designationId}
+                  onChange={(e) => handleInputChange('designationId', e.target.value)}
+                  options={[
+                    { value: '', label: 'Select Designation' },
+                    ...designations.map((d) => ({ value: d.id, label: d.name })),
+                  ]}
+                  error={validationErrors.designationId}
                 />
               </FormRow>
               <FormRow>
@@ -477,7 +493,7 @@ export default function EditEmployeePage() {
                   type="date"
                   value={formData.joinDate}
                   disabled
-                  className="bg-gray-50"
+                  className="bg-warm-50"
                 />
               </FormRow>
               <FormRow>
@@ -503,7 +519,7 @@ export default function EditEmployeePage() {
       case 3:
         return (
           <div className="space-y-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <h3 className="text-lg font-semibold text-warm-900 mb-4 flex items-center gap-2">
               <DollarSign className="h-5 w-5 text-primary-600" />
               Compensation Details
             </h3>
@@ -582,7 +598,7 @@ export default function EditEmployeePage() {
         return (
           <div className="space-y-6">
             <div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+              <h3 className="text-lg font-semibold text-warm-900 mb-4 flex items-center gap-2">
                 <Users className="h-5 w-5 text-primary-600" />
                 Emergency Contact
               </h3>
@@ -624,7 +640,7 @@ export default function EditEmployeePage() {
             </div>
 
             <div>
-              <h3 className="text-lg font-semibold text-gray-900 mb-4">Additional Information</h3>
+              <h3 className="text-lg font-semibold text-warm-900 mb-4">Additional Information</h3>
               <FormGrid cols={2}>
                 <FormRow>
                   <Select
@@ -646,7 +662,7 @@ export default function EditEmployeePage() {
                 </FormRow>
               </FormGrid>
               <FormRow>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-warm-700 mb-1">
                   Notes
                 </label>
                 <textarea
@@ -654,7 +670,7 @@ export default function EditEmployeePage() {
                   onChange={(e) => handleInputChange('notes', e.target.value)}
                   placeholder="Any additional information or notes..."
                   rows={4}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                 />
               </FormRow>
             </div>
@@ -664,73 +680,95 @@ export default function EditEmployeePage() {
       case 5:
         return (
           <div className="space-y-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+            <h3 className="text-lg font-semibold text-warm-900 mb-4 flex items-center gap-2">
+              <DollarSign className="h-5 w-5 text-primary-600" />
+              Salary Assignment
+            </h3>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <p className="text-sm text-blue-800">
+                Assign salary structures and manage compensation history for this employee.
+              </p>
+            </div>
+            <EmployeeSalarySection
+              employeeId={employeeId}
+              employeeName={`${formData.firstName} ${formData.lastName}`}
+              canEdit={isAdmin}
+            />
+          </div>
+        );
+
+      case 6:
+        return (
+          <div className="space-y-6">
+            <h3 className="text-lg font-semibold text-warm-900 mb-4 flex items-center gap-2">
               <CheckCircle2 className="h-5 w-5 text-primary-600" />
               Review Employee Information
             </h3>
 
             {/* Personal Info Summary */}
-            <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-              <h4 className="font-medium text-gray-900">Personal Information</h4>
+            <div className="bg-warm-50 rounded-lg p-4 space-y-3">
+              <h4 className="font-medium text-warm-900">Personal Information</h4>
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <span className="text-gray-500">Name:</span>
+                  <span className="text-warm-500">Name:</span>
                   <p className="font-medium">{formData.firstName} {formData.lastName}</p>
                 </div>
                 <div>
-                  <span className="text-gray-500">Email:</span>
+                  <span className="text-warm-500">Email:</span>
                   <p className="font-medium">{formData.email}</p>
                 </div>
                 <div>
-                  <span className="text-gray-500">Phone:</span>
+                  <span className="text-warm-500">Phone:</span>
                   <p className="font-medium">{formData.phone || '-'}</p>
                 </div>
                 <div>
-                  <span className="text-gray-500">Date of Birth:</span>
+                  <span className="text-warm-500">Date of Birth:</span>
                   <p className="font-medium">{formData.dateOfBirth || '-'}</p>
                 </div>
               </div>
             </div>
 
             {/* Employment Info Summary */}
-            <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-              <h4 className="font-medium text-gray-900">Employment Details</h4>
+            <div className="bg-warm-50 rounded-lg p-4 space-y-3">
+              <h4 className="font-medium text-warm-900">Employment Details</h4>
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <span className="text-gray-500">Employee Code:</span>
+                  <span className="text-warm-500">Employee Code:</span>
                   <p className="font-medium font-mono">{formData.employeeCode}</p>
                 </div>
                 <div>
-                  <span className="text-gray-500">Designation:</span>
-                  <p className="font-medium">{formData.designation}</p>
+                  <span className="text-warm-500">Designation:</span>
+                  <p className="font-medium">
+                    {designations.find(d => d.id === formData.designationId)?.name || '-'}
+                  </p>
                 </div>
                 <div>
-                  <span className="text-gray-500">Department:</span>
+                  <span className="text-warm-500">Department:</span>
                   <p className="font-medium">
                     {departments.find(d => d.id === formData.departmentId)?.name || '-'}
                   </p>
                 </div>
                 <div>
-                  <span className="text-gray-500">Employment Type:</span>
+                  <span className="text-warm-500">Employment Type:</span>
                   <p className="font-medium">{formData.employmentType}</p>
                 </div>
                 <div>
-                  <span className="text-gray-500">Status:</span>
+                  <span className="text-warm-500">Status:</span>
                   <p className="font-medium">{formData.status}</p>
                 </div>
               </div>
             </div>
 
             {/* Compensation Summary */}
-            <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-              <h4 className="font-medium text-gray-900">Compensation</h4>
+            <div className="bg-warm-50 rounded-lg p-4 space-y-3">
+              <h4 className="font-medium text-warm-900">Compensation</h4>
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <span className="text-gray-500">Pay Type:</span>
+                  <span className="text-warm-500">Pay Type:</span>
                   <p className="font-medium">{formData.payType}</p>
                 </div>
                 <div>
-                  <span className="text-gray-500">Amount:</span>
+                  <span className="text-warm-500">Amount:</span>
                   <p className="font-medium">
                     {formData.payType === PayType.MONTHLY 
                       ? `${formData.currency} ${formData.monthlySalary || '0'}/month`
@@ -793,8 +831,8 @@ export default function EditEmployeePage() {
       </div>
 
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Edit Employee</h1>
-        <p className="text-gray-500">Update employee information - {formData.employeeCode}</p>
+        <h1 className="text-2xl font-bold text-warm-900">Edit Employee</h1>
+        <p className="text-warm-500">Update employee information - {formData.employeeCode}</p>
       </div>
 
       {/* Progress Steps */}
@@ -814,7 +852,7 @@ export default function EditEmployeePage() {
                         w-10 h-10 rounded-full flex items-center justify-center transition-colors
                         ${isCompleted ? 'bg-green-500 text-white' : ''}
                         ${isActive ? 'bg-primary-600 text-white' : ''}
-                        ${!isActive && !isCompleted ? 'bg-gray-200 text-gray-500' : ''}
+                        ${!isActive && !isCompleted ? 'bg-warm-200 text-warm-500' : ''}
                       `}
                     >
                       {isCompleted ? (
@@ -826,7 +864,7 @@ export default function EditEmployeePage() {
                     <span
                       className={`
                         mt-2 text-xs font-medium hidden md:block
-                        ${isActive ? 'text-primary-600' : 'text-gray-500'}
+                        ${isActive ? 'text-primary-600' : 'text-warm-500'}
                       `}
                     >
                       {step.name}
@@ -836,7 +874,7 @@ export default function EditEmployeePage() {
                     <div
                       className={`
                         flex-1 h-0.5 mx-2 transition-colors
-                        ${isCompleted ? 'bg-green-500' : 'bg-gray-200'}
+                        ${isCompleted ? 'bg-green-500' : 'bg-warm-200'}
                       `}
                     />
                   )}
@@ -869,7 +907,7 @@ export default function EditEmployeePage() {
               Previous
             </Button>
 
-            <div className="text-sm text-gray-500">
+            <div className="text-sm text-warm-500">
               Step {currentStep} of {steps.length}
             </div>
 

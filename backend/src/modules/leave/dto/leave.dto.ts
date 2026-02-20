@@ -4,6 +4,7 @@ import {
   IsUUID,
   IsDateString,
   IsNumber,
+  IsBoolean,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -26,6 +27,16 @@ export class CreateLeaveRequestDto {
   @IsOptional()
   @IsString()
   reason?: string;
+
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @IsBoolean()
+  isHalfDay?: boolean;
+
+  @ApiPropertyOptional({ enum: ['FIRST_HALF', 'SECOND_HALF'] })
+  @IsOptional()
+  @IsString()
+  halfDayPeriod?: string;
 }
 
 export class ApproveLeaveDto {

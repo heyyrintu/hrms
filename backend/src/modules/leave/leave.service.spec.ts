@@ -7,10 +7,12 @@ import {
 } from '@nestjs/common';
 import { LeaveService } from './leave.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { EmailService } from '../../common/email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   createMockPrismaService,
   createMockNotificationsService,
+  createMockEmailService,
 } from '../../test/helpers';
 
 describe('LeaveService', () => {
@@ -61,6 +63,7 @@ describe('LeaveService', () => {
       managerId: approverId,
       firstName: 'John',
       lastName: 'Doe',
+      email: 'john@test.com',
     },
   };
 
@@ -69,6 +72,7 @@ describe('LeaveService', () => {
       providers: [
         LeaveService,
         { provide: PrismaService, useValue: createMockPrismaService() },
+        { provide: EmailService, useValue: createMockEmailService() },
         { provide: NotificationsService, useValue: createMockNotificationsService() },
       ],
     }).compile();
@@ -110,7 +114,7 @@ describe('LeaveService', () => {
       const result = await service.getBalances(tenantId, employeeId, 2025);
 
       expect(prisma.leaveBalance.findMany).toHaveBeenCalledWith({
-        where: { tenantId, employeeId, year: 2025 },
+        where: { tenantId, employeeId, year: 2025, leaveType: { isActive: true } },
         include: { leaveType: true },
       });
       expect(result).toHaveLength(1);
@@ -126,6 +130,7 @@ describe('LeaveService', () => {
           tenantId,
           employeeId,
           year: new Date().getFullYear(),
+          leaveType: { isActive: true },
         },
         include: { leaveType: true },
       });
@@ -394,7 +399,7 @@ describe('LeaveService', () => {
         ...mockLeaveRequest,
         status: 'APPROVED',
         leaveType: mockLeaveType,
-        employee: mockLeaveRequest.employee,
+        employee: { ...mockLeaveRequest.employee, email: 'john@test.com' },
       });
       prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
       prisma.leaveBalance.update.mockResolvedValue({});
@@ -427,7 +432,7 @@ describe('LeaveService', () => {
         ...mockLeaveRequest,
         status: 'APPROVED',
         leaveType: mockLeaveType,
-        employee: mockLeaveRequest.employee,
+        employee: { ...mockLeaveRequest.employee, email: 'john@test.com' },
       });
       prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
       prisma.leaveBalance.update.mockResolvedValue({});
@@ -450,7 +455,7 @@ describe('LeaveService', () => {
         ...mockLeaveRequest,
         status: 'APPROVED',
         leaveType: mockLeaveType,
-        employee: mockLeaveRequest.employee,
+        employee: { ...mockLeaveRequest.employee, email: 'john@test.com' },
       });
       prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
       prisma.leaveBalance.update.mockResolvedValue({});
@@ -468,7 +473,7 @@ describe('LeaveService', () => {
         ...mockLeaveRequest,
         status: 'APPROVED',
         leaveType: mockLeaveType,
-        employee: mockLeaveRequest.employee,
+        employee: { ...mockLeaveRequest.employee, email: 'john@test.com' },
       });
       prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
       prisma.leaveBalance.update.mockResolvedValue({});
@@ -518,7 +523,7 @@ describe('LeaveService', () => {
         ...mockLeaveRequest,
         status: 'REJECTED',
         leaveType: mockLeaveType,
-        employee: mockLeaveRequest.employee,
+        employee: { ...mockLeaveRequest.employee, email: 'john@test.com' },
       });
       prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
       prisma.leaveBalance.update.mockResolvedValue({});
@@ -554,7 +559,7 @@ describe('LeaveService', () => {
         ...mockLeaveRequest,
         status: 'REJECTED',
         leaveType: mockLeaveType,
-        employee: mockLeaveRequest.employee,
+        employee: { ...mockLeaveRequest.employee, email: 'john@test.com' },
       });
       prisma.leaveBalance.findFirst.mockResolvedValue(null);
 
@@ -660,6 +665,7 @@ describe('LeaveService', () => {
         tenantId,
         ...createTypeDto,
       });
+      prisma.employee.findMany.mockResolvedValue([]);
 
       const result = await service.createLeaveType(tenantId, createTypeDto);
 
@@ -681,6 +687,7 @@ describe('LeaveService', () => {
     it('should use defaults for optional fields', async () => {
       prisma.leaveType.findUnique.mockResolvedValue(null);
       prisma.leaveType.create.mockResolvedValue({ id: 'lt-new' });
+      prisma.employee.findMany.mockResolvedValue([]);
 
       await service.createLeaveType(tenantId, {
         name: 'Basic Leave',
@@ -749,6 +756,8 @@ describe('LeaveService', () => {
           year: 2025,
           totalDays: 20,
           carriedOver: 0,
+          usedDays: 0,
+          pendingDays: 0,
         },
         include: { leaveType: true },
       });

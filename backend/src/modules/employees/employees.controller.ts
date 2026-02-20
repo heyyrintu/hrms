@@ -59,6 +59,18 @@ export class EmployeesController {
   }
 
   /**
+   * Get org chart tree structure
+   * GET /api/employees/org-chart
+   */
+  @Get('org-chart')
+  @ApiOperation({ summary: 'Get organization chart tree' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
+  async getOrgChart(@CurrentUser() user: AuthenticatedUser) {
+    return this.employeesService.getOrgChart(user.tenantId);
+  }
+
+  /**
    * Get employee by ID
    * GET /api/employees/:id
    */

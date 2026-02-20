@@ -11,6 +11,8 @@ import { QueueModule } from './common/queue/queue.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { EmployeesModule } from './modules/employees/employees.module';
 import { DepartmentsModule } from './modules/departments/departments.module';
+import { DesignationsModule } from './modules/designations/designations.module';
+import { BranchesModule } from './modules/branches/branches.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { LeaveModule } from './modules/leave/leave.module';
 import { AdminModule } from './modules/admin/admin.module';
@@ -28,6 +30,8 @@ import { ExpensesModule } from './modules/expenses/expenses.module';
 import { OnboardingModule } from './modules/onboarding/onboarding.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { PerformanceModule } from './modules/performance/performance.module';
+import { LettersModule } from './modules/letters/letters.module';
+import { ExitModule } from './modules/exit/exit.module';
 
 @Module({
   imports: [
@@ -48,6 +52,8 @@ import { PerformanceModule } from './modules/performance/performance.module';
     AuthModule,
     EmployeesModule,
     DepartmentsModule,
+    DesignationsModule,
+    BranchesModule,
     AttendanceModule,
     LeaveModule,
     AdminModule,
@@ -65,6 +71,8 @@ import { PerformanceModule } from './modules/performance/performance.module';
     OnboardingModule,
     AuditModule,
     PerformanceModule,
+    LettersModule,
+    ExitModule,
   ],
 })
 export class AppModule {}

@@ -21,13 +21,13 @@ export default function LeaveRequestPage() {
             <div className="mb-6">
                 <button
                     onClick={() => router.back()}
-                    className="flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors mb-4"
+                    className="flex items-center gap-2 text-warm-600 hover:text-warm-900 transition-colors mb-4"
                 >
                     <ArrowLeft className="w-4 h-4" />
                     Back to Leave
                 </button>
-                <h1 className="text-2xl font-bold text-gray-900">Apply for Leave</h1>
-                <p className="text-gray-600 mt-1">
+                <h1 className="text-xl sm:text-2xl font-bold text-warm-900">Apply for Leave</h1>
+                <p className="text-warm-600 mt-1">
                     Fill in the details below to submit your leave request for approval.
                 </p>
             </div>

@@ -69,6 +69,23 @@ class EnvironmentVariables {
   @IsOptional()
   SMTP_FROM?: string = 'HRMS <noreply@hrms.local>';
 
+  // Microsoft Graph API - optional, preferred over SMTP when configured
+  @IsString()
+  @IsOptional()
+  MS_GRAPH_TENANT_ID?: string;
+
+  @IsString()
+  @IsOptional()
+  MS_GRAPH_CLIENT_ID?: string;
+
+  @IsString()
+  @IsOptional()
+  MS_GRAPH_CLIENT_SECRET?: string;
+
+  @IsString()
+  @IsOptional()
+  MS_GRAPH_SENDER_EMAIL?: string;
+
   // Redis - optional, falls back to in-memory if not set
   @IsString()
   @IsOptional()

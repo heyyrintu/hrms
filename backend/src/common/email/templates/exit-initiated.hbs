@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #b91c1c; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+    .content { padding: 20px; background: #f9fafb; border: 1px solid #e5e7eb; }
+    .footer { padding: 15px; text-align: center; font-size: 12px; color: #6b7280; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Separation Process Initiated</h1>
+    </div>
+    <div class="content">
+      <p>Hi {{employeeName}},</p>
+      <p>This is to inform you that a separation process has been initiated for you.</p>
+      <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+        <tr><td style="padding: 8px; font-weight: bold;">Type:</td><td style="padding: 8px;">{{separationType}}</td></tr>
+        {{#if lastWorkingDate}}
+        <tr><td style="padding: 8px; font-weight: bold;">Last Working Date:</td><td style="padding: 8px;">{{lastWorkingDate}}</td></tr>
+        {{/if}}
+        {{#if noticePeriodDays}}
+        <tr><td style="padding: 8px; font-weight: bold;">Notice Period:</td><td style="padding: 8px;">{{noticePeriodDays}} days</td></tr>
+        {{/if}}
+      </table>
+      <p>Please reach out to HR if you have any questions about the process.</p>
+      <p>Best regards,<br>HR Team</p>
+    </div>
+    <div class="footer">
+      <p>This is an automated message from HRMS.</p>
+    </div>
+  </div>
+</body>
+</html>

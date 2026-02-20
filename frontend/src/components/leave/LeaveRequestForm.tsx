@@ -42,6 +42,8 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
     const [reason, setReason] = useState('');
+    const [isHalfDay, setIsHalfDay] = useState(false);
+    const [halfDayPeriod, setHalfDayPeriod] = useState<'FIRST_HALF' | 'SECOND_HALF'>('FIRST_HALF');
 
     // Calculated values
     const [leaveDays, setLeaveDays] = useState(0);
@@ -53,13 +55,15 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
     }, []);
 
     useEffect(() => {
-        if (startDate && endDate) {
+        if (isHalfDay && startDate) {
+            setLeaveDays(0.5);
+        } else if (startDate && endDate) {
             const days = calculateLeaveDays(new Date(startDate), new Date(endDate));
             setLeaveDays(days);
         } else {
             setLeaveDays(0);
         }
-    }, [startDate, endDate]);
+    }, [startDate, endDate, isHalfDay]);
 
     useEffect(() => {
         if (selectedTypeId && balances.length > 0) {
@@ -121,8 +125,9 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
             await leaveApi.createRequest({
                 leaveTypeId: selectedTypeId,
                 startDate,
-                endDate,
+                endDate: isHalfDay ? startDate : endDate,
                 reason,
+                ...(isHalfDay ? { isHalfDay: true, halfDayPeriod } : {}),
             });
             setSuccess(true);
             setTimeout(() => {
@@ -148,11 +153,11 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
             <Card className="max-w-2xl mx-auto">
                 <CardContent className="p-8">
                     <div className="text-center">
-                        <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
-                            <CheckCircle className="w-8 h-8 text-green-600" />
+                        <div className="mx-auto w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mb-4">
+                            <CheckCircle className="w-8 h-8 text-emerald-600" />
                         </div>
-                        <h3 className="text-xl font-semibold text-gray-900 mb-2">Leave Request Submitted!</h3>
-                        <p className="text-gray-600">Your leave request has been submitted for approval.</p>
+                        <h3 className="text-xl font-semibold text-warm-900 mb-2">Leave Request Submitted!</h3>
+                        <p className="text-warm-600">Your leave request has been submitted for approval.</p>
                     </div>
                 </CardContent>
             </Card>
@@ -161,7 +166,7 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
 
     return (
         <Card className="max-w-2xl mx-auto">
-            <CardHeader className="border-b border-gray-100 pb-4">
+            <CardHeader className="border-b border-warm-100 pb-4">
                 <CardTitle className="flex items-center gap-2">
                     <Calendar className="w-5 h-5 text-primary-600" />
                     Request Leave
@@ -177,7 +182,7 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
                     <form onSubmit={handleSubmit} className="space-y-6">
                         {/* Leave Type Selection */}
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <label className="block text-sm font-medium text-warm-700 mb-2">
                                 Leave Type *
                             </label>
                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -196,14 +201,14 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
                                                 'p-4 rounded-lg border-2 text-left transition-all',
                                                 selectedTypeId === type.id
                                                     ? 'border-primary-600 bg-primary-50 ring-2 ring-primary-200'
-                                                    : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                                                    : 'border-warm-200 hover:border-warm-300 hover:bg-warm-50'
                                             )}
                                         >
-                                            <div className="font-medium text-gray-900">{type.name}</div>
-                                            <div className="text-xs text-gray-500 mt-1">{type.code}</div>
+                                            <div className="font-medium text-warm-900">{type.name}</div>
+                                            <div className="text-xs text-warm-500 mt-1">{type.code}</div>
                                             <div className={cn(
                                                 'text-sm mt-2 font-semibold',
-                                                available > 0 ? 'text-green-600' : 'text-red-600'
+                                                available > 0 ? 'text-emerald-600' : 'text-red-600'
                                             )}>
                                                 {available} days available
                                             </div>
@@ -213,11 +218,77 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
                             </div>
                         </div>
 
-                        {/* Date Range */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {/* Half-Day Toggle */}
+                        <div className="flex items-center justify-between p-4 bg-warm-50 rounded-lg border border-warm-200">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Start Date *
+                                <label className="text-sm font-medium text-warm-700">Half-Day Leave</label>
+                                <p className="text-xs text-warm-500 mt-0.5">Request only half a working day</p>
+                            </div>
+                            <button
+                                type="button"
+                                role="switch"
+                                aria-checked={isHalfDay}
+                                onClick={() => {
+                                    const next = !isHalfDay;
+                                    setIsHalfDay(next);
+                                    if (next && startDate) {
+                                        setEndDate(startDate);
+                                    }
+                                }}
+                                className={cn(
+                                    'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                                    isHalfDay ? 'bg-primary-600' : 'bg-warm-300'
+                                )}
+                            >
+                                <span
+                                    className={cn(
+                                        'inline-block h-4 w-4 transform rounded-full bg-white transition-transform',
+                                        isHalfDay ? 'translate-x-6' : 'translate-x-1'
+                                    )}
+                                />
+                            </button>
+                        </div>
+
+                        {/* Half-Day Period Selector */}
+                        {isHalfDay && (
+                            <div>
+                                <label className="block text-sm font-medium text-warm-700 mb-2">
+                                    Half-Day Period *
+                                </label>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button
+                                        type="button"
+                                        onClick={() => setHalfDayPeriod('FIRST_HALF')}
+                                        className={cn(
+                                            'p-3 rounded-lg border-2 text-center transition-all text-sm font-medium',
+                                            halfDayPeriod === 'FIRST_HALF'
+                                                ? 'border-primary-600 bg-primary-50 text-primary-700 ring-2 ring-primary-200'
+                                                : 'border-warm-200 hover:border-warm-300 hover:bg-warm-50 text-warm-700'
+                                        )}
+                                    >
+                                        First Half (Morning)
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setHalfDayPeriod('SECOND_HALF')}
+                                        className={cn(
+                                            'p-3 rounded-lg border-2 text-center transition-all text-sm font-medium',
+                                            halfDayPeriod === 'SECOND_HALF'
+                                                ? 'border-primary-600 bg-primary-50 text-primary-700 ring-2 ring-primary-200'
+                                                : 'border-warm-200 hover:border-warm-300 hover:bg-warm-50 text-warm-700'
+                                        )}
+                                    >
+                                        Second Half (Afternoon)
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Date Range */}
+                        <div className={cn('grid gap-4', isHalfDay ? 'grid-cols-1' : 'grid-cols-1 sm:grid-cols-2')}>
+                            <div>
+                                <label className="block text-sm font-medium text-warm-700 mb-2">
+                                    {isHalfDay ? 'Date *' : 'Start Date *'}
                                 </label>
                                 <div className="relative">
                                     <input
@@ -225,32 +296,36 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
                                         value={startDate}
                                         onChange={(e) => {
                                             setStartDate(e.target.value);
-                                            if (!endDate || e.target.value > endDate) {
+                                            if (isHalfDay) {
+                                                setEndDate(e.target.value);
+                                            } else if (!endDate || e.target.value > endDate) {
                                                 setEndDate(e.target.value);
                                             }
                                         }}
                                         min={today}
-                                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                        className="w-full px-4 py-3 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                                         required
                                     />
                                 </div>
                             </div>
 
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    End Date *
-                                </label>
-                                <div className="relative">
-                                    <input
-                                        type="date"
-                                        value={endDate}
-                                        onChange={(e) => setEndDate(e.target.value)}
-                                        min={startDate || today}
-                                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                                        required
-                                    />
+                            {!isHalfDay && (
+                                <div>
+                                    <label className="block text-sm font-medium text-warm-700 mb-2">
+                                        End Date *
+                                    </label>
+                                    <div className="relative">
+                                        <input
+                                            type="date"
+                                            value={endDate}
+                                            onChange={(e) => setEndDate(e.target.value)}
+                                            min={startDate || today}
+                                            className="w-full px-4 py-3 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                            required
+                                        />
+                                    </div>
                                 </div>
-                            </div>
+                            )}
                         </div>
 
                         {/* Leave Days Summary */}
@@ -276,7 +351,12 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
                                             'font-semibold',
                                             isInsufficientBalance ? 'text-red-900' : 'text-blue-900'
                                         )}>
-                                            {leaveDays} working day{leaveDays > 1 ? 's' : ''} requested
+                                            {leaveDays} working day{leaveDays !== 1 ? 's' : ''} requested
+                                            {isHalfDay && (
+                                                <span className="ml-2 text-xs font-normal">
+                                                    ({halfDayPeriod === 'FIRST_HALF' ? 'First Half' : 'Second Half'})
+                                                </span>
+                                            )}
                                         </div>
                                         <div className={cn(
                                             'text-sm',
@@ -294,7 +374,7 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
 
                         {/* Reason */}
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                            <label className="block text-sm font-medium text-warm-700 mb-2">
                                 <FileText className="w-4 h-4 inline mr-1" />
                                 Reason / Notes
                             </label>
@@ -303,7 +383,7 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
                                 onChange={(e) => setReason(e.target.value)}
                                 rows={3}
                                 placeholder="Enter the reason for your leave request..."
-                                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 resize-none"
+                                className="w-full px-4 py-3 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 resize-none"
                             />
                         </div>
 
@@ -316,7 +396,7 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
                         )}
 
                         {/* Actions */}
-                        <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-100">
+                        <div className="flex items-center justify-end gap-3 pt-4 border-t border-warm-100">
                             {onCancel && (
                                 <Button
                                     type="button"
@@ -330,7 +410,7 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
                             <Button
                                 type="submit"
                                 loading={submitting}
-                                disabled={!selectedTypeId || !startDate || !endDate || isInsufficientBalance}
+                                disabled={!selectedTypeId || !startDate || (!isHalfDay && !endDate) || isInsufficientBalance}
                             >
                                 Submit Request
                             </Button>

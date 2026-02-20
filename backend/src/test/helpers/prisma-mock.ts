@@ -52,6 +52,17 @@ const prismaModels = [
   'reviewCycle',
   'performanceReview',
   'goal',
+  'designation',
+  'branch',
+  'letterTemplate',
+  'letterGenerated',
+  'separation',
+  'leaveAccrualRule',
+  'leaveAccrualEntry',
+  'attendanceRegularization',
+  'compOffRequest',
+  'feedback',
+  'improvementPlan',
 ];
 
 function createModelMock() {

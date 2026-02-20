@@ -138,11 +138,11 @@ export default function MyOnboardingTasksPage() {
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                        <h1 className="text-2xl font-bold text-warm-900 flex items-center gap-2">
                             <ClipboardList className="w-7 h-7 text-primary-600" />
                             My Onboarding Tasks
                         </h1>
-                        <p className="text-gray-600 mt-1">
+                        <p className="text-warm-600 mt-1">
                             Tasks assigned to you as part of onboarding processes
                         </p>
                     </div>
@@ -157,12 +157,12 @@ export default function MyOnboardingTasksPage() {
                     <Card>
                         <CardContent className="py-4">
                             <div className="flex items-center gap-3">
-                                <div className="p-2 rounded-lg bg-gray-100">
-                                    <AlertCircle className="w-5 h-5 text-gray-600" />
+                                <div className="p-2 rounded-lg bg-warm-100">
+                                    <AlertCircle className="w-5 h-5 text-warm-600" />
                                 </div>
                                 <div>
-                                    <p className="text-2xl font-bold text-gray-600">{pendingCount}</p>
-                                    <p className="text-sm text-gray-500">Pending</p>
+                                    <p className="text-2xl font-bold text-warm-600">{pendingCount}</p>
+                                    <p className="text-sm text-warm-500">Pending</p>
                                 </div>
                             </div>
                         </CardContent>
@@ -175,7 +175,7 @@ export default function MyOnboardingTasksPage() {
                                 </div>
                                 <div>
                                     <p className="text-2xl font-bold text-orange-600">{inProgressCount}</p>
-                                    <p className="text-sm text-gray-500">In Progress</p>
+                                    <p className="text-sm text-warm-500">In Progress</p>
                                 </div>
                             </div>
                         </CardContent>
@@ -183,12 +183,12 @@ export default function MyOnboardingTasksPage() {
                     <Card>
                         <CardContent className="py-4">
                             <div className="flex items-center gap-3">
-                                <div className="p-2 rounded-lg bg-green-50">
-                                    <CheckCircle2 className="w-5 h-5 text-green-600" />
+                                <div className="p-2 rounded-lg bg-emerald-50">
+                                    <CheckCircle2 className="w-5 h-5 text-emerald-600" />
                                 </div>
                                 <div>
-                                    <p className="text-2xl font-bold text-green-600">{completedCount}</p>
-                                    <p className="text-sm text-gray-500">Completed</p>
+                                    <p className="text-2xl font-bold text-emerald-600">{completedCount}</p>
+                                    <p className="text-sm text-warm-500">Completed</p>
                                 </div>
                             </div>
                         </CardContent>
@@ -198,19 +198,19 @@ export default function MyOnboardingTasksPage() {
                 {/* Filters */}
                 <div className="flex flex-col sm:flex-row gap-3">
                     <div className="relative flex-1">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-warm-400" />
                         <input
                             type="text"
                             placeholder="Search tasks..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                            className="w-full pl-10 pr-4 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                         />
                     </div>
                     <select
                         value={statusFilter}
                         onChange={(e) => setStatusFilter(e.target.value)}
-                        className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                        className="px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                     >
                         <option value="">All Statuses</option>
                         <option value="PENDING">Pending</option>
@@ -228,11 +228,11 @@ export default function MyOnboardingTasksPage() {
                 ) : filteredTasks.length === 0 ? (
                     <Card>
                         <CardContent className="py-16 text-center">
-                            <CheckCircle2 className="w-16 h-16 text-green-300 mx-auto mb-4" />
-                            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                            <CheckCircle2 className="w-16 h-16 text-emerald-300 mx-auto mb-4" />
+                            <h3 className="text-lg font-semibold text-warm-900 mb-2">
                                 {statusFilter || searchQuery ? 'No Matching Tasks' : 'No Tasks Assigned'}
                             </h3>
-                            <p className="text-gray-600">
+                            <p className="text-warm-600">
                                 {statusFilter || searchQuery
                                     ? 'No tasks match your filters.'
                                     : 'You have no onboarding tasks assigned to you.'}
@@ -247,7 +247,7 @@ export default function MyOnboardingTasksPage() {
                                     <div className="flex items-start justify-between">
                                         <div className="flex-1">
                                             <div className="flex items-center gap-2 mb-1">
-                                                <h3 className="text-base font-semibold text-gray-900">{task.title}</h3>
+                                                <h3 className="text-base font-semibold text-warm-900">{task.title}</h3>
                                                 <Badge variant={statusColors[task.status] as 'success' | 'warning' | 'gray' | 'info'}>
                                                     {statusLabels[task.status]}
                                                 </Badge>
@@ -257,9 +257,9 @@ export default function MyOnboardingTasksPage() {
                                                 )}
                                             </div>
                                             {task.description && (
-                                                <p className="text-sm text-gray-600 mb-1">{task.description}</p>
+                                                <p className="text-sm text-warm-600 mb-1">{task.description}</p>
                                             )}
-                                            <div className="flex items-center gap-4 text-xs text-gray-400">
+                                            <div className="flex items-center gap-4 text-xs text-warm-400">
                                                 {task.process && (
                                                     <span>
                                                         {task.process.type}: {task.process.employee?.firstName} {task.process.employee?.lastName}
@@ -273,7 +273,7 @@ export default function MyOnboardingTasksPage() {
                                                 {task.completedAt && <span>Done: {formatDate(task.completedAt)}</span>}
                                             </div>
                                             {task.notes && (
-                                                <p className="text-xs text-gray-500 mt-1 bg-gray-50 rounded px-2 py-1">
+                                                <p className="text-xs text-warm-500 mt-1 bg-warm-50 rounded px-2 py-1">
                                                     Note: {task.notes}
                                                 </p>
                                             )}
@@ -299,7 +299,7 @@ export default function MyOnboardingTasksPage() {
                                             {task.status !== 'COMPLETED' && task.status !== 'SKIPPED' && (
                                                 <button
                                                     onClick={() => openNoteModal(task)}
-                                                    className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                                                    className="px-3 py-1.5 text-xs text-warm-600 hover:bg-warm-100 rounded-lg transition-colors"
                                                 >
                                                     Add Note
                                                 </button>
@@ -325,7 +325,7 @@ export default function MyOnboardingTasksPage() {
                         value={noteText}
                         onChange={(e) => setNoteText(e.target.value)}
                         rows={3}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
+                        className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
                         placeholder="Add a note about this task..."
                     />
                 </div>

@@ -132,11 +132,11 @@ export default function ExpenseApprovalsPage() {
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div>
-                        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                        <h1 className="text-2xl font-bold text-warm-900 flex items-center gap-2">
                             <ClipboardCheck className="w-7 h-7 text-primary-600" />
                             Expense Approvals
                         </h1>
-                        <p className="text-gray-600 mt-1">
+                        <p className="text-warm-600 mt-1">
                             Review and approve expense claims
                         </p>
                     </div>
@@ -156,7 +156,7 @@ export default function ExpenseApprovalsPage() {
                                 </div>
                                 <div>
                                     <p className="text-2xl font-bold text-orange-600">{meta.total}</p>
-                                    <p className="text-sm text-gray-500">Pending Claims</p>
+                                    <p className="text-sm text-warm-500">Pending Claims</p>
                                 </div>
                             </div>
                         </CardContent>
@@ -169,7 +169,7 @@ export default function ExpenseApprovalsPage() {
                                 </div>
                                 <div>
                                     <p className="text-2xl font-bold text-blue-600">{formatCurrency(totalPendingAmount)}</p>
-                                    <p className="text-sm text-gray-500">Total Pending Amount</p>
+                                    <p className="text-sm text-warm-500">Total Pending Amount</p>
                                 </div>
                             </div>
                         </CardContent>
@@ -178,13 +178,13 @@ export default function ExpenseApprovalsPage() {
 
                 {/* Search */}
                 <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-warm-400" />
                     <input
                         type="text"
                         placeholder="Search by employee name, description, or category..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                        className="w-full pl-10 pr-4 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                     />
                 </div>
 
@@ -196,9 +196,9 @@ export default function ExpenseApprovalsPage() {
                 ) : filteredClaims.length === 0 ? (
                     <Card>
                         <CardContent className="py-16 text-center">
-                            <CheckCircle2 className="w-16 h-16 text-green-300 mx-auto mb-4" />
-                            <h3 className="text-lg font-semibold text-gray-900 mb-2">All Caught Up</h3>
-                            <p className="text-gray-600">
+                            <CheckCircle2 className="w-16 h-16 text-emerald-300 mx-auto mb-4" />
+                            <h3 className="text-lg font-semibold text-warm-900 mb-2">All Caught Up</h3>
+                            <p className="text-warm-600">
                                 {searchQuery ? 'No claims match your search.' : 'No pending expense claims to review.'}
                             </p>
                         </CardContent>
@@ -208,44 +208,44 @@ export default function ExpenseApprovalsPage() {
                         <div className="overflow-x-auto">
                             <table className="w-full">
                                 <thead>
-                                    <tr className="border-b border-gray-200 bg-gray-50">
-                                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Employee</th>
-                                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Category</th>
-                                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Description</th>
-                                        <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase">Date</th>
-                                        <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Amount</th>
-                                        <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase">Actions</th>
+                                    <tr className="border-b border-warm-200 bg-warm-50">
+                                        <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">Employee</th>
+                                        <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">Category</th>
+                                        <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">Description</th>
+                                        <th className="text-left px-4 py-3 text-xs font-medium text-warm-500 uppercase">Date</th>
+                                        <th className="text-right px-4 py-3 text-xs font-medium text-warm-500 uppercase">Amount</th>
+                                        <th className="text-right px-4 py-3 text-xs font-medium text-warm-500 uppercase">Actions</th>
                                     </tr>
                                 </thead>
-                                <tbody className="divide-y divide-gray-200">
+                                <tbody className="divide-y divide-warm-200">
                                     {filteredClaims.map((claim) => (
-                                        <tr key={claim.id} className="hover:bg-gray-50 transition-colors">
+                                        <tr key={claim.id} className="hover:bg-warm-50 transition-colors">
                                             <td className="px-4 py-3">
                                                 <div>
-                                                    <p className="text-sm font-medium text-gray-900">
+                                                    <p className="text-sm font-medium text-warm-900">
                                                         {claim.employee?.firstName} {claim.employee?.lastName}
                                                     </p>
-                                                    <p className="text-xs text-gray-500">
+                                                    <p className="text-xs text-warm-500">
                                                         {claim.employee?.designation} {claim.employee?.department?.name ? `- ${claim.employee.department.name}` : ''}
                                                     </p>
                                                 </div>
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-900">
+                                            <td className="px-4 py-3 text-sm text-warm-900">
                                                 {claim.category?.name || '—'}
                                             </td>
-                                            <td className="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">
+                                            <td className="px-4 py-3 text-sm text-warm-600 max-w-xs truncate">
                                                 {claim.description}
                                             </td>
                                             <td className="px-4 py-3 text-sm whitespace-nowrap">
                                                 {formatDate(claim.expenseDate)}
                                             </td>
-                                            <td className="px-4 py-3 text-sm font-semibold text-gray-900 text-right whitespace-nowrap">
+                                            <td className="px-4 py-3 text-sm font-semibold text-warm-900 text-right whitespace-nowrap">
                                                 {formatCurrency(Number(claim.amount))}
                                             </td>
                                             <td className="px-4 py-3 text-right whitespace-nowrap">
                                                 <button
                                                     onClick={() => openReviewModal(claim, 'approve')}
-                                                    className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                                                    className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
                                                     title="Approve"
                                                 >
                                                     <CheckCircle2 className="w-4 h-4" />
@@ -276,33 +276,33 @@ export default function ExpenseApprovalsPage() {
             >
                 {reviewingClaim && (
                     <div className="space-y-4">
-                        <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+                        <div className="bg-warm-50 rounded-lg p-4 space-y-2">
                             <div className="flex justify-between">
-                                <span className="text-sm text-gray-500">Employee</span>
+                                <span className="text-sm text-warm-500">Employee</span>
                                 <span className="text-sm font-medium">
                                     {reviewingClaim.employee?.firstName} {reviewingClaim.employee?.lastName}
                                 </span>
                             </div>
                             <div className="flex justify-between">
-                                <span className="text-sm text-gray-500">Category</span>
+                                <span className="text-sm text-warm-500">Category</span>
                                 <span className="text-sm font-medium">{reviewingClaim.category?.name}</span>
                             </div>
                             <div className="flex justify-between">
-                                <span className="text-sm text-gray-500">Amount</span>
+                                <span className="text-sm text-warm-500">Amount</span>
                                 <span className="text-sm font-bold">{formatCurrency(Number(reviewingClaim.amount))}</span>
                             </div>
                             <div className="flex justify-between">
-                                <span className="text-sm text-gray-500">Date</span>
+                                <span className="text-sm text-warm-500">Date</span>
                                 <span className="text-sm font-medium">{formatDate(reviewingClaim.expenseDate)}</span>
                             </div>
                             <div className="pt-2 border-t">
-                                <p className="text-sm text-gray-500">Description</p>
-                                <p className="text-sm text-gray-900 mt-1">{reviewingClaim.description}</p>
+                                <p className="text-sm text-warm-500">Description</p>
+                                <p className="text-sm text-warm-900 mt-1">{reviewingClaim.description}</p>
                             </div>
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                            <label className="block text-sm font-medium text-warm-700 mb-1">
                                 Note (optional)
                             </label>
                             <textarea
@@ -310,7 +310,7 @@ export default function ExpenseApprovalsPage() {
                                 onChange={(e) => setApproverNote(e.target.value)}
                                 placeholder={reviewAction === 'reject' ? 'Reason for rejection...' : 'Any comments...'}
                                 rows={2}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
+                                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
                             />
                         </div>
                     </div>

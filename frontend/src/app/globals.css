@@ -24,6 +24,7 @@
     --input: 30 12% 88%;
     --ring: 0 72% 51%;
     --radius: 0.625rem;
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
   }
 }
 
@@ -33,6 +34,7 @@
   }
   body {
     @apply bg-warm-50 text-warm-900 antialiased;
+    -webkit-tap-highlight-color: transparent;
   }
   h1, h2, h3, h4, h5, h6 {
     @apply tracking-tight text-warm-900;
@@ -66,11 +68,11 @@
   }
 
   .btn-sm {
-    @apply h-8 px-3 text-xs rounded-md;
+    @apply h-9 sm:h-8 px-3 text-xs rounded-md;
   }
 
   .btn-md {
-    @apply h-10 px-4;
+    @apply h-11 sm:h-10 px-4;
   }
 
   .btn-lg {
@@ -79,7 +81,7 @@
 
   /* ─── Form Elements ────────────────────────────── */
   .input {
-    @apply flex h-10 w-full rounded-lg border border-warm-300 bg-white
+    @apply flex h-11 sm:h-10 w-full rounded-lg border border-warm-300 bg-white
            px-3.5 py-2 text-sm text-warm-900
            placeholder:text-warm-400
            focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500
@@ -119,5 +121,40 @@
 
   .badge-gray {
     @apply bg-warm-100 text-warm-600 ring-1 ring-inset ring-warm-200;
+  }
+
+  /* ─── Mobile Utilities ─────────────────────────── */
+  .safe-bottom {
+    padding-bottom: var(--safe-bottom);
+  }
+
+  .scroll-shadow {
+    background:
+      linear-gradient(to right, white 30%, transparent),
+      linear-gradient(to left, white 30%, transparent),
+      linear-gradient(to right, rgba(26, 23, 21, 0.08), transparent 15px),
+      linear-gradient(to left, rgba(26, 23, 21, 0.08), transparent 15px);
+    background-position: left center, right center, left center, right center;
+    background-repeat: no-repeat;
+    background-size: 20px 100%, 20px 100%, 15px 100%, 15px 100%;
+    background-attachment: local, local, scroll, scroll;
+  }
+
+  /* ─── Page Header ─────────────────────────────── */
+  .page-header {
+    @apply flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4;
+  }
+
+  .page-title {
+    @apply text-xl sm:text-2xl font-bold text-warm-900;
+  }
+
+  .page-subtitle {
+    @apply text-sm text-warm-500 mt-0.5;
+  }
+
+  /* ─── Stat Grid ────────────────────────────────── */
+  .stat-grid {
+    @apply grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4;
   }
 }
