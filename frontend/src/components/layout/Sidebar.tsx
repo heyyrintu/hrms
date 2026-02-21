@@ -53,149 +53,131 @@ interface NavItem {
   children?: NavItem[];
 }
 
-const navigation: NavItem[] = [
+interface NavSection {
+  label?: string;
+  items: NavItem[];
+}
+
+const sections: NavSection[] = [
   {
-    name: 'Dashboard',
-    href: '/dashboard',
-    icon: <LayoutDashboard className="h-[18px] w-[18px]" />
-  },
-  {
-    name: 'Attendance',
-    icon: <Clock className="h-[18px] w-[18px]" />,
-    children: [
-      { name: 'My Attendance', href: '/attendance', icon: <Clock className="h-4 w-4" /> },
-      { name: 'Regularization', href: '/attendance/regularization', icon: <ClipboardEdit className="h-4 w-4" /> },
+    items: [
+      {
+        name: 'Dashboard',
+        href: '/dashboard',
+        icon: <LayoutDashboard className="h-[18px] w-[18px]" />,
+      },
     ],
   },
   {
-    name: 'Employees',
-    href: '/employees',
-    icon: <Users className="h-[18px] w-[18px]" />,
-    roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER]
-  },
-  {
-    name: 'Org Chart',
-    href: '/org-chart',
-    icon: <Network className="h-[18px] w-[18px]" />,
-    roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER]
-  },
-  {
-    name: 'Leave',
-    href: '/leave',
-    icon: <Calendar className="h-[18px] w-[18px]" />
-  },
-  {
-    name: 'Comp-Off',
-    href: '/leave/comp-off',
-    icon: <CalendarPlus className="h-[18px] w-[18px]" />
-  },
-  {
-    name: 'Payroll',
-    icon: <DollarSign className="h-[18px] w-[18px]" />,
-    roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN],
-    children: [
-      { name: 'Payroll Runs', href: '/payroll', icon: <DollarSign className="h-4 w-4" /> },
-      { name: 'Employee Payslips', href: '/payroll/payslips', icon: <Receipt className="h-4 w-4" /> },
+    label: 'MY WORKSPACE',
+    items: [
+      {
+        name: 'Attendance',
+        icon: <Clock className="h-[18px] w-[18px]" />,
+        children: [
+          { name: 'My Attendance', href: '/attendance', icon: <Clock className="h-4 w-4" /> },
+          { name: 'Regularization', href: '/attendance/regularization', icon: <ClipboardEdit className="h-4 w-4" /> },
+        ],
+      },
+      { name: 'Leave', href: '/leave', icon: <Calendar className="h-[18px] w-[18px]" /> },
+      { name: 'Comp-Off', href: '/leave/comp-off', icon: <CalendarPlus className="h-[18px] w-[18px]" /> },
+      { name: 'My Payslips', href: '/my-payslips', icon: <Receipt className="h-[18px] w-[18px]" /> },
+      { name: 'Expenses', href: '/expenses', icon: <Wallet className="h-[18px] w-[18px]" /> },
+      { name: 'My Letters', href: '/my-letters', icon: <FileText className="h-[18px] w-[18px]" /> },
+      { name: 'My Profile', href: '/my-profile', icon: <UserCircle className="h-[18px] w-[18px]" /> },
+      { name: 'Notifications', href: '/notifications', icon: <Bell className="h-[18px] w-[18px]" /> },
+      { name: 'My Onboarding', href: '/onboarding/my-tasks', icon: <ClipboardList className="h-[18px] w-[18px]" /> },
     ],
   },
   {
-    name: 'My Payslips',
-    href: '/my-payslips',
-    icon: <Receipt className="h-[18px] w-[18px]" />
-  },
-  {
-    name: 'Expenses',
-    href: '/expenses',
-    icon: <Wallet className="h-[18px] w-[18px]" />
-  },
-  {
-    name: 'Exit Management',
-    href: '/exit-management',
-    icon: <LogOut className="h-[18px] w-[18px]" />,
-    roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN],
-  },
-  {
-    name: 'Onboarding',
-    href: '/onboarding',
-    icon: <ClipboardList className="h-[18px] w-[18px]" />,
-    roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN],
-  },
-  {
-    name: 'My Onboarding',
-    href: '/onboarding/my-tasks',
-    icon: <ClipboardList className="h-[18px] w-[18px]" />
-  },
-  {
-    name: 'Notifications',
-    href: '/notifications',
-    icon: <Bell className="h-[18px] w-[18px]" />
-  },
-  {
-    name: 'My Letters',
-    href: '/my-letters',
-    icon: <FileText className="h-[18px] w-[18px]" />
-  },
-  {
-    name: 'My Profile',
-    href: '/my-profile',
-    icon: <UserCircle className="h-[18px] w-[18px]" />
-  },
-  {
-    name: 'Performance',
-    icon: <Target className="h-[18px] w-[18px]" />,
-    children: [
-      { name: 'My Reviews', href: '/performance', icon: <Star className="h-4 w-4" /> },
-      { name: 'Team Reviews', href: '/performance/team', icon: <Users className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
-      { name: 'Review Cycles', href: '/performance/cycles', icon: <Target className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
+    label: 'PEOPLE & ORG',
+    items: [
+      { name: 'Employees', href: '/employees', icon: <Users className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
+      { name: 'Org Chart', href: '/org-chart', icon: <Network className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
+      { name: 'Onboarding', href: '/onboarding', icon: <ClipboardList className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
+      { name: 'Exit Management', href: '/exit-management', icon: <LogOut className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
     ],
   },
   {
-    name: 'Approvals',
-    icon: <ClipboardCheck className="h-[18px] w-[18px]" />,
-    roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER],
-    children: [
-      { name: 'OT Approvals', href: '/approvals/ot', icon: <Clock className="h-4 w-4" /> },
-      { name: 'Leave Approvals', href: '/approvals/leave', icon: <Calendar className="h-4 w-4" /> },
-      { name: 'Change Requests', href: '/approvals/change-requests', icon: <GitPullRequest className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
-      { name: 'Expense Claims', href: '/approvals/expenses', icon: <Wallet className="h-4 w-4" /> },
-      { name: 'Comp-Off', href: '/approvals/comp-off', icon: <CalendarPlus className="h-4 w-4" /> },
-      { name: 'Regularization', href: '/approvals/regularization', icon: <ClipboardEdit className="h-4 w-4" /> },
-    ]
+    label: 'FINANCE',
+    items: [
+      {
+        name: 'Payroll',
+        icon: <DollarSign className="h-[18px] w-[18px]" />,
+        roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN],
+        children: [
+          { name: 'Payroll Runs', href: '/payroll', icon: <DollarSign className="h-4 w-4" /> },
+          { name: 'Employee Payslips', href: '/payroll/payslips', icon: <Receipt className="h-4 w-4" /> },
+        ],
+      },
+    ],
   },
   {
-    name: 'Reports',
-    href: '/reports',
-    icon: <FileSpreadsheet className="h-[18px] w-[18px]" />,
-    roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER],
+    label: 'PERFORMANCE',
+    items: [
+      {
+        name: 'Performance',
+        icon: <Target className="h-[18px] w-[18px]" />,
+        children: [
+          { name: 'My Reviews', href: '/performance', icon: <Star className="h-4 w-4" /> },
+          { name: 'Team Reviews', href: '/performance/team', icon: <Users className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
+          { name: 'Review Cycles', href: '/performance/cycles', icon: <Target className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
+        ],
+      },
+    ],
   },
   {
-    name: 'Companies',
-    href: '/companies',
-    icon: <Building2 className="h-[18px] w-[18px]" />,
-    roles: [UserRole.SUPER_ADMIN],
+    label: 'APPROVALS',
+    items: [
+      {
+        name: 'Approvals',
+        icon: <ClipboardCheck className="h-[18px] w-[18px]" />,
+        roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER],
+        children: [
+          { name: 'OT Approvals', href: '/approvals/ot', icon: <Clock className="h-4 w-4" /> },
+          { name: 'Leave Approvals', href: '/approvals/leave', icon: <Calendar className="h-4 w-4" /> },
+          { name: 'Change Requests', href: '/approvals/change-requests', icon: <GitPullRequest className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
+          { name: 'Expense Claims', href: '/approvals/expenses', icon: <Wallet className="h-4 w-4" /> },
+          { name: 'Comp-Off', href: '/approvals/comp-off', icon: <CalendarPlus className="h-4 w-4" /> },
+          { name: 'Regularization', href: '/approvals/regularization', icon: <ClipboardEdit className="h-4 w-4" /> },
+        ],
+      },
+    ],
   },
   {
-    name: 'Admin',
-    icon: <Settings className="h-[18px] w-[18px]" />,
-    roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN],
-    children: [
-      { name: 'Departments', href: '/admin/departments', icon: <Building2 className="h-4 w-4" /> },
-      { name: 'Designations', href: '/admin/designations', icon: <Briefcase className="h-4 w-4" /> },
-      { name: 'Branches', href: '/admin/branches', icon: <MapPin className="h-4 w-4" /> },
-      { name: 'OT Rules', href: '/admin/ot-rules', icon: <Clock className="h-4 w-4" /> },
-      { name: 'Holidays', href: '/admin/holidays', icon: <CalendarDays className="h-4 w-4" /> },
-      { name: 'Shifts', href: '/admin/shifts', icon: <Timer className="h-4 w-4" /> },
-      { name: 'Leave Types', href: '/admin/leave-types', icon: <FileText className="h-4 w-4" /> },
-      { name: 'Leave Balances', href: '/admin/leave-balances', icon: <Calendar className="h-4 w-4" /> },
-      { name: 'Accrual Rules', href: '/admin/accrual-rules', icon: <CalendarClock className="h-4 w-4" /> },
-      { name: 'Accrual History', href: '/admin/accrual-history', icon: <CalendarCheck className="h-4 w-4" /> },
-      { name: 'Announcements', href: '/admin/announcements', icon: <Megaphone className="h-4 w-4" /> },
-      { name: 'Expense Categories', href: '/admin/expense-categories', icon: <Tags className="h-4 w-4" /> },
-      { name: 'Onboarding Templates', href: '/admin/onboarding-templates', icon: <ClipboardList className="h-4 w-4" /> },
-      { name: 'Document Expiry', href: '/admin/document-expiry', icon: <FileWarning className="h-4 w-4" /> },
-      { name: 'Letters', href: '/admin/letters', icon: <FileText className="h-4 w-4" /> },
-      { name: 'Audit Logs', href: '/admin/audit', icon: <Shield className="h-4 w-4" /> },
-    ]
+    label: 'REPORTS',
+    items: [
+      { name: 'Reports', href: '/reports', icon: <FileSpreadsheet className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
+      { name: 'Companies', href: '/companies', icon: <Building2 className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN] },
+    ],
+  },
+  {
+    label: 'ADMINISTRATION',
+    items: [
+      {
+        name: 'Admin',
+        icon: <Settings className="h-[18px] w-[18px]" />,
+        roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN],
+        children: [
+          { name: 'Departments', href: '/admin/departments', icon: <Building2 className="h-4 w-4" /> },
+          { name: 'Designations', href: '/admin/designations', icon: <Briefcase className="h-4 w-4" /> },
+          { name: 'Branches', href: '/admin/branches', icon: <MapPin className="h-4 w-4" /> },
+          { name: 'OT Rules', href: '/admin/ot-rules', icon: <Clock className="h-4 w-4" /> },
+          { name: 'Holidays', href: '/admin/holidays', icon: <CalendarDays className="h-4 w-4" /> },
+          { name: 'Shifts', href: '/admin/shifts', icon: <Timer className="h-4 w-4" /> },
+          { name: 'Leave Types', href: '/admin/leave-types', icon: <FileText className="h-4 w-4" /> },
+          { name: 'Leave Balances', href: '/admin/leave-balances', icon: <Calendar className="h-4 w-4" /> },
+          { name: 'Accrual Rules', href: '/admin/accrual-rules', icon: <CalendarClock className="h-4 w-4" /> },
+          { name: 'Accrual History', href: '/admin/accrual-history', icon: <CalendarCheck className="h-4 w-4" /> },
+          { name: 'Announcements', href: '/admin/announcements', icon: <Megaphone className="h-4 w-4" /> },
+          { name: 'Expense Categories', href: '/admin/expense-categories', icon: <Tags className="h-4 w-4" /> },
+          { name: 'Onboarding Templates', href: '/admin/onboarding-templates', icon: <ClipboardList className="h-4 w-4" /> },
+          { name: 'Document Expiry', href: '/admin/document-expiry', icon: <FileWarning className="h-4 w-4" /> },
+          { name: 'Letters', href: '/admin/letters', icon: <FileText className="h-4 w-4" /> },
+          { name: 'Audit Logs', href: '/admin/audit', icon: <Shield className="h-4 w-4" /> },
+        ],
+      },
+    ],
   },
 ];
 
@@ -207,7 +189,7 @@ interface SidebarProps {
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
   const { user, hasRole } = useAuth();
-  const [expandedItems, setExpandedItems] = useState<string[]>(['Attendance', 'Performance', 'Approvals', 'Admin', 'Payroll']);
+  const [expandedItems, setExpandedItems] = useState<string[]>(['Attendance']);
   const [tenantLogoUrl, setTenantLogoUrl] = useState<string | null>(null);
   const [tenantName, setTenantName] = useState<string | null>(null);
 
@@ -216,7 +198,6 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
     const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api';
     api.get('/tenant-info')
       .then((r) => {
-        // Compute absolute URL for the public logo endpoint (no auth required)
         setTenantLogoUrl(r.data.logoUrl ? `${base}/companies/${r.data.id}/logo` : null);
         setTenantName(r.data.name ?? null);
       })
@@ -231,22 +212,25 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
     );
   };
 
-  const filteredNavigation = navigation.filter((item) => {
-    if (!item.roles) return true;
-    return hasRole(...item.roles);
-  });
-
   const isActive = (href?: string) => {
     if (!href) return false;
     return pathname === href || pathname.startsWith(href + '/');
   };
+
+  const filterItems = (items: NavItem[]): NavItem[] =>
+    items.filter(item => {
+      if (item.roles && !hasRole(...item.roles)) return false;
+      if (item.children) {
+        return item.children.some(child => !child.roles || hasRole(...child.roles));
+      }
+      return true;
+    });
 
   const renderNavItem = (item: NavItem, isChild = false) => {
     const hasChildren = item.children && item.children.length > 0;
     const isExpanded = expandedItems.includes(item.name);
     const active = isActive(item.href);
 
-    // Filter children by role
     const filteredChildren = item.children?.filter(child => {
       if (!child.roles) return true;
       return hasRole(...child.roles);
@@ -355,8 +339,24 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 space-y-0.5 overflow-y-auto overscroll-contain px-3 py-3 sm:py-4">
-          {filteredNavigation.map(item => renderNavItem(item))}
+        <nav className="flex-1 overflow-y-auto overscroll-contain px-3 py-3 sm:py-4">
+          {sections.map((section, sectionIdx) => {
+            const visibleItems = filterItems(section.items);
+            if (visibleItems.length === 0) return null;
+
+            return (
+              <div key={section.label ?? `section-${sectionIdx}`}>
+                {section.label && (
+                  <p className="mt-5 mb-1.5 px-3 text-[11px] font-semibold uppercase tracking-wider text-warm-400">
+                    {section.label}
+                  </p>
+                )}
+                <div className="space-y-0.5">
+                  {visibleItems.map(item => renderNavItem(item))}
+                </div>
+              </div>
+            );
+          })}
         </nav>
 
         {/* User info */}

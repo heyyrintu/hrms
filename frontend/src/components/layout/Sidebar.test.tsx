@@ -99,16 +99,23 @@ describe('Sidebar', () => {
 
   it('toggles expandable groups when clicked', () => {
     render(<Sidebar {...defaultProps} />);
-    // Performance group should be expanded by default
-    expect(screen.getByText('My Reviews')).toBeInTheDocument();
-
-    // Click to collapse
-    fireEvent.click(screen.getByText('Performance'));
+    // Performance group should be collapsed by default
     expect(screen.queryByText('My Reviews')).not.toBeInTheDocument();
 
-    // Click to expand again
+    // Click to expand
     fireEvent.click(screen.getByText('Performance'));
     expect(screen.getByText('My Reviews')).toBeInTheDocument();
+
+    // Click to collapse again
+    fireEvent.click(screen.getByText('Performance'));
+    expect(screen.queryByText('My Reviews')).not.toBeInTheDocument();
+  });
+
+  it('renders section headers', () => {
+    render(<Sidebar {...defaultProps} />);
+    expect(screen.getByText('MY WORKSPACE')).toBeInTheDocument();
+    expect(screen.getByText('PEOPLE & ORG')).toBeInTheDocument();
+    expect(screen.getByText('ADMINISTRATION')).toBeInTheDocument();
   });
 
   it('applies translate-x when closed', () => {
