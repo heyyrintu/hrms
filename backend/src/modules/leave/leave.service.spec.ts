@@ -186,13 +186,13 @@ describe('LeaveService', () => {
     it('should throw BadRequestException when insufficient balance', async () => {
       prisma.leaveType.findFirst.mockResolvedValue(mockLeaveType);
       prisma.leaveRequest.findFirst.mockResolvedValue(null); // no overlap
-      prisma.leaveBalance.findFirst.mockResolvedValue({
+      prisma.leaveBalance.findMany.mockResolvedValue([{
         ...mockBalance,
         totalDays: 2,
         usedDays: 1,
         pendingDays: 1,
         carriedOver: 0,
-      });
+      }]);
 
       // Available = 2 + 0 - 1 - 1 = 0, requesting 3 days (Mon-Wed)
       await expect(
@@ -204,7 +204,7 @@ describe('LeaveService', () => {
       const lopType = { ...mockLeaveType, id: 'lt-lop', code: 'LOP' };
       prisma.leaveType.findFirst.mockResolvedValue(lopType);
       prisma.leaveRequest.findFirst.mockResolvedValue(null);
-      prisma.leaveBalance.findFirst.mockResolvedValue(null); // no balance at all
+      prisma.leaveBalance.findMany.mockResolvedValue([]); // no balance at all
 
       prisma.leaveRequest.create.mockResolvedValue({
         id: 'req-new',
@@ -221,6 +221,62 @@ describe('LeaveService', () => {
       expect(result.id).toBe('req-new');
     });
 
+    it('should reserve days against each calendar year the request spans', async () => {
+      // Wed 31 Dec 2025 to Fri 2 Jan 2026: one chargeable day in 2025 and
+      // two in 2026 (1 Jan is a Thursday, 2 Jan a Friday).
+      const crossYearDto = {
+        leaveTypeId: 'lt-1',
+        startDate: '2025-12-31',
+        endDate: '2026-01-02',
+        reason: 'New Year break',
+      };
+      prisma.leaveType.findFirst.mockResolvedValue(mockLeaveType);
+      prisma.leaveRequest.findFirst.mockResolvedValue(null);
+      prisma.leaveBalance.findMany.mockResolvedValue([
+        { ...mockBalance, id: 'bal-2025', year: 2025 },
+        { ...mockBalance, id: 'bal-2026', year: 2026 },
+      ]);
+      prisma.leaveRequest.create.mockResolvedValue({
+        id: 'req-new',
+        totalDays: 3,
+        leaveType: mockLeaveType,
+        employee: { id: employeeId },
+      });
+      prisma.leaveBalance.update.mockResolvedValue({});
+
+      await service.createRequest(tenantId, employeeId, crossYearDto);
+
+      expect(prisma.leaveBalance.update).toHaveBeenCalledWith({
+        where: { id: 'bal-2025' },
+        data: { pendingDays: { increment: 1 } },
+      });
+      expect(prisma.leaveBalance.update).toHaveBeenCalledWith({
+        where: { id: 'bal-2026' },
+        data: { pendingDays: { increment: 2 } },
+      });
+    });
+
+    it('should reject when the later year lacks the balance, not just the starting year', async () => {
+      const crossYearDto = {
+        leaveTypeId: 'lt-1',
+        startDate: '2025-12-31',
+        endDate: '2026-01-02',
+        reason: 'New Year break',
+      };
+      prisma.leaveType.findFirst.mockResolvedValue(mockLeaveType);
+      prisma.leaveRequest.findFirst.mockResolvedValue(null);
+      prisma.leaveBalance.findMany.mockResolvedValue([
+        { ...mockBalance, id: 'bal-2025', year: 2025 },
+        // 2026 is exhausted: 12 total, 12 already used.
+        { ...mockBalance, id: 'bal-2026', year: 2026, usedDays: 12 },
+      ]);
+
+      await expect(
+        service.createRequest(tenantId, employeeId, crossYearDto),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.leaveRequest.create).not.toHaveBeenCalled();
+    });
+
     it('should not charge leave for a company holiday inside the range', async () => {
       // Mon 10 Mar - Wed 12 Mar 2025, Tuesday is a declared holiday
       holidays.getHolidaysBetween.mockResolvedValue([
@@ -228,7 +284,7 @@ describe('LeaveService', () => {
       ]);
       prisma.leaveType.findFirst.mockResolvedValue(mockLeaveType);
       prisma.leaveRequest.findFirst.mockResolvedValue(null);
-      prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
+      prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
       prisma.leaveRequest.create.mockResolvedValue({
         id: 'req-new',
         totalDays: 2,
@@ -252,7 +308,7 @@ describe('LeaveService', () => {
     it('should create request and increment pending days in balance', async () => {
       prisma.leaveType.findFirst.mockResolvedValue(mockLeaveType);
       prisma.leaveRequest.findFirst.mockResolvedValue(null);
-      prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
+      prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
 
       const createdRequest = {
         id: 'req-new',
@@ -280,7 +336,7 @@ describe('LeaveService', () => {
     it('should not update balance when no balance record exists', async () => {
       prisma.leaveType.findFirst.mockResolvedValue({ ...mockLeaveType, code: 'LOP' });
       prisma.leaveRequest.findFirst.mockResolvedValue(null);
-      prisma.leaveBalance.findFirst.mockResolvedValue(null);
+      prisma.leaveBalance.findMany.mockResolvedValue([]);
 
       prisma.leaveRequest.create.mockResolvedValue({
         id: 'req-new',
@@ -437,7 +493,7 @@ describe('LeaveService', () => {
         leaveType: mockLeaveType,
         employee: { ...mockLeaveRequest.employee, email: 'john@test.com' },
       });
-      prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
+      prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
       prisma.leaveBalance.update.mockResolvedValue({});
       prisma.attendanceRecord.upsert.mockResolvedValue({});
 
@@ -470,7 +526,7 @@ describe('LeaveService', () => {
           clientVersion: 'test',
         }),
       );
-      prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
+      prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
 
       await expect(
         service.approveRequest(tenantId, 'req-1', approverId, 'SUPER_ADMIN', {}),
@@ -488,7 +544,7 @@ describe('LeaveService', () => {
         leaveType: mockLeaveType,
         employee: { ...mockLeaveRequest.employee, email: 'john@test.com' },
       });
-      prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
+      prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
       prisma.leaveBalance.update.mockResolvedValue({});
       prisma.attendanceRecord.upsert.mockResolvedValue({});
 
@@ -511,7 +567,7 @@ describe('LeaveService', () => {
         leaveType: mockLeaveType,
         employee: { ...mockLeaveRequest.employee, email: 'john@test.com' },
       });
-      prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
+      prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
       prisma.leaveBalance.update.mockResolvedValue({});
       prisma.attendanceRecord.upsert.mockResolvedValue({});
 
@@ -529,7 +585,7 @@ describe('LeaveService', () => {
         leaveType: mockLeaveType,
         employee: { ...mockLeaveRequest.employee, email: 'john@test.com' },
       });
-      prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
+      prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
       prisma.leaveBalance.update.mockResolvedValue({});
       prisma.attendanceRecord.upsert.mockResolvedValue({});
 
@@ -579,7 +635,7 @@ describe('LeaveService', () => {
         leaveType: mockLeaveType,
         employee: { ...mockLeaveRequest.employee, email: 'john@test.com' },
       });
-      prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
+      prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
       prisma.leaveBalance.update.mockResolvedValue({});
 
       const result = await service.rejectRequest(
@@ -615,7 +671,7 @@ describe('LeaveService', () => {
           clientVersion: 'test',
         }),
       );
-      prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
+      prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
 
       await expect(
         service.rejectRequest(tenantId, 'req-1', approverId, 'MANAGER', {}),
@@ -632,7 +688,7 @@ describe('LeaveService', () => {
         leaveType: mockLeaveType,
         employee: { ...mockLeaveRequest.employee, email: 'john@test.com' },
       });
-      prisma.leaveBalance.findFirst.mockResolvedValue(null);
+      prisma.leaveBalance.findMany.mockResolvedValue([]);
 
       await service.rejectRequest(tenantId, 'req-1', approverId, 'SUPER_ADMIN', {
         approverNote: 'Denied',
@@ -667,7 +723,7 @@ describe('LeaveService', () => {
         ...mockLeaveRequest,
         status: 'CANCELLED',
       });
-      prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
+      prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
       prisma.leaveBalance.update.mockResolvedValue({});
 
       const result = await service.cancelRequest(tenantId, 'req-1', employeeId);
@@ -701,7 +757,7 @@ describe('LeaveService', () => {
           clientVersion: 'test',
         }),
       );
-      prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
+      prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
 
       await expect(
         service.cancelRequest(tenantId, 'req-1', employeeId),
@@ -716,7 +772,7 @@ describe('LeaveService', () => {
         ...mockLeaveRequest,
         status: 'CANCELLED',
       });
-      prisma.leaveBalance.findFirst.mockResolvedValue(null);
+      prisma.leaveBalance.findMany.mockResolvedValue([]);
 
       await service.cancelRequest(tenantId, 'req-1', employeeId);
 
@@ -797,6 +853,7 @@ describe('LeaveService', () => {
   // -----------------------------------------------------------
   describe('updateBalance', () => {
     it('should update existing balance', async () => {
+      // updateBalance targets one specific year, so it still uses findFirst.
       prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
       prisma.leaveBalance.update.mockResolvedValue({
         ...mockBalance,
@@ -821,7 +878,7 @@ describe('LeaveService', () => {
     });
 
     it('should create balance when none exists', async () => {
-      prisma.leaveBalance.findFirst.mockResolvedValue(null);
+      prisma.leaveBalance.findMany.mockResolvedValue([]);
       prisma.leaveBalance.create.mockResolvedValue({
         id: 'bal-new',
         totalDays: 20,
@@ -866,7 +923,7 @@ describe('LeaveService', () => {
         { id: 'emp-1' },
         { id: 'emp-2' },
       ]);
-      prisma.leaveBalance.findFirst.mockResolvedValue(null); // no existing
+      prisma.leaveBalance.findMany.mockResolvedValue([]); // no existing
       prisma.leaveBalance.create.mockResolvedValue({});
 
       const result = await service.initializeBalances(tenantId, { year: 2025 });

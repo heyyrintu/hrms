@@ -76,10 +76,14 @@ export class LeaveService {
       }
     }
 
-    // Calculate total days (weekends and company holidays are not charged)
-    const totalDays = dto.isHalfDay
-      ? 0.5
-      : await this.calculateLeaveDays(tenantId, startDate, endDate);
+    // Chargeable days per calendar year (weekends and company holidays excluded)
+    const daysByYear = await this.chargeableDaysByYear(
+      tenantId,
+      startDate,
+      endDate,
+      !!dto.isHalfDay,
+    );
+    const totalDays = [...daysByYear.values()].reduce((a, b) => a + b, 0);
 
     // Check if leave type exists
     const leaveType = await this.prisma.leaveType.findFirst({
@@ -109,24 +113,30 @@ export class LeaveService {
       throw new ConflictException('Leave request overlaps with an existing request');
     }
 
-    // Check leave balance
-    const balance = await this.prisma.leaveBalance.findFirst({
+    // Check the balance of every year the request touches, not just the first.
+    const balances = await this.prisma.leaveBalance.findMany({
       where: {
         tenantId,
         employeeId,
         leaveTypeId: dto.leaveTypeId,
-        year: startDate.getFullYear(),
+        year: { in: [...daysByYear.keys()] },
       },
     });
+    const balanceByYear = new Map(balances.map((b) => [b.year, b]));
 
-    const availableDays = balance
-      ? Number(balance.totalDays) + Number(balance.carriedOver) - Number(balance.usedDays) - Number(balance.pendingDays)
-      : 0;
+    if (leaveType.code !== 'LOP') {
+      for (const [year, days] of daysByYear) {
+        const balance = balanceByYear.get(year);
+        const availableDays = balance
+          ? Number(balance.totalDays) + Number(balance.carriedOver) - Number(balance.usedDays) - Number(balance.pendingDays)
+          : 0;
 
-    if (totalDays > availableDays && leaveType.code !== 'LOP') {
-      throw new BadRequestException(
-        `Insufficient leave balance. Available: ${availableDays}, Requested: ${totalDays}`,
-      );
+        if (days > availableDays) {
+          throw new BadRequestException(
+            `Insufficient leave balance for ${year}. Available: ${availableDays}, Requested: ${days}`,
+          );
+        }
+      }
     }
 
     // Create leave request
@@ -156,14 +166,17 @@ export class LeaveService {
       },
     });
 
-    // Update pending days in balance
-    if (balance) {
-      await this.prisma.leaveBalance.update({
-        where: { id: balance.id },
-        data: {
-          pendingDays: { increment: totalDays },
-        },
-      });
+    // Reserve the days against each year's balance
+    for (const [year, days] of daysByYear) {
+      const balance = balanceByYear.get(year);
+      if (balance) {
+        await this.prisma.leaveBalance.update({
+          where: { id: balance.id },
+          data: {
+            pendingDays: { increment: days },
+          },
+        });
+      }
     }
 
     // Email the manager about new leave request (fire and forget)
@@ -328,6 +341,9 @@ export class LeaveService {
     }
     // SUPER_ADMIN and HR_ADMIN can approve any leave request
 
+    // Same per-year split that was reserved when the request was created.
+    const daysByYear = await this.storedRequestDaysByYear(tenantId, request);
+
     // Transition + balance adjustment are atomic, and the transition only
     // succeeds if the request is still PENDING, so a concurrent approve/reject
     // cannot apply the balance change twice.
@@ -354,21 +370,24 @@ export class LeaveService {
         throw err;
       }
 
-      const balance = await tx.leaveBalance.findFirst({
+      // Confirm the same per-year split that was reserved at creation.
+      const balances = await tx.leaveBalance.findMany({
         where: {
           tenantId,
           employeeId: request.employeeId,
           leaveTypeId: request.leaveTypeId,
-          year: request.startDate.getFullYear(),
+          year: { in: [...daysByYear.keys()] },
         },
       });
 
-      if (balance) {
+      for (const balance of balances) {
+        const days = daysByYear.get(balance.year) ?? 0;
+        if (days === 0) continue;
         await tx.leaveBalance.update({
           where: { id: balance.id },
           data: {
-            usedDays: { increment: Number(request.totalDays) },
-            pendingDays: { decrement: Number(request.totalDays) },
+            usedDays: { increment: days },
+            pendingDays: { decrement: days },
           },
         });
       }
@@ -447,6 +466,9 @@ export class LeaveService {
     }
     // SUPER_ADMIN and HR_ADMIN can reject any leave request
 
+    // Same per-year split that was reserved when the request was created.
+    const daysByYear = await this.storedRequestDaysByYear(tenantId, request);
+
     const updated = await this.prisma.$transaction(async (tx) => {
       let transitioned;
       try {
@@ -469,21 +491,23 @@ export class LeaveService {
         throw err;
       }
 
-      // Remove from pending
-      const balance = await tx.leaveBalance.findFirst({
+      // Release the same per-year reservation that was taken at creation.
+      const balances = await tx.leaveBalance.findMany({
         where: {
           tenantId,
           employeeId: request.employeeId,
           leaveTypeId: request.leaveTypeId,
-          year: request.startDate.getFullYear(),
+          year: { in: [...daysByYear.keys()] },
         },
       });
 
-      if (balance) {
+      for (const balance of balances) {
+        const days = daysByYear.get(balance.year) ?? 0;
+        if (days === 0) continue;
         await tx.leaveBalance.update({
           where: { id: balance.id },
           data: {
-            pendingDays: { decrement: Number(request.totalDays) },
+            pendingDays: { decrement: days },
           },
         });
       }
@@ -538,6 +562,9 @@ export class LeaveService {
       throw new NotFoundException('Leave request not found or cannot be cancelled');
     }
 
+    // Same per-year split that was reserved when the request was created.
+    const daysByYear = await this.storedRequestDaysByYear(tenantId, request);
+
     return this.prisma.$transaction(async (tx) => {
       let transitioned;
       try {
@@ -552,20 +579,23 @@ export class LeaveService {
         throw err;
       }
 
-      const balance = await tx.leaveBalance.findFirst({
+      // Release the same per-year reservation that was taken at creation.
+      const balances = await tx.leaveBalance.findMany({
         where: {
           tenantId,
           employeeId: request.employeeId,
           leaveTypeId: request.leaveTypeId,
-          year: request.startDate.getFullYear(),
+          year: { in: [...daysByYear.keys()] },
         },
       });
 
-      if (balance) {
+      for (const balance of balances) {
+        const days = daysByYear.get(balance.year) ?? 0;
+        if (days === 0) continue;
         await tx.leaveBalance.update({
           where: { id: balance.id },
           data: {
-            pendingDays: { decrement: Number(request.totalDays) },
+            pendingDays: { decrement: days },
           },
         });
       }
@@ -705,30 +735,71 @@ export class LeaveService {
   }
 
   /**
-   * Calculate chargeable leave days: excludes weekends and the tenant's
-   * non-optional company holidays that fall inside the range.
+   * Chargeable leave days split by the calendar year each day falls in.
+   *
+   * Leave balances are per year, so a request spanning New Year has to be
+   * checked and deducted against both years. Charging the whole thing to the
+   * starting year both blocked employees who had next year's allowance and left
+   * next year's balance never reflecting days actually taken in it.
    */
-  private async calculateLeaveDays(
+  private async chargeableDaysByYear(
     tenantId: string,
     startDate: Date,
     endDate: Date,
-  ): Promise<number> {
+    isHalfDay: boolean,
+  ): Promise<Map<number, number>> {
+    if (isHalfDay) {
+      return new Map([[startDate.getFullYear(), 0.5]]);
+    }
+
     const holidays = await this.holidaysService.getHolidaysBetween(tenantId, startDate, endDate);
     const holidayKeys = new Set(holidays.map((h) => this.dayKey(new Date(h.date))));
 
-    let count = 0;
+    const byYear = new Map<number, number>();
     const current = new Date(startDate);
 
     while (current <= endDate) {
       const dayOfWeek = current.getDay();
       const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
       if (!isWeekend && !holidayKeys.has(this.dayKey(current))) {
-        count++;
+        const year = current.getFullYear();
+        byYear.set(year, (byYear.get(year) ?? 0) + 1);
       }
       current.setDate(current.getDate() + 1);
     }
 
-    return count;
+    return byYear;
+  }
+
+  /**
+   * The split to reverse or confirm for an already-stored request.
+   *
+   * Recomputed from the stored dates, then reconciled so it sums to the
+   * totalDays recorded at creation. Without that, a holiday declared after the
+   * request was raised would change the recomputed split and leave pendingDays
+   * permanently off by the difference.
+   */
+  private async storedRequestDaysByYear(
+    tenantId: string,
+    request: { startDate: Date; endDate: Date; isHalfDay: boolean; totalDays: unknown },
+  ): Promise<Map<number, number>> {
+    const byYear = await this.chargeableDaysByYear(
+      tenantId,
+      request.startDate,
+      request.endDate,
+      request.isHalfDay,
+    );
+
+    const recomputed = [...byYear.values()].reduce((a, b) => a + b, 0);
+    const stored = Number(request.totalDays);
+    const drift = stored - recomputed;
+
+    if (drift !== 0) {
+      const firstYear = byYear.keys().next().value ?? request.startDate.getFullYear();
+      byYear.set(firstYear, (byYear.get(firstYear) ?? 0) + drift);
+    }
+
+    return byYear;
   }
 
   /** Calendar-day key (UTC) so a holiday matches regardless of stored time-of-day. */
