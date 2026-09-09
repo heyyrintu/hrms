@@ -104,22 +104,80 @@ the deductions JSON, because returns and reconciliations query them directly:
 `lwfEmployee`, `lwfEmployer` and `tds`. `taxComputation` holds how the TDS
 figure was arrived at, so it can be explained to an employee who asks.
 
+## Returns and challan files
+
+Five files are generated from a completed payroll run, at
+`GET /api/payroll/returns/:payrollRunId/...`:
+
+| Route | Produces |
+|---|---|
+| `pf-ecr` | EPFO Electronic Challan cum Return, `#~#` delimited |
+| `esi` | ESIC monthly contribution file |
+| `professional-tax` | State professional tax challan working |
+| `form-24q` | Quarterly TDS return working, section 92B |
+| `bank-transfer` | Salary disbursement file for the bank |
+
+A run still in draft is refused, because a return filed from figures that may
+still change is worse than no return.
+
+**Check every file against your own portal template before you upload it.** The
+EPFO has revised the ECR layout more than once and the version here may not be
+the one your establishment is on. The bank transfer file is a generic NEFT
+layout; banks differ. The deductee section code on 24Q is fixed at 92B, which is
+right for ordinary salary payments and wrong for a government employee.
+
+## Form 16
+
+Part B only, at `GET /api/payroll/form16/my/:financialYear` for an employee's
+own certificate and `GET /api/payroll/form16/:employeeId/:financialYear` for
+payroll staff, each with a `/quarters` working and a `/pdf` rendering.
+
+**Part A cannot be produced here and is not attempted.** It is issued by TRACES
+against the returns actually filed; a document imitating it would be a forgery.
+Every response and every page of the PDF says so.
+
+The liability comes from the same `calculateIncomeTax` the monthly TDS engine
+uses, fed the year's actuals rather than a projection, so the certificate and
+the payslips reconcile by construction. The quarterly figures are what payroll
+deducted, not what was filed, and must be checked against the 24Q returns and
+challans before anything is issued to an employee.
+
+## Gratuity and full and final settlement
+
+Gratuity follows the Payment of Gratuity Act 1972: fifteen days of last drawn
+basic and dearness allowance for each completed year, on a twenty-six day month,
+with a part-year above six months rounded up. Five years of service qualify,
+waived on death or permanent disablement. The parameters are columns on
+`statutory_configs`, not constants. Section 10(10) caps the tax exemption at
+₹20,00,000; the amount payable itself is not capped, so an employer paying above
+the statutory ceiling gets the figure they actually owe with the excess marked
+taxable.
+
+Settlements live at `/api/exit/settlements`, computed from a separation and held
+as a draft until approved and paid. Status transitions are guarded in the
+database, so two approvals racing each other cannot both win. A settlement
+totals pro-rata salary, leave encashment, gratuity and other earnings against
+notice shortfall recovery, other recoveries and TDS.
+
 ## Not implemented
 
 Known and deliberate, so nobody assumes otherwise:
 
-- **Return and challan files.** No PF ECR, ESI return, PT challan or 24Q. The
-  figures are all present to build them from; the file writers are not.
-- **Form 16.** No Part A or Part B generation.
+- **Form 16 Part A.** TRACES issues it. See above.
 - **Investment proof workflow.** Declarations are taken at face value. Nothing
   collects, verifies or approves evidence, and no limit is enforced on a
   declared amount, so section 80C above ₹1,50,000 will be accepted as declared.
   Validate before it reaches payroll.
+- **Section 10 exemptions other than HRA.** Leave travel allowance, children's
+  education and similar are not tracked, because nothing records them.
+- **Section 10(10AA) leave encashment exemption.** Encashment on exit is
+  computed and paid; its exempt portion is not worked out.
+- **TDS on a settlement.** Taken as supplied rather than computed from the
+  year's position.
 - **Marginal relief on surcharge.** Surcharge is applied at the flat slab rate.
   For income just above a threshold this overstates the liability.
 - **Senior citizen exemptions.** The old regime uses the basic exemption for an
   individual below 60.
-- **Gratuity and full and final settlement.** Still absent, as before.
 - **Half-yearly professional tax states.** Tamil Nadu and others that levy
   half-yearly are not modelled; configure a monthly equivalent or leave the levy
   off for those states.
