@@ -53,6 +53,7 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
       DEFAULT_TENANT_ID: ${DEFAULT_TENANT_ID:-dev-tenant-001}
       FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY is required (64 hex chars)}
+      # Fail closed: unset rejects all device pushes. Use "*" to accept any source.
       BIOMETRIC_ALLOWED_IPS: ${BIOMETRIC_ALLOWED_IPS:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       STORAGE_TYPE: ${STORAGE_TYPE:-local}

@@ -12,8 +12,27 @@ function guardWith(allowed?: string) {
 }
 
 describe('DeviceIpGuard', () => {
-  it('allows every source when BIOMETRIC_ALLOWED_IPS is not configured', () => {
-    expect(guardWith(undefined).canActivate(ctxWithIp('203.0.113.9'))).toBe(true);
+  it('denies every source when BIOMETRIC_ALLOWED_IPS is not configured', () => {
+    expect(() => guardWith(undefined).canActivate(ctxWithIp('203.0.113.9'))).toThrow(
+      ForbiddenException,
+    );
+  });
+
+  it('denies when the value is present but empty', () => {
+    expect(() => guardWith('   ').canActivate(ctxWithIp('203.0.113.9'))).toThrow(
+      ForbiddenException,
+    );
+  });
+
+  it('allows any source only when the operator explicitly opts out with "*"', () => {
+    expect(guardWith('*').canActivate(ctxWithIp('203.0.113.9'))).toBe(true);
+  });
+
+  it('still applies the allowlist when "*" appears alongside real entries', () => {
+    // "*" is an all-or-nothing opt-out, not an entry that can be mixed in.
+    const guard = guardWith('*, 10.0.0.5');
+    expect(guard.canActivate(ctxWithIp('10.0.0.5'))).toBe(true);
+    expect(() => guard.canActivate(ctxWithIp('203.0.113.9'))).toThrow(ForbiddenException);
   });
 
   it('allows an IP that is on the list', () => {

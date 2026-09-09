@@ -168,11 +168,34 @@ Rotating the key requires decrypting with the old key and re-encrypting with
 the new one; there is no automated rotation.
 
 ### Biometric device push
-`/iclock/*` cannot authenticate the device, so restrict where pushes may come
-from with `BIOMETRIC_ALLOWED_IPS` (comma-separated IPv4 addresses or CIDR
-ranges). Leaving it empty accepts pushes from any address and logs a warning.
+ZKTeco/ESSL devices cannot send credentials, so `/iclock/*` is unauthenticated
+by protocol. Restrict where pushes may come from with `BIOMETRIC_ALLOWED_IPS`
+(comma-separated IPv4 addresses or CIDR ranges):
+
+```bash
+BIOMETRIC_ALLOWED_IPS="10.0.5.20,192.168.1.0/24"
+```
+
+**This fails closed.** With the variable unset or empty, every device push is
+rejected with a 403 and an error is logged. A forged punch feeds overtime and
+payroll, so an unset allowlist must not mean "accept everything". If a
+deployment genuinely cannot pin source addresses, opt out deliberately:
+
+```bash
+BIOMETRIC_ALLOWED_IPS="*"
+```
+
+which accepts any source and logs a warning at startup. `*` is honoured only
+when it is the sole entry; mixed with real entries it is ignored.
+
 If the API runs behind a reverse proxy, enable `trust proxy` so the real client
-address is seen.
+address is seen rather than the proxy's.
+
+Source-IP filtering is the only control the push protocol allows, so treat it
+as one layer, not the whole defence. The device firmware supports no shared
+secret or signature on this endpoint. For anything beyond a trusted LAN, put
+the devices on a private network or VPN, or terminate them at a reverse proxy
+that adds mutual TLS, rather than exposing `/iclock` to the internet.
 
 ### One-off import scripts
 `prisma/import-employees*.ts` delete existing tenant data before importing. They

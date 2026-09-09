@@ -11,40 +11,63 @@ import { Request } from 'express';
 /**
  * Source-IP allowlist for the unauthenticated ICLOCK device endpoints.
  *
- * ZKTeco/ESSL devices cannot send credentials, so the only defence against a
- * forged punch is restricting where pushes may come from. Configure
+ * ZKTeco/ESSL devices cannot send credentials, so restricting where pushes may
+ * come from is the only control available at this layer. Configure
  * BIOMETRIC_ALLOWED_IPS as a comma-separated list of IPv4 addresses and/or
- * CIDR ranges (e.g. "10.0.5.20, 192.168.1.0/24"). When unset, every source is
- * allowed and a warning is logged once at startup.
+ * CIDR ranges (e.g. "10.0.5.20, 192.168.1.0/24").
+ *
+ * This guard FAILS CLOSED: with nothing configured, every push is rejected.
+ * An access control that defaults to "off" is not a control, and forged
+ * punches flow straight into overtime and payroll. A deployment that genuinely
+ * cannot pin source IPs must opt out deliberately by setting the value to "*",
+ * which is loud in config review and logged as a warning at startup.
  *
  * If the API sits behind a proxy, set `app.set('trust proxy', ...)` so req.ip
- * reflects the real client.
+ * reflects the real client rather than the proxy.
  */
 @Injectable()
 export class DeviceIpGuard implements CanActivate {
   private readonly logger = new Logger(DeviceIpGuard.name);
   private readonly rules: Array<{ base: number; mask: number } | string>;
+  /** Explicit operator opt-out: accept pushes from any source. */
+  private readonly allowAll: boolean;
 
   constructor(config: ConfigService) {
-    const raw = config.get<string>('BIOMETRIC_ALLOWED_IPS') ?? '';
-    this.rules = raw
+    const entries = (config.get<string>('BIOMETRIC_ALLOWED_IPS') ?? '')
       .split(',')
       .map((s) => s.trim())
-      .filter(Boolean)
-      .map((entry) => this.parseRule(entry));
+      .filter(Boolean);
 
-    if (this.rules.length === 0) {
+    // "*" is an all-or-nothing opt-out, honoured only when it is the sole entry.
+    this.allowAll = entries.length === 1 && entries[0] === '*';
+    this.rules = this.allowAll
+      ? []
+      : entries.filter((e) => e !== '*').map((entry) => this.parseRule(entry));
+
+    if (this.allowAll) {
       this.logger.warn(
-        'BIOMETRIC_ALLOWED_IPS is not set: /iclock accepts pushes from any source IP',
+        'BIOMETRIC_ALLOWED_IPS="*": /iclock accepts device pushes from ANY source IP',
+      );
+    } else if (this.rules.length === 0) {
+      this.logger.error(
+        'BIOMETRIC_ALLOWED_IPS is not configured: all /iclock device pushes will be rejected. ' +
+          'Set it to your devices\' IPs or CIDR ranges, or to "*" to deliberately accept any source.',
       );
     }
   }
 
   canActivate(context: ExecutionContext): boolean {
-    if (this.rules.length === 0) return true;
+    if (this.allowAll) return true;
 
     const req = context.switchToHttp().getRequest<Request>();
     const ip = this.normalise(req.ip ?? '');
+
+    if (this.rules.length === 0) {
+      this.logger.error(
+        `Rejected /iclock request from ${ip}: BIOMETRIC_ALLOWED_IPS is not configured`,
+      );
+      throw new ForbiddenException('Device push endpoint is not configured');
+    }
 
     if (this.matches(ip)) return true;
 
