@@ -127,6 +127,13 @@ model User {
   role         UserRole  @default(EMPLOYEE)
   employeeId   String?   @unique
   isActive     Boolean   @default(true)
+  // Forces a password change at next sign-in. Set for accounts created by bulk
+  // import, which share one initial password.
+  mustChangePassword Boolean @default(false)
+  // Incremented whenever every existing session for this user must stop being
+  // valid (password change, forced sign-out). Tokens carry the version they
+  // were issued with and are rejected once it no longer matches.
+  tokenVersion Int       @default(0)
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -236,7 +243,9 @@ model Employee {
   phone          String?
   salutation     String?
   gender         String?
-  dateOfBirth    DateTime?
+  // A calendar date, not an instant: as a timestamp it shifted a day either
+  // side of UTC depending on who read it.
+  dateOfBirth    DateTime? @db.Date
   fatherName     String?
   aadhaarNumber  String?
   maritalStatus  String?

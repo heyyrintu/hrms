@@ -173,6 +173,91 @@ describe('AuthService', () => {
     });
   });
 
+  describe('validateUser token revocation', () => {
+    const payload = {
+      sub: 'user-1',
+      email: 'user@test.com',
+      tenantId: 'test-tenant',
+      role: 'EMPLOYEE' as any,
+      tokenVersion: 3,
+    };
+
+    it('should accept a token whose version matches the user record', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        email: 'user@test.com',
+        tenantId: 'test-tenant',
+        role: 'EMPLOYEE',
+        employeeId: 'emp-1',
+        isActive: true,
+        tokenVersion: 3,
+      });
+
+      await expect(service.validateUser(payload)).resolves.toMatchObject({
+        userId: 'user-1',
+      });
+    });
+
+    it('should reject a token issued before the password was changed', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        email: 'user@test.com',
+        tenantId: 'test-tenant',
+        role: 'EMPLOYEE',
+        employeeId: 'emp-1',
+        isActive: true,
+        tokenVersion: 4, // bumped by a password change since this token was issued
+      });
+
+      await expect(service.validateUser(payload)).rejects.toThrow(
+        UnauthorizedException,
+      );
+    });
+  });
+
+  describe('changePassword', () => {
+    const existing = {
+      id: 'user-1',
+      email: 'user@test.com',
+      passwordHash: 'old-hash',
+      tenantId: 'test-tenant',
+      isActive: true,
+      tokenVersion: 1,
+    };
+
+    it('should reject a wrong current password', async () => {
+      prisma.user.findUnique.mockResolvedValue(existing);
+      (mockBcrypt.compare as jest.Mock).mockResolvedValue(false);
+
+      await expect(
+        service.changePassword('user-1', { currentPassword: 'nope', newPassword: 'newpass123' }),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('should store the new hash, clear the forced-change flag and invalidate old tokens', async () => {
+      prisma.user.findUnique.mockResolvedValue(existing);
+      (mockBcrypt.compare as jest.Mock).mockResolvedValue(true);
+      (mockBcrypt.hash as jest.Mock).mockResolvedValue('new-hash');
+      prisma.user.update.mockResolvedValue({ ...existing, tokenVersion: 2 });
+
+      await service.changePassword('user-1', {
+        currentPassword: 'old',
+        newPassword: 'newpass123',
+      });
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: {
+          passwordHash: 'new-hash',
+          mustChangePassword: false,
+          // Bumping the version logs out every other session holding an old token.
+          tokenVersion: { increment: 1 },
+        },
+      });
+    });
+  });
+
   describe('login', () => {
     const loginDto = {
       email: 'user@test.com',
