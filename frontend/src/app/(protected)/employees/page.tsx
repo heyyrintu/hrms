@@ -1,4 +1,5 @@
 'use client';
+import { todayLocalIso } from '@/lib/date';
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
@@ -45,7 +46,7 @@ const initialFormData: EmployeeFormData = {
   departmentId: '',
   designationId: '',
   managerId: '',
-  joinDate: new Date().toISOString().split('T')[0],
+  joinDate: todayLocalIso(),
   exitDate: '',
   status: EmployeeStatus.ACTIVE,
 };

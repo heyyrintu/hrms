@@ -1,4 +1,5 @@
 'use client';
+import { isWeekend, parseLocalDate, todayLocalIso } from '@/lib/date';
 
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/Button';
@@ -58,7 +59,7 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
         if (isHalfDay && startDate) {
             setLeaveDays(0.5);
         } else if (startDate && endDate) {
-            const days = calculateLeaveDays(new Date(startDate), new Date(endDate));
+            const days = calculateLeaveDays(parseLocalDate(startDate), parseLocalDate(endDate));
             setLeaveDays(days);
         } else {
             setLeaveDays(0);
@@ -105,9 +106,8 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
         const current = new Date(start);
 
         while (current <= end) {
-            const dayOfWeek = current.getDay();
-            // Exclude Saturday (6) and Sunday (0)
-            if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+            // Local weekday: the inputs are calendar dates, not instants.
+            if (!isWeekend(current)) {
                 count++;
             }
             current.setDate(current.getDate() + 1);
@@ -146,7 +146,7 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
         return leaveTypes.find(t => t.id === selectedTypeId);
     };
 
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayLocalIso();
 
     if (success) {
         return (

@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { isPrismaError, PRISMA_RECORD_NOT_FOUND } from '../../common/utils/prisma-errors';
 import { NotificationsService } from '../notifications/notifications.service';
+import { OtCalculationService } from './ot-calculation.service';
 import {
   CreateRegularizationDto,
   ApproveRegularizationDto,
@@ -20,6 +21,7 @@ export class RegularizationService {
   constructor(
     private prisma: PrismaService,
     private notificationsService: NotificationsService,
+    private otCalculation: OtCalculationService,
   ) {}
 
   /**
@@ -257,6 +259,24 @@ export class RegularizationService {
       },
     });
 
+    const standardWorkMinutes = existingAttendance?.standardWorkMinutes ?? 480;
+
+    // Overtime has to follow the corrected hours. Leaving the previous value
+    // means a regularized ten-hour day never surfaces for OT approval.
+    const employee = await this.prisma.employee.findFirst({
+      where: { id: regularization.employeeId, tenantId },
+      select: { employmentType: true },
+    });
+    const otRule = employee
+      ? await this.otCalculation.getOtRule(tenantId, employee.employmentType)
+      : null;
+    const otMinutesCalculated = this.otCalculation.calculateOtMinutes(
+      workedMinutes,
+      standardWorkMinutes,
+      otRule,
+    );
+
+    let attendanceId: string;
     if (existingAttendance) {
       // Update existing attendance record
       await this.prisma.attendanceRecord.update({
@@ -265,12 +285,14 @@ export class RegularizationService {
           clockInTime: clockIn,
           clockOutTime: clockOut,
           workedMinutes,
+          otMinutesCalculated,
           status: 'PRESENT',
         },
       });
+      attendanceId = existingAttendance.id;
     } else {
       // Create a new attendance record
-      await this.prisma.attendanceRecord.create({
+      const created = await this.prisma.attendanceRecord.create({
         data: {
           tenantId,
           employeeId: regularization.employeeId,
@@ -278,13 +300,28 @@ export class RegularizationService {
           clockInTime: clockIn,
           clockOutTime: clockOut,
           workedMinutes,
+          otMinutesCalculated,
           status: 'PRESENT',
           source: 'API',
-          standardWorkMinutes: 480,
+          standardWorkMinutes,
           remarks: `Regularized: ${regularization.reason}`,
         },
       });
+      attendanceId = created.id;
     }
+
+    // Sessions would otherwise still describe the original punches and
+    // contradict the corrected clock times on the parent record.
+    await this.prisma.attendanceSession.deleteMany({ where: { attendanceId } });
+    await this.prisma.attendanceSession.create({
+      data: {
+        tenantId,
+        attendanceId,
+        inTime: clockIn,
+        outTime: clockOut,
+        sessionMinutes: workedMinutes,
+      },
+    });
 
     // Fire-and-forget notification
     this.notificationsService

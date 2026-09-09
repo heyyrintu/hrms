@@ -45,5 +45,7 @@ export class AuthResponseDto {
     role: UserRole;
     tenantId: string;
     employeeId?: string;
+    /** True when the account still carries its shared initial password. */
+    mustChangePassword?: boolean;
   };
 }

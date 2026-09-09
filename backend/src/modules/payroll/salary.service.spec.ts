@@ -327,6 +327,30 @@ describe('SalaryService', () => {
       effectiveTo: '2026-12-31',
     };
 
+    it('should deactivate the old salary and create the new one in one transaction', async () => {
+      prisma.employee.findFirst.mockResolvedValue({ id: employeeId, tenantId });
+      prisma.salaryStructure.findFirst.mockResolvedValue({ id: 'ss-1', tenantId, isActive: true });
+      prisma.employeeSalary.updateMany.mockResolvedValue({ count: 1 });
+      prisma.employeeSalary.create.mockResolvedValue({ id: 'es-new' });
+
+      await service.assignSalary(tenantId, employeeId, dto);
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+    });
+
+    it('should leave the previous salary active when creating the new one fails', async () => {
+      prisma.employee.findFirst.mockResolvedValue({ id: employeeId, tenantId });
+      prisma.salaryStructure.findFirst.mockResolvedValue({ id: 'ss-1', tenantId, isActive: true });
+      prisma.employeeSalary.updateMany.mockResolvedValue({ count: 1 });
+      prisma.employeeSalary.create.mockRejectedValue(new Error('create failed'));
+
+      // Without a transaction the employee would be left with no active salary
+      // and would silently drop out of the next payroll run.
+      await expect(service.assignSalary(tenantId, employeeId, dto)).rejects.toThrow(
+        'create failed',
+      );
+    });
+
     it('should assign salary to an employee and deactivate previous salary', async () => {
       prisma.employee.findFirst.mockResolvedValue({ id: employeeId, tenantId });
       prisma.salaryStructure.findFirst.mockResolvedValue({

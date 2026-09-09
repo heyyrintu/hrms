@@ -201,6 +201,7 @@ describe('AttendanceService', () => {
 
       expect(prisma.attendanceSession.create).toHaveBeenCalledWith({
         data: {
+          tenantId,
           attendanceId: 'att-1',
           inTime: expect.any(Date),
         },

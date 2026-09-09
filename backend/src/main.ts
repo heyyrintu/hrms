@@ -18,7 +18,10 @@ async function bootstrap() {
 
   // Raw text body parser for ESSL/ZKTeco ICLOCK device push endpoints.
   // Must be registered before helmet/JSON parsers so the device payload is available as req.body.
-  app.use('/iclock', express.text({ type: '*/*', limit: '10mb' }));
+  // A punch batch is a few hundred bytes per line. 10mb on an unauthenticated
+  // route was an easy way to tie up memory; 256kb still allows thousands of
+  // punches in one push.
+  app.use('/iclock', express.text({ type: '*/*', limit: '256kb' }));
 
   // Security headers
   app.use(helmet());
@@ -52,8 +55,14 @@ async function bootstrap() {
     ],
   });
 
-  // Swagger API documentation
-  if (process.env.NODE_ENV !== 'production') {
+  // Swagger API documentation.
+  // Gated on an explicit flag rather than NODE_ENV alone: a container that
+  // ships without NODE_ENV set would otherwise publish the full API schema.
+  const swaggerEnabled =
+    process.env.SWAGGER_ENABLED === 'true' ||
+    (process.env.SWAGGER_ENABLED === undefined &&
+      process.env.NODE_ENV === 'development');
+  if (swaggerEnabled) {
     const config = new DocumentBuilder()
       .setTitle('HRMS API')
       .setDescription('Human Resource Management System API documentation')

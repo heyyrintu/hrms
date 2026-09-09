@@ -163,22 +163,26 @@ export class ExitService {
       throw new BadRequestException('Separation is already completed or cancelled');
     }
 
-    // Mark employee as INACTIVE and set exitDate
-    await this.prisma.employee.update({
-      where: { id: separation.employeeId },
-      data: {
-        status: 'INACTIVE',
-        exitDate: separation.lastWorkingDate || new Date(),
-      },
-    });
+    // One unit of work: exiting the employee without closing the separation
+    // leaves an INACTIVE person with an open separation record, and the reverse
+    // leaves a completed separation for someone still marked active.
+    return this.prisma.$transaction(async (tx) => {
+      await tx.employee.update({
+        where: { id: separation.employeeId },
+        data: {
+          status: 'INACTIVE',
+          exitDate: separation.lastWorkingDate || new Date(),
+        },
+      });
 
-    return this.prisma.separation.update({
-      where: { id },
-      data: {
-        status: SeparationStatus.COMPLETED,
-        completedAt: new Date(),
-      },
-      include: this.include,
+      return tx.separation.update({
+        where: { id },
+        data: {
+          status: SeparationStatus.COMPLETED,
+          completedAt: new Date(),
+        },
+        include: this.include,
+      });
     });
   }
 

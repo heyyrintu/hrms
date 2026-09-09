@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { CompOffService } from './comp-off.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -22,6 +22,7 @@ describe('CompOffService', () => {
     employeeId: 'emp-1',
     workedDate: new Date('2025-03-15T12:00:00Z'),
     earnedDays: 1,
+    expiryDate: new Date('2999-01-01T00:00:00Z'),
     status: 'PENDING',
     employee: { id: 'emp-1', managerId: approverId, firstName: 'A', lastName: 'B' },
   };
@@ -58,6 +59,20 @@ describe('CompOffService', () => {
       expect(prisma.compOffRequest.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'co-1', status: 'PENDING' } }),
       );
+    });
+
+    it('should refuse to credit a comp-off whose expiry has already passed', async () => {
+      prisma.compOffRequest.findFirst.mockResolvedValue({
+        ...pendingRequest,
+        expiryDate: new Date('2025-01-01T00:00:00Z'),
+      });
+
+      await expect(
+        service.approve(tenantId, 'co-1', approverId, 'MANAGER', {}),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prisma.compOffRequest.update).not.toHaveBeenCalled();
+      expect(prisma.leaveBalance.update).not.toHaveBeenCalled();
     });
 
     it('should transition and credit the balance inside one transaction', async () => {

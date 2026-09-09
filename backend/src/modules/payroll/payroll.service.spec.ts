@@ -5,6 +5,7 @@ import { PayrollCalculationService } from './payroll-calculation.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createMockPrismaService } from '../../test/helpers';
 import { PayrollRunStatus, Prisma } from '@prisma/client';
+import { Decimal } from '@prisma/client/runtime/library';
 
 describe('PayrollService', () => {
   let service: PayrollService;
@@ -203,7 +204,7 @@ describe('PayrollService', () => {
         { id: 'emp-2' },
       ]);
       prisma.payslip.deleteMany.mockResolvedValue({});
-      prisma.payslip.create.mockResolvedValue({});
+      prisma.payslip.createMany.mockResolvedValue({ count: 1 });
 
       const calcResult = {
         employeeId: 'emp-1',
@@ -213,8 +214,8 @@ describe('PayrollService', () => {
         lopDays: 0,
         otHours: 5,
         basePay: 50000,
-        earnings: [{ name: 'HRA', amount: 10000 }],
-        deductions: [{ name: 'PF', amount: 5000 }],
+        earnings: [{ name: 'HRA', amount: new Decimal(10000) }],
+        deductions: [{ name: 'PF', amount: new Decimal(5000) }],
         grossPay: 60000,
         totalDeductions: 5000,
         netPay: 55000,
@@ -241,7 +242,9 @@ describe('PayrollService', () => {
         where: { payrollRunId: runId },
       });
       expect(calculationService.calculateForEmployee).toHaveBeenCalledTimes(2);
-      expect(prisma.payslip.create).toHaveBeenCalledTimes(1);
+      expect(prisma.payslip.createMany).toHaveBeenCalledTimes(1);
+      // One row: the second employee has no salary and is skipped.
+      expect(prisma.payslip.createMany.mock.calls[0][0].data).toHaveLength(1);
       expect(result).toEqual(updatedRun);
     });
 
@@ -276,7 +279,7 @@ describe('PayrollService', () => {
       await expect(service.processRun(tenantId, runId)).rejects.toThrow(ConflictException);
 
       expect(prisma.payslip.deleteMany).not.toHaveBeenCalled();
-      expect(prisma.payslip.create).not.toHaveBeenCalled();
+      expect(prisma.payslip.createMany).not.toHaveBeenCalled();
       expect(prisma.payrollRun.update).toHaveBeenCalledTimes(1);
     });
 
@@ -293,6 +296,53 @@ describe('PayrollService', () => {
         where: { id: runId },
         data: { status: PayrollRunStatus.DRAFT },
       });
+    });
+  });
+
+  // ============================================
+  // resetRun
+  // ============================================
+
+  describe('resetRun', () => {
+    const runId = 'run-1';
+
+    it('should release a run left stuck in PROCESSING back to DRAFT', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        id: runId,
+        tenantId,
+        status: PayrollRunStatus.PROCESSING,
+      });
+      prisma.payslip.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.payrollRun.update.mockResolvedValue({
+        id: runId,
+        status: PayrollRunStatus.DRAFT,
+      });
+
+      const result = await service.resetRun(tenantId, runId);
+
+      expect(prisma.payslip.deleteMany).toHaveBeenCalledWith({
+        where: { payrollRunId: runId },
+      });
+      expect(prisma.payrollRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: runId },
+          data: expect.objectContaining({ status: PayrollRunStatus.DRAFT }),
+        }),
+      );
+      expect(result.status).toBe(PayrollRunStatus.DRAFT);
+    });
+
+    it('should refuse to reset a run that is not stuck', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        id: runId,
+        tenantId,
+        status: PayrollRunStatus.PAID,
+      });
+
+      await expect(service.resetRun(tenantId, runId)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.payslip.deleteMany).not.toHaveBeenCalled();
     });
   });
 

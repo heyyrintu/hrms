@@ -1,4 +1,5 @@
 'use client';
+import { todayLocalIso } from '@/lib/date';
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -96,7 +97,7 @@ const initialFormData: EmployeeFormData = {
   aadhaarNumber: '',
   maritalStatus: '',
   bloodGroup: '',
-  joinDate: new Date().toISOString().split('T')[0],
+  joinDate: todayLocalIso(),
   status: EmployeeStatus.ACTIVE,
   
   // Contact Details
@@ -538,7 +539,7 @@ export default function NewEmployeePage() {
                   type="date"
                   value={formData.dateOfBirth}
                   onChange={(e) => handleInputChange('dateOfBirth', e.target.value)}
-                  max={new Date().toISOString().split('T')[0]}
+                  max={todayLocalIso()}
                 />
               </FormRow>
 

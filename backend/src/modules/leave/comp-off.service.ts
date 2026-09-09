@@ -230,6 +230,15 @@ export class CompOffService {
       }
     }
 
+    // Crediting a comp-off that has already lapsed hands the employee a day the
+    // policy says they no longer have. The expiry was recorded at creation but
+    // nothing checked it, so a slow approval silently revived it.
+    if (request.expiryDate && new Date(request.expiryDate) < new Date()) {
+      throw new BadRequestException(
+        `This comp-off expired on ${new Date(request.expiryDate).toLocaleDateString()} and can no longer be approved.`,
+      );
+    }
+
     // The status-guarded transition and the balance credit are one unit: if the
     // credit fails after the row is already APPROVED, the employee loses the
     // earned day and a retry is refused because the request is no longer PENDING.

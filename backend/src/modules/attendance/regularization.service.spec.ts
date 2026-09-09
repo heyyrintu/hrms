@@ -4,6 +4,7 @@ import { Prisma, UserRole } from '@prisma/client';
 import { RegularizationService } from './regularization.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { OtCalculationService } from './ot-calculation.service';
 import {
   createMockPrismaService,
   createMockNotificationsService,
@@ -12,6 +13,7 @@ import {
 describe('RegularizationService', () => {
   let service: RegularizationService;
   let prisma: any;
+  let otCalculation: { getOtRule: jest.Mock; calculateOtMinutes: jest.Mock };
 
   const tenantId = 'test-tenant';
   const approverId = 'emp-manager';
@@ -40,14 +42,67 @@ describe('RegularizationService', () => {
         RegularizationService,
         { provide: PrismaService, useValue: createMockPrismaService() },
         { provide: NotificationsService, useValue: createMockNotificationsService() },
+        {
+          provide: OtCalculationService,
+          useValue: {
+            getOtRule: jest.fn().mockResolvedValue({ id: 'ot-1' }),
+            calculateOtMinutes: jest.fn().mockReturnValue(60),
+          },
+        },
       ],
     }).compile();
 
     service = module.get(RegularizationService);
     prisma = module.get(PrismaService);
+    otCalculation = module.get(OtCalculationService);
   });
 
   describe('approve', () => {
+    it('should recompute overtime from the regularized hours rather than leaving the old value', async () => {
+      prisma.attendanceRegularization.findFirst.mockResolvedValue(pendingRequest);
+      prisma.attendanceRegularization.update.mockResolvedValue({ ...pendingRequest, status: 'APPROVED' });
+      prisma.employee.findFirst.mockResolvedValue({ id: 'emp-1', employmentType: 'PERMANENT' });
+      prisma.attendanceRecord.findUnique.mockResolvedValue({
+        id: 'att-1',
+        otMinutesCalculated: 0,
+        standardWorkMinutes: 480,
+      });
+      prisma.attendanceRecord.update.mockResolvedValue({});
+
+      await service.approve(tenantId, 'reg-1', approverId, UserRole.MANAGER, {});
+
+      // 03:30 to 12:30 is 540 minutes worked against a 480-minute standard.
+      expect(otCalculation.calculateOtMinutes).toHaveBeenCalledWith(540, 480, expect.anything());
+      expect(prisma.attendanceRecord.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ workedMinutes: 540, otMinutesCalculated: 60 }),
+        }),
+      );
+    });
+
+    it('should replace the day sessions so they match the regularized clock times', async () => {
+      prisma.attendanceRegularization.findFirst.mockResolvedValue(pendingRequest);
+      prisma.attendanceRegularization.update.mockResolvedValue({ ...pendingRequest, status: 'APPROVED' });
+      prisma.employee.findFirst.mockResolvedValue({ id: 'emp-1', employmentType: 'PERMANENT' });
+      prisma.attendanceRecord.findUnique.mockResolvedValue({
+        id: 'att-1',
+        otMinutesCalculated: 0,
+        standardWorkMinutes: 480,
+      });
+      prisma.attendanceRecord.update.mockResolvedValue({});
+      prisma.attendanceSession.deleteMany.mockResolvedValue({ count: 2 });
+      prisma.attendanceSession.create.mockResolvedValue({});
+
+      await service.approve(tenantId, 'reg-1', approverId, UserRole.MANAGER, {});
+
+      expect(prisma.attendanceSession.deleteMany).toHaveBeenCalledWith({
+        where: { attendanceId: 'att-1' },
+      });
+      expect(prisma.attendanceSession.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ attendanceId: 'att-1' }),
+      });
+    });
+
     it('should only transition a request that is still PENDING', async () => {
       prisma.attendanceRegularization.findFirst.mockResolvedValue(pendingRequest);
       prisma.attendanceRegularization.update.mockResolvedValue({ ...pendingRequest, status: 'APPROVED' });

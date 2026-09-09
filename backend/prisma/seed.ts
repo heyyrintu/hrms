@@ -113,7 +113,14 @@ async function main() {
   console.log('✅ Created OT rules');
 
   // Create employees
-  const passwordHash = await bcrypt.hash('password123', 10);
+  // Demo accounts share one password. Overridable so a shared default never
+  // reaches an environment that someone can reach.
+  const seedPassword = process.env.SEED_PASSWORD || 'password123';
+  if (!process.env.SEED_PASSWORD && process.env.NODE_ENV === 'production') {
+    console.error('Refusing to seed production with the default demo password. Set SEED_PASSWORD.');
+    process.exit(1);
+  }
+  const passwordHash = await bcrypt.hash(seedPassword, 10);
 
   // Super Admin (System-wide admin who can manage companies)
   const superAdmin = await prisma.employee.upsert({
@@ -313,7 +320,7 @@ async function main() {
   console.log('');
   console.log('🎉 Seed completed successfully!');
   console.log('');
-  console.log('📧 Test accounts (password: password123):');
+  console.log(`📧 Test accounts (password: ${seedPassword}):`);
   console.log('   - Super Admin: superadmin@example.com (Can manage companies)');
   console.log('   - HR Admin: admin@example.com');
   console.log('   - Manager: manager@example.com');

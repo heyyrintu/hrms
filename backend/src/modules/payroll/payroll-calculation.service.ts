@@ -9,20 +9,31 @@ interface SalaryComponent {
   value: number;
 }
 
-interface PayslipData {
+/**
+ * Money is carried as Decimal end to end. Payslip and PayrollRun columns are
+ * `Decimal`, and binary floating point silently loses cents at the two-decimal
+ * boundary: 1% of 14.50 is exactly 0.145, but `Math.round(0.145 * 100) / 100`
+ * evaluates to 0.14 because 0.145 is not representable.
+ */
+export interface PayslipData {
   employeeId: string;
   workingDays: number;
   presentDays: number;
   leaveDays: number;
   lopDays: number;
-  otHours: number;
-  basePay: number;
-  earnings: { name: string; amount: number }[];
-  deductions: { name: string; amount: number }[];
-  grossPay: number;
-  totalDeductions: number;
-  netPay: number;
-  otPay: number;
+  otHours: Decimal;
+  basePay: Decimal;
+  earnings: { name: string; amount: Decimal }[];
+  deductions: { name: string; amount: Decimal }[];
+  grossPay: Decimal;
+  totalDeductions: Decimal;
+  netPay: Decimal;
+  otPay: Decimal;
+}
+
+/** Round to paise, half-up, which is the commercial convention. */
+function money(value: Decimal): Decimal {
+  return value.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
 }
 
 @Injectable()
@@ -61,7 +72,7 @@ export class PayrollCalculationService {
 
     if (!salary) return null;
 
-    const basePay = Number(salary.basePay);
+    const basePay = new Decimal(salary.basePay);
     const components = (salary.salaryStructure.components as unknown as SalaryComponent[]) || [];
 
     // 2. Calculate working days (total calendar days minus weekends and holidays)
@@ -97,25 +108,27 @@ export class PayrollCalculationService {
       workingDays,
     );
 
-    // Pro-rate factor: what fraction of the month the employee was effectively present
+    // Pro-rate factor: what fraction of the month the employee was effectively
+    // present. Kept unrounded so the division error does not enter every
+    // downstream figure; only final money amounts are rounded.
     const proRateFactor =
-      workingDays > 0 ? effectivePresentDays / workingDays : 0;
+      workingDays > 0
+        ? new Decimal(effectivePresentDays).div(workingDays)
+        : new Decimal(0);
 
     // 5. Calculate pro-rated base pay
-    const proratedBasePay = Math.round(basePay * proRateFactor * 100) / 100;
+    const proratedBasePay = money(basePay.mul(proRateFactor));
 
     // 6. Calculate component earnings and deductions
-    const earnings: { name: string; amount: number }[] = [];
-    const deductions: { name: string; amount: number }[] = [];
+    const earnings: { name: string; amount: Decimal }[] = [];
+    const deductions: { name: string; amount: Decimal }[] = [];
 
     for (const comp of components) {
-      let amount: number;
-      if (comp.calcType === 'percentage') {
-        amount = Math.round(proratedBasePay * (comp.value / 100) * 100) / 100;
-      } else {
-        // Fixed amounts also pro-rated
-        amount = Math.round(comp.value * proRateFactor * 100) / 100;
-      }
+      const amount =
+        comp.calcType === 'percentage'
+          ? money(proratedBasePay.mul(new Decimal(comp.value).div(100)))
+          : // Fixed amounts are pro-rated too
+            money(new Decimal(comp.value).mul(proRateFactor));
 
       if (comp.type === 'earning') {
         earnings.push({ name: comp.name, amount });
@@ -125,26 +138,34 @@ export class PayrollCalculationService {
     }
 
     // 7. Calculate OT pay
-    const otHours = Math.round((otMinutes / 60) * 100) / 100;
-    let otPay = 0;
-    if (otHours > 0 && basePay > 0) {
+    const otHours = new Decimal(otMinutes)
+      .div(60)
+      .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    let otPay = new Decimal(0);
+    if (otHours.gt(0) && basePay.gt(0)) {
       // Hourly equivalent = basePay / (workingDays * 8)
       const hourlyRate =
         salary.employee.payType === 'HOURLY' && salary.employee.hourlyRate
-          ? Number(salary.employee.hourlyRate)
+          ? new Decimal(salary.employee.hourlyRate)
           : workingDays > 0
-            ? basePay / (workingDays * 8)
-            : 0;
-      const otMultiplier = Number(salary.employee.otMultiplier);
-      otPay = Math.round(otHours * hourlyRate * otMultiplier * 100) / 100;
+            ? basePay.div(new Decimal(workingDays).mul(8))
+            : new Decimal(0);
+      const otMultiplier = new Decimal(salary.employee.otMultiplier);
+      otPay = money(otHours.mul(hourlyRate).mul(otMultiplier));
     }
 
-    // 8. Calculate totals
-    const totalEarnings = earnings.reduce((sum, e) => sum + e.amount, 0);
-    const totalDeductions = deductions.reduce((sum, d) => sum + d.amount, 0);
-    const grossPay =
-      Math.round((proratedBasePay + totalEarnings + otPay) * 100) / 100;
-    const netPay = Math.round((grossPay - totalDeductions) * 100) / 100;
+    // 8. Calculate totals. Summing already-rounded amounts exactly, so the
+    // totals cannot drift from the line items shown on the payslip.
+    const totalEarnings = earnings.reduce(
+      (sum, e) => sum.add(e.amount),
+      new Decimal(0),
+    );
+    const totalDeductions = deductions.reduce(
+      (sum, d) => sum.add(d.amount),
+      new Decimal(0),
+    );
+    const grossPay = money(proratedBasePay.add(totalEarnings).add(otPay));
+    const netPay = money(grossPay.sub(totalDeductions));
 
     return {
       employeeId,

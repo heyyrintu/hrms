@@ -1,4 +1,5 @@
 'use client';
+import { todayLocalIso } from '@/lib/date';
 
 import { useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -40,7 +41,7 @@ const emptyFormData = {
     categoryId: '',
     amount: '',
     description: '',
-    expenseDate: new Date().toISOString().split('T')[0],
+    expenseDate: todayLocalIso(),
 };
 
 export default function ExpensesPage() {

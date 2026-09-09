@@ -1,4 +1,5 @@
 'use client';
+import { todayLocalIso } from '@/lib/date';
 
 import { useEffect, useState } from 'react';
 
@@ -30,7 +31,7 @@ export default function ReportsPage() {
         d.setDate(1);
         return d.toISOString().split('T')[0];
     });
-    const [attTo, setAttTo] = useState(() => new Date().toISOString().split('T')[0]);
+    const [attTo, setAttTo] = useState(() => todayLocalIso());
     const [attDeptId, setAttDeptId] = useState('');
     const [attFormat, setAttFormat] = useState<ReportFormat>(ReportFormat.XLSX);
 

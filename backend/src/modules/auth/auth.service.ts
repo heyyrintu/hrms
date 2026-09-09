@@ -10,6 +10,7 @@ import { UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto, RegisterDto, AuthResponseDto } from './dto/auth.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { AuthenticatedUser, JwtPayload } from '../../common/types/jwt-payload.type';
 
 @Injectable()
@@ -79,6 +80,7 @@ export class AuthService {
       tenantId: user.tenantId,
       role: user.role,
       employeeId: user.employeeId || undefined,
+      tokenVersion: user.tokenVersion,
     };
 
     const accessToken = this.jwtService.sign(payload);
@@ -91,6 +93,7 @@ export class AuthService {
         role: user.role,
         tenantId: user.tenantId,
         employeeId: user.employeeId || undefined,
+        mustChangePassword: user.mustChangePassword,
       },
     };
   }
@@ -139,6 +142,7 @@ export class AuthService {
       tenantId: user.tenantId,
       role: user.role,
       employeeId: user.employeeId || undefined,
+      tokenVersion: user.tokenVersion,
     };
 
     const accessToken = this.jwtService.sign(payload);
@@ -151,6 +155,7 @@ export class AuthService {
         role: user.role,
         tenantId: user.tenantId,
         employeeId: user.employeeId || undefined,
+        mustChangePassword: user.mustChangePassword,
       },
     };
   }
@@ -203,6 +208,15 @@ export class AuthService {
       throw new UnauthorizedException('User not found or inactive');
     }
 
+    // Reject tokens from a superseded session generation. Tokens minted before
+    // this field existed carry no version and are accepted until they expire.
+    if (
+      payload.tokenVersion !== undefined &&
+      payload.tokenVersion !== user.tokenVersion
+    ) {
+      throw new UnauthorizedException('Session has been revoked. Please sign in again.');
+    }
+
     return {
       userId: user.id,
       email: user.email,
@@ -210,5 +224,37 @@ export class AuthService {
       role: user.role,
       employeeId: user.employeeId || undefined,
     };
+  }
+
+  /**
+   * Change the signed-in user's own password.
+   *
+   * Bumps tokenVersion, so every other session holding a token minted before
+   * the change stops working. Also clears the forced-change flag set on
+   * bulk-imported accounts that shared one initial password.
+   */
+  async changePassword(userId: string, dto: ChangePasswordDto) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException('User not found or inactive');
+    }
+
+    const matches = await bcrypt.compare(dto.currentPassword, user.passwordHash);
+    if (!matches) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.newPassword, 10);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        passwordHash,
+        mustChangePassword: false,
+        // Bumping the version logs out every other session holding an old token.
+        tokenVersion: { increment: 1 },
+      },
+    });
+
+    return { message: 'Password changed. Other sessions have been signed out.' };
   }
 }

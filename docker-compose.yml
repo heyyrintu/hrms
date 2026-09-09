@@ -79,9 +79,20 @@ services:
       MS_GRAPH_TENANT_ID: ${MS_GRAPH_TENANT_ID:-}
       MS_GRAPH_CLIENT_ID: ${MS_GRAPH_CLIENT_ID:-}
       MS_GRAPH_CLIENT_SECRET: ${MS_GRAPH_CLIENT_SECRET:-}
+      # Off unless explicitly enabled: a container without NODE_ENV set would
+      # otherwise publish the full API schema.
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
       MS_GRAPH_SENDER_EMAIL: ${MS_GRAPH_SENDER_EMAIL:-}
     volumes:
       - uploads:/app/uploads
+    healthcheck:
+      # /api/health is unauthenticated and touches nothing but the process.
+      # start_period covers `prisma migrate deploy` running in the entrypoint.
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     depends_on:
       postgres:
         condition: service_healthy
@@ -98,11 +109,19 @@ services:
     restart: unless-stopped
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
-    environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:3001/api}
-      NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-HRMS}
+    # No `environment:` block for NEXT_PUBLIC_* on purpose. Next.js inlines
+    # those at build time, so setting them at runtime looks like it works but
+    # changes nothing. They are passed as build args above; changing one needs
+    # `docker compose up --build`.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   pgdata:
