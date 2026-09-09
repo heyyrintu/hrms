@@ -3,6 +3,10 @@ import { PayrollCalculationService } from './payroll-calculation.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createMockPrismaService } from '../../test/helpers';
 
+// Money is returned as Decimal; compare on plain numbers for readability.
+const toPlainAmounts = (rows: { name: string; amount: unknown }[]) =>
+  rows.map((r) => ({ name: r.name, amount: Number(r.amount) }));
+
 describe('PayrollCalculationService', () => {
   let service: PayrollCalculationService;
   let prisma: any;
@@ -73,6 +77,38 @@ describe('PayrollCalculationService', () => {
       prisma.employeeSalary.findFirst.mockResolvedValue(mockSalary);
     });
 
+    it('should round a half-cent component up instead of losing it to binary floating point', async () => {
+      // 1% of 14.50 is exactly 0.145, which must round to 0.15. In float,
+      // 0.145 * 100 is 14.499999999999998, so Math.round(x * 100) / 100 yields
+      // 0.14 and a cent disappears from every payslip carrying this shape.
+      prisma.employeeSalary.findFirst.mockResolvedValue({
+        ...mockSalary,
+        basePay: 14.5,
+        salaryStructure: {
+          ...mockSalary.salaryStructure,
+          components: [
+            { name: 'Allowance', type: 'earning', calcType: 'percentage', value: 1 },
+          ],
+        },
+      });
+      prisma.holiday.findMany.mockResolvedValue([]);
+      prisma.attendanceRecord.findMany.mockResolvedValue(
+        Array.from({ length: 22 }, (_, i) => ({
+          status: 'PRESENT',
+          date: new Date(2026, 0, i + 1),
+          otMinutesApproved: 0,
+          otMinutesCalculated: 0,
+        })),
+      );
+      prisma.leaveRequest.findMany.mockResolvedValue([]);
+
+      const result = await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+      expect(result!.earnings[0].amount.toString()).toBe('0.15');
+      // 14.50 base + 0.15 allowance
+      expect(result!.grossPay.toString()).toBe('14.65');
+    });
+
     it('should calculate payslip with full attendance (no leave, no holidays)', async () => {
       // January 2026: 31 days, 9 weekend days (5 Sat + 4 Sun) = 22 working days
       // No holidays
@@ -101,10 +137,10 @@ describe('PayrollCalculationService', () => {
       expect(result!.lopDays).toBe(0);
 
       // basePay prorated: 50000 * (22/22) = 50000
-      expect(result!.basePay).toBe(50000);
+      expect(Number(result!.basePay)).toBe(50000);
 
       // HRA: 50000 * 40% = 20000
-      expect(result!.earnings).toEqual(
+      expect(toPlainAmounts(result!.earnings)).toEqual(
         expect.arrayContaining([
           { name: 'HRA', amount: 20000 },
           { name: 'Conveyance', amount: 1600 },
@@ -112,28 +148,28 @@ describe('PayrollCalculationService', () => {
       );
 
       // PF: 50000 * 12% = 6000
-      expect(result!.deductions).toEqual(
+      expect(toPlainAmounts(result!.deductions)).toEqual(
         expect.arrayContaining([{ name: 'PF', amount: 6000 }]),
       );
 
       // OT: 22 * 30 min = 660 min = 11 hours
-      expect(result!.otHours).toBe(11);
+      expect(Number(result!.otHours)).toBe(11);
 
       // hourlyRate = 50000 / (22 * 8) = 284.0909..., otPay = 11 * 284.0909... * 1.5
       const hourlyRate = 50000 / (22 * 8);
       const expectedOtPay = Math.round(11 * hourlyRate * 1.5 * 100) / 100;
-      expect(result!.otPay).toBe(expectedOtPay);
+      expect(Number(result!.otPay)).toBe(expectedOtPay);
 
       // grossPay = basePay + HRA + Conveyance + otPay
       const grossPay = Math.round((50000 + 20000 + 1600 + expectedOtPay) * 100) / 100;
-      expect(result!.grossPay).toBe(grossPay);
+      expect(Number(result!.grossPay)).toBe(grossPay);
 
       // totalDeductions = PF = 6000
-      expect(result!.totalDeductions).toBe(6000);
+      expect(Number(result!.totalDeductions)).toBe(6000);
 
       // netPay = grossPay - totalDeductions
       const netPay = Math.round((grossPay - 6000) * 100) / 100;
-      expect(result!.netPay).toBe(netPay);
+      expect(Number(result!.netPay)).toBe(netPay);
     });
 
     it('should pro-rate salary for partial attendance', async () => {
@@ -161,11 +197,11 @@ describe('PayrollCalculationService', () => {
       // proRateFactor = 15/22
       const proRateFactor = 15 / 22;
       const expectedBasePay = Math.round(50000 * proRateFactor * 100) / 100;
-      expect(result!.basePay).toBe(expectedBasePay);
+      expect(Number(result!.basePay)).toBe(expectedBasePay);
 
       // HRA: prorated basePay * 40%
       const expectedHRA = Math.round(expectedBasePay * 0.4 * 100) / 100;
-      expect(result!.earnings).toEqual(
+      expect(toPlainAmounts(result!.earnings)).toEqual(
         expect.arrayContaining([{ name: 'HRA', amount: expectedHRA }]),
       );
     });
@@ -314,7 +350,7 @@ describe('PayrollCalculationService', () => {
 
       expect(result).not.toBeNull();
       // Should use approved (60 min = 1 hour), not calculated (90 min)
-      expect(result!.otHours).toBe(1);
+      expect(Number(result!.otHours)).toBe(1);
     });
 
     it('should fall back to calculated OT when approved is null', async () => {
@@ -335,7 +371,7 @@ describe('PayrollCalculationService', () => {
 
       expect(result).not.toBeNull();
       // Should use calculated: 120 min = 2 hours
-      expect(result!.otHours).toBe(2);
+      expect(Number(result!.otHours)).toBe(2);
     });
 
     it('should use hourlyRate for HOURLY payType employees', async () => {
@@ -365,7 +401,7 @@ describe('PayrollCalculationService', () => {
 
       expect(result).not.toBeNull();
       // OT: 2 hours * 300 hourlyRate * 2 multiplier = 1200
-      expect(result!.otPay).toBe(1200);
+      expect(Number(result!.otPay)).toBe(1200);
     });
 
     it('should return zero otPay when there are no OT hours', async () => {
@@ -385,8 +421,8 @@ describe('PayrollCalculationService', () => {
       const result = await service.calculateForEmployee(tenantId, employeeId, month, year);
 
       expect(result).not.toBeNull();
-      expect(result!.otHours).toBe(0);
-      expect(result!.otPay).toBe(0);
+      expect(Number(result!.otHours)).toBe(0);
+      expect(Number(result!.otPay)).toBe(0);
     });
 
     it('should handle salary with no components', async () => {
@@ -414,12 +450,12 @@ describe('PayrollCalculationService', () => {
       const result = await service.calculateForEmployee(tenantId, employeeId, month, year);
 
       expect(result).not.toBeNull();
-      expect(result!.earnings).toEqual([]);
-      expect(result!.deductions).toEqual([]);
-      expect(result!.basePay).toBe(50000);
-      expect(result!.grossPay).toBe(50000);
-      expect(result!.totalDeductions).toBe(0);
-      expect(result!.netPay).toBe(50000);
+      expect(toPlainAmounts(result!.earnings)).toEqual([]);
+      expect(toPlainAmounts(result!.deductions)).toEqual([]);
+      expect(Number(result!.basePay)).toBe(50000);
+      expect(Number(result!.grossPay)).toBe(50000);
+      expect(Number(result!.totalDeductions)).toBe(0);
+      expect(Number(result!.netPay)).toBe(50000);
     });
   });
 });

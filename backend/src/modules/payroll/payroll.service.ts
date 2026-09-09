@@ -5,13 +5,14 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PayrollCalculationService } from './payroll-calculation.service';
+import { PayrollCalculationService, PayslipData } from './payroll-calculation.service';
 import {
   CreatePayrollRunDto,
   PayrollRunQueryDto,
   PayslipQueryDto,
 } from './dto/payroll.dto';
 import { PayrollRunStatus, UserRole } from '@prisma/client';
+import { Decimal } from '@prisma/client/runtime/library';
 import { isPrismaError, PRISMA_RECORD_NOT_FOUND } from '../../common/utils/prisma-errors';
 
 @Injectable()
@@ -124,16 +125,9 @@ export class PayrollService {
         select: { id: true },
       });
 
-      // Delete any previous payslips for this run
-      await this.prisma.payslip.deleteMany({
-        where: { payrollRunId: id },
-      });
-
-      let totalGross = 0;
-      let totalDeductions = 0;
-      let totalNet = 0;
-      let processedCount = 0;
-
+      // Compute every payslip first (reads only), so the write transaction
+      // below stays short and cannot time out mid-run on a large tenant.
+      const results: PayslipData[] = [];
       for (const emp of employees) {
         const result = await this.calculationService.calculateForEmployee(
           tenantId,
@@ -141,49 +135,73 @@ export class PayrollService {
           run.month,
           run.year,
         );
-
-        if (!result) continue; // No salary assigned, skip
-
-        await this.prisma.payslip.create({
-          data: {
-            tenantId,
-            payrollRunId: id,
-            employeeId: result.employeeId,
-            workingDays: result.workingDays,
-            presentDays: result.presentDays,
-            leaveDays: result.leaveDays,
-            lopDays: result.lopDays,
-            otHours: result.otHours,
-            basePay: result.basePay,
-            earnings: result.earnings as any,
-            deductions: result.deductions as any,
-            grossPay: result.grossPay,
-            totalDeductions: result.totalDeductions,
-            netPay: result.netPay,
-            otPay: result.otPay,
-          },
-        });
-
-        totalGross += result.grossPay;
-        totalDeductions += result.totalDeductions;
-        totalNet += result.netPay;
-        processedCount++;
+        if (result) results.push(result); // No salary assigned, skip
       }
 
-      // Update run with totals
-      return this.prisma.payrollRun.update({
-        where: { id },
-        data: {
-          status: PayrollRunStatus.COMPUTED,
-          totalGross: Math.round(totalGross * 100) / 100,
-          totalDeductions: Math.round(totalDeductions * 100) / 100,
-          totalNet: Math.round(totalNet * 100) / 100,
-          processedCount,
-          processedAt: new Date(),
-        },
-        include: {
-          _count: { select: { payslips: true } },
-        },
+      // Totals are summed as exact decimals, so they always match the sum of
+      // the payslip line items rather than drifting by fractions of a paisa.
+      const totalGross = results.reduce(
+        (sum, r) => sum.add(r.grossPay),
+        new Decimal(0),
+      );
+      const totalDeductions = results.reduce(
+        (sum, r) => sum.add(r.totalDeductions),
+        new Decimal(0),
+      );
+      const totalNet = results.reduce(
+        (sum, r) => sum.add(r.netPay),
+        new Decimal(0),
+      );
+
+      // Replace the payslips and publish the totals atomically: a failure part
+      // way through must not leave a half-generated run behind.
+      return await this.prisma.$transaction(async (tx) => {
+        await tx.payslip.deleteMany({ where: { payrollRunId: id } });
+
+        if (results.length > 0) {
+          await tx.payslip.createMany({
+            data: results.map((result) => ({
+              tenantId,
+              payrollRunId: id,
+              employeeId: result.employeeId,
+              workingDays: result.workingDays,
+              presentDays: result.presentDays,
+              leaveDays: result.leaveDays,
+              lopDays: result.lopDays,
+              otHours: result.otHours,
+              basePay: result.basePay,
+              // JSON columns cannot hold Decimal; these are already rounded to
+              // paise, so a number round-trips exactly at this magnitude.
+              earnings: result.earnings.map((e) => ({
+                name: e.name,
+                amount: e.amount.toNumber(),
+              })) as any,
+              deductions: result.deductions.map((d) => ({
+                name: d.name,
+                amount: d.amount.toNumber(),
+              })) as any,
+              grossPay: result.grossPay,
+              totalDeductions: result.totalDeductions,
+              netPay: result.netPay,
+              otPay: result.otPay,
+            })),
+          });
+        }
+
+        return tx.payrollRun.update({
+          where: { id },
+          data: {
+            status: PayrollRunStatus.COMPUTED,
+            totalGross,
+            totalDeductions,
+            totalNet,
+            processedCount: results.length,
+            processedAt: new Date(),
+          },
+          include: {
+            _count: { select: { payslips: true } },
+          },
+        });
       });
     } catch (error) {
       // Revert to DRAFT on failure
@@ -193,6 +211,40 @@ export class PayrollService {
       });
       throw error;
     }
+  }
+
+  /**
+   * Release a run that is stuck in PROCESSING.
+   *
+   * The claim that moves DRAFT -> PROCESSING is deliberately outside the write
+   * transaction so it acts as a lock. That means a hard crash (pod restart, OOM)
+   * between the claim and the commit leaves the run PROCESSING forever, with no
+   * payslips, and every retry refused. This is the manual way out.
+   */
+  async resetRun(tenantId: string, id: string) {
+    const run = await this.prisma.payrollRun.findFirst({
+      where: { id, tenantId },
+    });
+    if (!run) throw new NotFoundException('Payroll run not found');
+    if (run.status !== PayrollRunStatus.PROCESSING) {
+      throw new BadRequestException(
+        `Only a run stuck in PROCESSING can be reset. This run is ${run.status}.`,
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // Any payslips from the abandoned attempt are discarded so the rerun
+      // starts clean.
+      await tx.payslip.deleteMany({ where: { payrollRunId: id } });
+      return tx.payrollRun.update({
+        where: { id },
+        data: {
+          status: PayrollRunStatus.DRAFT,
+          processedCount: 0,
+          processedAt: null,
+        },
+      });
+    });
   }
 
   async approveRun(tenantId: string, id: string) {

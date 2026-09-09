@@ -204,6 +204,25 @@ export class PayrollController {
     return this.payrollService.processRun(user.tenantId, id);
   }
 
+  @Post('runs/:id/reset')
+  @ApiOperation({
+    summary: 'Reset a payroll run stuck in PROCESSING back to DRAFT',
+    description:
+      'Recovery path for a run whose processing crashed after it was claimed. Discards any payslips from the abandoned attempt.',
+  })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 400, description: 'Run is not stuck in PROCESSING' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
+  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  async resetRun(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.payrollService.resetRun(user.tenantId, id);
+  }
+
   @Post('runs/:id/approve')
   @ApiOperation({ summary: 'Approve payroll run' })
   @ApiResponse({ status: 200, description: 'Success' })
