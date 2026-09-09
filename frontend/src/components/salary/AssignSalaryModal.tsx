@@ -1,4 +1,5 @@
 'use client';
+import { todayLocalIso } from '@/lib/date';
 
 import { useState, useEffect } from 'react';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
@@ -30,7 +31,7 @@ interface AssignSalaryModalProps {
 const emptyFormData: AssignSalaryFormData = {
   salaryStructureId: '',
   basePay: '',
-  effectiveFrom: new Date().toISOString().split('T')[0],
+  effectiveFrom: todayLocalIso(),
   effectiveTo: '',
 };
 

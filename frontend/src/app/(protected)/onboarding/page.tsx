@@ -1,4 +1,5 @@
 'use client';
+import { todayLocalIso } from '@/lib/date';
 
 import { useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -64,7 +65,7 @@ export default function OnboardingPage() {
     const [createForm, setCreateForm] = useState({
         employeeId: '',
         templateId: '',
-        startDate: new Date().toISOString().split('T')[0],
+        startDate: todayLocalIso(),
         targetDate: '',
         notes: '',
     });
@@ -128,7 +129,7 @@ export default function OnboardingPage() {
             setCreateForm({
                 employeeId: '',
                 templateId: '',
-                startDate: new Date().toISOString().split('T')[0],
+                startDate: todayLocalIso(),
                 targetDate: '',
                 notes: '',
             });

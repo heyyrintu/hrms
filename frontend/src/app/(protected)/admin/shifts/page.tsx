@@ -1,4 +1,5 @@
 'use client';
+import { todayLocalIso } from '@/lib/date';
 
 import { useEffect, useState } from 'react';
 
@@ -64,7 +65,7 @@ const emptyShiftForm = {
 const emptyAssignForm = {
     employeeId: '',
     shiftId: '',
-    startDate: new Date().toISOString().split('T')[0],
+    startDate: todayLocalIso(),
     endDate: '',
 };
 

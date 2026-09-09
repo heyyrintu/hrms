@@ -1,4 +1,5 @@
 'use client';
+import { todayLocalIso } from '@/lib/date';
 
 import { useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -300,7 +301,7 @@ export default function RegularizationPage() {
               type="date"
               value={formDate}
               onChange={(e) => setFormDate(e.target.value)}
-              max={new Date().toISOString().split('T')[0]}
+              max={todayLocalIso()}
               className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
             />
           </div>
