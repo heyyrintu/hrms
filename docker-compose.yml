@@ -4,7 +4,9 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-hrms}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hrms}
+      # No default: a fallback password ships a known credential to every
+      # deployment that does not override it.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: ${POSTGRES_DB:-hrms}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
@@ -45,7 +47,7 @@ services:
     ports:
       - "${BACKEND_PORT:-3001}:3001"
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-hrms}:${POSTGRES_PASSWORD:-hrms}@postgres:5432/${POSTGRES_DB:-hrms}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-hrms}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-hrms}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       PORT: 3001
