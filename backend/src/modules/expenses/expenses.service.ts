@@ -167,9 +167,12 @@ export class ExpensesService {
       throw new BadRequestException('Only DRAFT claims can be edited');
     }
 
-    if (dto.categoryId) {
+    // Re-validate the category limit whenever the category OR the amount changes;
+    // checking only on a category change let an amount-only edit bypass the cap.
+    if (dto.categoryId || dto.amount !== undefined) {
+      const categoryId = dto.categoryId ?? claim.categoryId;
       const category = await this.prisma.expenseCategory.findFirst({
-        where: { id: dto.categoryId, tenantId, isActive: true },
+        where: { id: categoryId, tenantId, isActive: true },
       });
       if (!category) throw new NotFoundException('Expense category not found or inactive');
 

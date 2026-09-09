@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
@@ -20,7 +21,11 @@ describe('AuthController', () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AuthController],
       providers: [{ provide: AuthService, useValue: mockAuthService }],
-    }).compile();
+    })
+      // The throttler needs its module wiring; unit tests only assert the metadata.
+      .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
 
     controller = module.get<AuthController>(AuthController);
     service = module.get(AuthService);
@@ -31,19 +36,26 @@ describe('AuthController', () => {
   });
 
   describe('register', () => {
-    it('should call authService.register with the dto and return result', async () => {
+    const caller: AuthenticatedUser = {
+      userId: 'hr-1',
+      email: 'hr@test.com',
+      tenantId: 'tenant-1',
+      role: UserRole.HR_ADMIN,
+      employeeId: 'emp-hr',
+    };
+
+    it('should pass the dto and the calling user to authService.register', async () => {
       const dto = {
         email: 'new@test.com',
         password: 'password123',
-        tenantId: 'tenant-1',
         role: UserRole.EMPLOYEE,
       };
       const mockResult = { id: 'user-1', email: dto.email };
       service.register.mockResolvedValue(mockResult);
 
-      const result = await controller.register(dto as any);
+      const result = await controller.register(dto as any, caller);
 
-      expect(service.register).toHaveBeenCalledWith(dto);
+      expect(service.register).toHaveBeenCalledWith(dto, caller);
       expect(result).toEqual(mockResult);
     });
 
@@ -51,9 +63,16 @@ describe('AuthController', () => {
       const dto = { email: 'bad@test.com', password: 'pw' };
       service.register.mockRejectedValue(new Error('Registration failed'));
 
-      await expect(controller.register(dto as any)).rejects.toThrow(
+      await expect(controller.register(dto as any, caller)).rejects.toThrow(
         'Registration failed',
       );
+    });
+  });
+
+  describe('login rate limiting', () => {
+    it('declares a throttle limit on the login handler', () => {
+      const keys = Reflect.getMetadataKeys(controller.login) as string[];
+      expect(keys.some((k) => String(k).startsWith('THROTTLER:LIMIT'))).toBe(true);
     });
   });
 

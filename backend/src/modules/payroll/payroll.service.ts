@@ -12,6 +12,7 @@ import {
   PayslipQueryDto,
 } from './dto/payroll.dto';
 import { PayrollRunStatus, UserRole } from '@prisma/client';
+import { isPrismaError, PRISMA_RECORD_NOT_FOUND } from '../../common/utils/prisma-errors';
 
 @Injectable()
 export class PayrollService {
@@ -101,11 +102,20 @@ export class PayrollService {
       );
     }
 
-    // Mark as processing
-    await this.prisma.payrollRun.update({
-      where: { id },
-      data: { status: PayrollRunStatus.PROCESSING },
-    });
+    // Claim the run atomically: only one caller can move DRAFT -> PROCESSING.
+    // A second concurrent call finds no DRAFT row to update and gets a 409
+    // instead of wiping and regenerating payslips underneath the first.
+    try {
+      await this.prisma.payrollRun.update({
+        where: { id, status: PayrollRunStatus.DRAFT },
+        data: { status: PayrollRunStatus.PROCESSING },
+      });
+    } catch (err) {
+      if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
+        throw new ConflictException('Payroll run is already being processed');
+      }
+      throw err;
+    }
 
     try {
       // Get all active employees with salary assignments

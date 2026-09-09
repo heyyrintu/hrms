@@ -10,6 +10,10 @@ import {
   createMockPrismaService,
   createMockNotificationsService,
 } from '../../test/helpers';
+import { FieldEncryptionService } from '../../common/crypto/field-encryption.service';
+
+const TEST_ENCRYPTION_KEY = 'c'.repeat(64);
+const crypto = new FieldEncryptionService({ get: () => TEST_ENCRYPTION_KEY } as any);
 
 describe('SelfServiceService', () => {
   let service: SelfServiceService;
@@ -22,6 +26,7 @@ describe('SelfServiceService', () => {
         SelfServiceService,
         { provide: PrismaService, useValue: createMockPrismaService() },
         { provide: NotificationsService, useValue: createMockNotificationsService() },
+        { provide: FieldEncryptionService, useValue: crypto },
       ],
     }).compile();
 
@@ -70,6 +75,17 @@ describe('SelfServiceService', () => {
         NotFoundException,
       );
     });
+
+    it('should show the employee only a masked Aadhaar number', async () => {
+      prisma.employee.findFirst.mockResolvedValue({
+        id: 'emp-1',
+        aadhaarNumber: crypto.encrypt('111122223333'),
+      });
+
+      const result = await service.getMyProfile('tenant-1', 'emp-1');
+
+      expect(result.aadhaarNumber).toBe('XXXX XXXX 3333');
+    });
   });
 
   // ============================
@@ -112,6 +128,45 @@ describe('SelfServiceService', () => {
         },
       });
       expect(result).toEqual(created);
+    });
+
+    it('should encrypt a new Aadhaar number and mask the old one in the change request', async () => {
+      prisma.employee.findFirst.mockResolvedValue({
+        id: employeeId,
+        tenantId,
+        aadhaarNumber: crypto.encrypt('111122223333'),
+      });
+      prisma.employeeChangeRequest.findFirst.mockResolvedValue(null);
+      prisma.employeeChangeRequest.create.mockResolvedValue({ id: 'cr-2' });
+
+      await service.createChangeRequest(tenantId, employeeId, {
+        fieldName: 'aadhaarNumber',
+        newValue: '444455556666',
+        reason: 'Typo',
+      });
+
+      const data = prisma.employeeChangeRequest.create.mock.calls[0][0].data;
+      expect(data.oldValue).toBe('XXXX XXXX 3333');
+      expect(data.newValue).toMatch(/^enc:v1:/);
+      expect(data.newValue).not.toContain('444455556666');
+    });
+
+    it('should reject a masked Aadhaar so the mask is never encrypted over the real value', async () => {
+      prisma.employee.findFirst.mockResolvedValue({
+        id: employeeId,
+        tenantId,
+        aadhaarNumber: crypto.encrypt('111122223333'),
+      });
+      prisma.employeeChangeRequest.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.createChangeRequest(tenantId, employeeId, {
+          fieldName: 'aadhaarNumber',
+          newValue: 'XXXX XXXX 3333',
+          reason: 'oops',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.employeeChangeRequest.create).not.toHaveBeenCalled();
     });
 
     it('should throw BadRequestException for disallowed field', async () => {

@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../audit/audit.service';
+import { isPrismaError, PRISMA_UNIQUE_VIOLATION } from '../../common/utils/prisma-errors';
 import {
   CreateAccrualRuleDto,
   UpdateAccrualRuleDto,
@@ -153,32 +154,78 @@ export class LeaveAccrualService {
       throw new BadRequestException('Invalid month (must be 1-12)');
     }
 
-    // Check idempotency - has accrual already run for this month/year?
+    const label = `${year}-${month.toString().padStart(2, '0')}`;
+
+    // One run row exists per (tenant, month, year). Decide what to do with it:
+    //   COMPLETED -> refuse (already credited)
+    //   PENDING   -> refuse (another trigger is mid-flight)
+    //   FAILED    -> resume it, skipping pairs it already credited
+    //   none      -> create it (a concurrent create loses on the unique index)
     const existingRun = await this.prisma.leaveAccrualRun.findUnique({
       where: { tenantId_month_year: { tenantId, month, year } },
     });
 
-    if (existingRun && existingRun.status === AccrualStatus.COMPLETED) {
-      throw new ConflictException(
-        `Accrual already completed for ${year}-${month.toString().padStart(2, '0')}`,
-      );
+    if (existingRun?.status === AccrualStatus.COMPLETED) {
+      throw new ConflictException(`Accrual already completed for ${label}`);
+    }
+    if (existingRun?.status === AccrualStatus.PENDING) {
+      throw new ConflictException(`Accrual for ${label} is already in progress`);
     }
 
     // Calculate fiscal year
     const fiscalYear = month >= this.FISCAL_YEAR_START_MONTH ? year : year - 1;
 
-    // Create accrual run record
-    const accrualRun = await this.prisma.leaveAccrualRun.create({
-      data: {
-        tenantId,
-        month,
-        year,
-        fiscalYear,
-        triggerType,
-        triggeredBy,
-        status: AccrualStatus.PENDING,
-      },
-    });
+    let accrualRun: { id: string };
+    // Pairs (employeeId:leaveTypeId) already credited by a previous failed
+    // attempt of this same run; they must not be credited again.
+    const alreadyCredited = new Set<string>();
+
+    if (existingRun) {
+      // Claim conditionally: two concurrent resumes would otherwise both flip the
+      // run to PENDING and both enter the crediting loop, and the alreadyCredited
+      // snapshot is taken before crediting starts so it would not exclude the
+      // pairs the other run is writing. The loser sees count === 0.
+      const claimed = await this.prisma.leaveAccrualRun.updateMany({
+        where: { id: existingRun.id, status: AccrualStatus.FAILED },
+        data: {
+          status: AccrualStatus.PENDING,
+          errorMessage: null,
+          completedAt: null,
+          triggerType,
+          triggeredBy,
+        },
+      });
+      if (claimed.count === 0) {
+        throw new ConflictException(`Accrual for ${label} is already in progress`);
+      }
+      const priorEntries = await this.prisma.leaveAccrualEntry.findMany({
+        where: { accrualRunId: existingRun.id },
+        select: { employeeId: true, leaveTypeId: true },
+      });
+      for (const e of priorEntries) {
+        alreadyCredited.add(`${e.employeeId}:${e.leaveTypeId}`);
+      }
+      accrualRun = { id: existingRun.id };
+    } else {
+      try {
+        accrualRun = await this.prisma.leaveAccrualRun.create({
+          data: {
+            tenantId,
+            month,
+            year,
+            fiscalYear,
+            triggerType,
+            triggeredBy,
+            status: AccrualStatus.PENDING,
+          },
+        });
+      } catch (err) {
+        if (isPrismaError(err, PRISMA_UNIQUE_VIOLATION)) {
+          throw new ConflictException(`Accrual for ${label} is already in progress`);
+        }
+        throw err;
+      }
+    }
 
     try {
       // Get eligible employees (ACTIVE only)
@@ -217,6 +264,9 @@ export class LeaveAccrualService {
         const employeeAccruals: string[] = [];
 
         for (const rule of rules) {
+          if (alreadyCredited.has(`${employee.id}:${rule.leaveTypeId}`)) {
+            continue;
+          }
           try {
             // Get or create balance for this year
             let balance = await this.prisma.leaveBalance.findFirst({

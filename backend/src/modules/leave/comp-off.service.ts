@@ -7,7 +7,11 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { NotificationType } from '@prisma/client';
+import { NotificationType, Prisma } from '@prisma/client';
+import { isPrismaError, PRISMA_RECORD_NOT_FOUND } from '../../common/utils/prisma-errors';
+
+/** Either the root client or a transaction-scoped one, so helpers work in both. */
+type PrismaClientLike = Prisma.TransactionClient;
 import {
   CreateCompOffDto,
   ApproveCompOffDto,
@@ -226,41 +230,26 @@ export class CompOffService {
       }
     }
 
-    // Update request
-    const updated = await this.prisma.compOffRequest.update({
-      where: { id },
-      data: {
+    // The status-guarded transition and the balance credit are one unit: if the
+    // credit fails after the row is already APPROVED, the employee loses the
+    // earned day and a retry is refused because the request is no longer PENDING.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const transitioned = await this.transitionPending(tx, id, {
         status: 'APPROVED',
         approverId,
         approverNote: dto.approverNote,
         approvedAt: new Date(),
-      },
-      include: {
-        employee: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            employeeCode: true,
-            department: { select: { name: true } },
-          },
-        },
-        approver: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
-      },
-    });
+      });
 
-    // Credit comp-off balance: find or create a COMP_OFF leave type, then update balance
-    await this.creditCompOffBalance(
-      tenantId,
-      request.employeeId,
-      Number(request.earnedDays),
-    );
+      await this.creditCompOffBalance(
+        tx,
+        tenantId,
+        request.employeeId,
+        Number(request.earnedDays),
+      );
+
+      return transitioned;
+    });
 
     // Notify the employee
     this.notificationsService
@@ -316,32 +305,10 @@ export class CompOffService {
       }
     }
 
-    // Update request
-    const updated = await this.prisma.compOffRequest.update({
-      where: { id },
-      data: {
-        status: 'REJECTED',
-        approverId,
-        approverNote: dto.approverNote,
-      },
-      include: {
-        employee: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            employeeCode: true,
-            department: { select: { name: true } },
-          },
-        },
-        approver: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
-      },
+    const updated = await this.transitionPending(this.prisma, id, {
+      status: 'REJECTED',
+      approverId,
+      approverNote: dto.approverNote,
     });
 
     // Notify the employee
@@ -412,16 +379,64 @@ export class CompOffService {
   }
 
   /**
+   * Move a PENDING comp-off request to a terminal status.
+   * The where-clause includes the status, so if a concurrent reviewer already
+   * transitioned the row, Prisma raises P2025 and we surface a 409 instead of
+   * applying the side effects twice.
+   */
+  private async transitionPending(
+    client: PrismaClientLike,
+    id: string,
+    data: {
+      status: 'APPROVED' | 'REJECTED';
+      approverId: string;
+      approverNote?: string;
+      approvedAt?: Date;
+    },
+  ) {
+    try {
+      return await client.compOffRequest.update({
+        where: { id, status: 'PENDING' },
+        data,
+        include: {
+          employee: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              employeeCode: true,
+              department: { select: { name: true } },
+            },
+          },
+          approver: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      });
+    } catch (err) {
+      if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
+        throw new ConflictException('Comp-off request has already been processed');
+      }
+      throw err;
+    }
+  }
+
+  /**
    * Credit comp-off balance to employee's leave balance
    * Finds or creates a COMP_OFF leave type, then increments the balance
    */
   private async creditCompOffBalance(
+    client: PrismaClientLike,
     tenantId: string,
     employeeId: string,
     earnedDays: number,
   ) {
     // Find the COMP_OFF leave type
-    let compOffType = await this.prisma.leaveType.findUnique({
+    let compOffType = await client.leaveType.findUnique({
       where: {
         tenantId_code: {
           tenantId,
@@ -432,7 +447,7 @@ export class CompOffService {
 
     // If COMP_OFF leave type doesn't exist, create it
     if (!compOffType) {
-      compOffType = await this.prisma.leaveType.create({
+      compOffType = await client.leaveType.create({
         data: {
           tenantId,
           name: 'Compensatory Off',
@@ -448,7 +463,7 @@ export class CompOffService {
     const currentYear = new Date().getFullYear();
 
     // Find or create leave balance
-    const balance = await this.prisma.leaveBalance.findFirst({
+    const balance = await client.leaveBalance.findFirst({
       where: {
         tenantId,
         employeeId,
@@ -458,14 +473,14 @@ export class CompOffService {
     });
 
     if (balance) {
-      await this.prisma.leaveBalance.update({
+      await client.leaveBalance.update({
         where: { id: balance.id },
         data: {
           totalDays: { increment: earnedDays },
         },
       });
     } else {
-      await this.prisma.leaveBalance.create({
+      await client.leaveBalance.create({
         data: {
           tenantId,
           employeeId,

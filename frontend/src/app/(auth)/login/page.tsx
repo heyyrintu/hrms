@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import axios from 'axios';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button, Input, FormError } from '@/components/ui';
 
@@ -28,7 +29,11 @@ export default function LoginPage() {
       await login({ email, password });
       router.push('/dashboard');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Login failed. Please try again.');
+      const message = axios.isAxiosError(err) ? err.response?.data?.message : undefined;
+      setError(
+        typeof message === 'string' ? message :
+        err instanceof Error ? err.message : 'Login failed. Please try again.'
+      );
     } finally {
       setSubmitting(false);
     }

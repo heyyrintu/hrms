@@ -1,5 +1,13 @@
 import { plainToInstance } from 'class-transformer';
-import { IsEnum, IsNumber, IsOptional, IsString, MinLength, validateSync } from 'class-validator';
+import {
+  IsEnum,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Matches,
+  MinLength,
+  validateSync,
+} from 'class-validator';
 
 enum Environment {
   Development = 'development',
@@ -85,6 +93,19 @@ class EnvironmentVariables {
   @IsString()
   @IsOptional()
   MS_GRAPH_SENDER_EMAIL?: string;
+
+  // Application-level encryption for sensitive columns (Aadhaar). 32 bytes hex.
+  // Generate: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+  @IsString()
+  @IsOptional()
+  @Matches(/^[0-9a-fA-F]{64}$/, { message: 'FIELD_ENCRYPTION_KEY must be 64 hex characters' })
+  FIELD_ENCRYPTION_KEY?: string;
+
+  // Source-IP allowlist for the unauthenticated /iclock biometric push endpoint.
+  // Comma-separated IPv4 addresses and/or CIDR ranges. Empty = allow all (logged).
+  @IsString()
+  @IsOptional()
+  BIOMETRIC_ALLOWED_IPS?: string;
 
   // Redis - optional, falls back to in-memory if not set
   @IsString()

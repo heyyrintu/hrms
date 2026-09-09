@@ -1,8 +1,9 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { ValidationPipe, Logger, RequestMethod } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import helmet from 'helmet';
+import * as express from 'express';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
@@ -14,6 +15,10 @@ async function bootstrap() {
   app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));
 
   const logger = new Logger('Bootstrap');
+
+  // Raw text body parser for ESSL/ZKTeco ICLOCK device push endpoints.
+  // Must be registered before helmet/JSON parsers so the device payload is available as req.body.
+  app.use('/iclock', express.text({ type: '*/*', limit: '10mb' }));
 
   // Security headers
   app.use(helmet());
@@ -37,8 +42,15 @@ async function bootstrap() {
     }),
   );
 
-  // Global prefix for API routes
-  app.setGlobalPrefix('api');
+  // Global prefix for API routes.
+  // /iclock/* is excluded so ESSL biometric devices can push directly to /iclock/cdata.
+  app.setGlobalPrefix('api', {
+    exclude: [
+      { path: 'iclock/cdata', method: RequestMethod.GET },
+      { path: 'iclock/cdata', method: RequestMethod.POST },
+      { path: 'iclock/getrequest', method: RequestMethod.GET },
+    ],
+  });
 
   // Swagger API documentation
   if (process.env.NODE_ENV !== 'production') {

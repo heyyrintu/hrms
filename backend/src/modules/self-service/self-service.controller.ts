@@ -13,6 +13,7 @@ import { UserRole } from '@prisma/client';
 import { SelfServiceService } from './self-service.service';
 import {
   CreateChangeRequestDto,
+  BatchChangeRequestDto,
   ReviewChangeRequestDto,
   ChangeRequestQueryDto,
 } from './dto/change-request.dto';
@@ -29,6 +30,13 @@ import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 export class SelfServiceController {
   constructor(private selfServiceService: SelfServiceService) {}
 
+  private assertEmployeeLinked(user: AuthenticatedUser): string {
+    if (!user.employeeId) {
+      throw new BadRequestException('No employee profile linked to your account');
+    }
+    return user.employeeId;
+  }
+
   // ---- Employee Self-Service ----
 
   @Get('profile')
@@ -36,10 +44,8 @@ export class SelfServiceController {
   @ApiResponse({ status: 200, description: 'Success' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getMyProfile(@CurrentUser() user: AuthenticatedUser) {
-    if (!user.employeeId) {
-      throw new BadRequestException('No employee profile linked to your account');
-    }
-    return this.selfServiceService.getMyProfile(user.tenantId, user.employeeId);
+    const employeeId = this.assertEmployeeLinked(user);
+    return this.selfServiceService.getMyProfile(user.tenantId, employeeId);
   }
 
   @Post('change-requests')
@@ -50,13 +56,27 @@ export class SelfServiceController {
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateChangeRequestDto,
   ) {
-    if (!user.employeeId) {
-      throw new BadRequestException('No employee profile linked to your account');
-    }
+    const employeeId = this.assertEmployeeLinked(user);
     return this.selfServiceService.createChangeRequest(
       user.tenantId,
-      user.employeeId,
+      employeeId,
       dto,
+    );
+  }
+
+  @Post('change-requests/batch')
+  @ApiOperation({ summary: 'Create batch change requests for profile edit' })
+  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async createBatchChangeRequests(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: BatchChangeRequestDto,
+  ) {
+    const employeeId = this.assertEmployeeLinked(user);
+    return this.selfServiceService.createBatchChangeRequests(
+      user.tenantId,
+      employeeId,
+      dto.changes,
     );
   }
 
@@ -65,33 +85,31 @@ export class SelfServiceController {
   @ApiResponse({ status: 200, description: 'Success' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async getMyChangeRequests(@CurrentUser() user: AuthenticatedUser) {
-    if (!user.employeeId) {
-      throw new BadRequestException('No employee profile linked to your account');
-    }
+    const employeeId = this.assertEmployeeLinked(user);
     return this.selfServiceService.getMyChangeRequests(
       user.tenantId,
-      user.employeeId,
+      employeeId,
     );
   }
 
   // ---- HR Admin Review ----
 
   @Get('admin/change-requests/pending')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   @ApiOperation({ summary: 'Get pending change requests' })
   @ApiResponse({ status: 200, description: 'Success' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
+  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async getPendingReviews(@CurrentUser() user: AuthenticatedUser) {
     return this.selfServiceService.getPendingReviews(user.tenantId);
   }
 
   @Get('admin/change-requests')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   @ApiOperation({ summary: 'Get all change requests' })
   @ApiResponse({ status: 200, description: 'Success' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
+  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async getAllChangeRequests(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: ChangeRequestQueryDto,
@@ -103,21 +121,22 @@ export class SelfServiceController {
   }
 
   @Post('admin/change-requests/:id/review')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   @ApiOperation({ summary: 'Review change request' })
   @ApiResponse({ status: 200, description: 'Success' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 404, description: 'Not found' })
+  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
   async reviewChangeRequest(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
     @Body() dto: ReviewChangeRequestDto,
   ) {
+    const reviewerId = this.assertEmployeeLinked(user);
     return this.selfServiceService.reviewChangeRequest(
       user.tenantId,
       id,
-      user.employeeId || user.userId,
+      reviewerId,
       dto,
     );
   }

@@ -5,10 +5,12 @@ import {
   ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { LeaveService } from './leave.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../../common/email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { HolidaysService } from '../holidays/holidays.service';
 import {
   createMockPrismaService,
   createMockNotificationsService,
@@ -19,6 +21,7 @@ describe('LeaveService', () => {
   let service: LeaveService;
   let prisma: any;
   let notifications: any;
+  let holidays: { getHolidaysBetween: jest.Mock };
 
   const tenantId = 'test-tenant';
   const employeeId = 'emp-1';
@@ -74,12 +77,17 @@ describe('LeaveService', () => {
         { provide: PrismaService, useValue: createMockPrismaService() },
         { provide: EmailService, useValue: createMockEmailService() },
         { provide: NotificationsService, useValue: createMockNotificationsService() },
+        {
+          provide: HolidaysService,
+          useValue: { getHolidaysBetween: jest.fn().mockResolvedValue([]) },
+        },
       ],
     }).compile();
 
     service = module.get<LeaveService>(LeaveService);
     prisma = module.get(PrismaService);
     notifications = module.get(NotificationsService);
+    holidays = module.get(HolidaysService);
   });
 
   it('should be defined', () => {
@@ -211,6 +219,34 @@ describe('LeaveService', () => {
       });
 
       expect(result.id).toBe('req-new');
+    });
+
+    it('should not charge leave for a company holiday inside the range', async () => {
+      // Mon 10 Mar - Wed 12 Mar 2025, Tuesday is a declared holiday
+      holidays.getHolidaysBetween.mockResolvedValue([
+        { date: new Date('2025-03-11T00:00:00.000Z') },
+      ]);
+      prisma.leaveType.findFirst.mockResolvedValue(mockLeaveType);
+      prisma.leaveRequest.findFirst.mockResolvedValue(null);
+      prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
+      prisma.leaveRequest.create.mockResolvedValue({
+        id: 'req-new',
+        totalDays: 2,
+        leaveType: mockLeaveType,
+        employee: { id: employeeId },
+      });
+      prisma.leaveBalance.update.mockResolvedValue({});
+
+      await service.createRequest(tenantId, employeeId, createDto);
+
+      expect(holidays.getHolidaysBetween).toHaveBeenCalledWith(
+        tenantId,
+        expect.any(Date),
+        expect.any(Date),
+      );
+      expect(prisma.leaveRequest.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ totalDays: 2 }) }),
+      );
     });
 
     it('should create request and increment pending days in balance', async () => {
@@ -415,7 +451,7 @@ describe('LeaveService', () => {
 
       expect(result.status).toBe('APPROVED');
       expect(prisma.leaveRequest.update).toHaveBeenCalledWith({
-        where: { id: 'req-1' },
+        where: { id: 'req-1', status: 'PENDING' },
         data: expect.objectContaining({
           status: 'APPROVED',
           approverId: 'super-admin-emp',
@@ -424,6 +460,24 @@ describe('LeaveService', () => {
         }),
         include: expect.any(Object),
       });
+    });
+
+    it('should throw ConflictException and leave the balance untouched when another approver already processed the request', async () => {
+      prisma.leaveRequest.findFirst.mockResolvedValue(mockLeaveRequest);
+      prisma.leaveRequest.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Record to update not found.', {
+          code: 'P2025',
+          clientVersion: 'test',
+        }),
+      );
+      prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
+
+      await expect(
+        service.approveRequest(tenantId, 'req-1', approverId, 'SUPER_ADMIN', {}),
+      ).rejects.toThrow(ConflictException);
+
+      expect(prisma.leaveBalance.update).not.toHaveBeenCalled();
+      expect(prisma.attendanceRecord.upsert).not.toHaveBeenCalled();
     });
 
     it('should update leave balance on approval', async () => {
@@ -537,7 +591,7 @@ describe('LeaveService', () => {
       );
 
       expect(prisma.leaveRequest.update).toHaveBeenCalledWith({
-        where: { id: 'req-1' },
+        where: { id: 'req-1', status: 'PENDING' },
         data: expect.objectContaining({
           status: 'REJECTED',
           approverNote: 'Not enough coverage',
@@ -551,6 +605,23 @@ describe('LeaveService', () => {
         },
       });
       expect(result.status).toBe('REJECTED');
+    });
+
+    it('should throw ConflictException and not decrement pending days when the request was already processed', async () => {
+      prisma.leaveRequest.findFirst.mockResolvedValue(mockLeaveRequest);
+      prisma.leaveRequest.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Record to update not found.', {
+          code: 'P2025',
+          clientVersion: 'test',
+        }),
+      );
+      prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
+
+      await expect(
+        service.rejectRequest(tenantId, 'req-1', approverId, 'MANAGER', {}),
+      ).rejects.toThrow(ConflictException);
+
+      expect(prisma.leaveBalance.update).not.toHaveBeenCalled();
     });
 
     it('should notify the employee after rejection', async () => {
@@ -610,7 +681,7 @@ describe('LeaveService', () => {
         },
       });
       expect(prisma.leaveRequest.update).toHaveBeenCalledWith({
-        where: { id: 'req-1' },
+        where: { id: 'req-1', status: 'PENDING' },
         data: { status: 'CANCELLED' },
       });
       expect(prisma.leaveBalance.update).toHaveBeenCalledWith({
@@ -620,6 +691,23 @@ describe('LeaveService', () => {
         },
       });
       expect(result.status).toBe('CANCELLED');
+    });
+
+    it('should throw ConflictException and not decrement pending days when the request was already processed', async () => {
+      prisma.leaveRequest.findFirst.mockResolvedValue(mockLeaveRequest);
+      prisma.leaveRequest.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Record to update not found.', {
+          code: 'P2025',
+          clientVersion: 'test',
+        }),
+      );
+      prisma.leaveBalance.findFirst.mockResolvedValue(mockBalance);
+
+      await expect(
+        service.cancelRequest(tenantId, 'req-1', employeeId),
+      ).rejects.toThrow(ConflictException);
+
+      expect(prisma.leaveBalance.update).not.toHaveBeenCalled();
     });
 
     it('should not update balance when no balance record exists', async () => {

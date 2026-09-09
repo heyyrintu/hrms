@@ -6,8 +6,13 @@ import {
 } from '@nestjs/common';
 import * as PDFDocument from 'pdfkit';
 import * as Handlebars from 'handlebars';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../../common/email/email.service';
+import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
+
+/** Sentinel that can never match a real employee id. */
+const NO_EMPLOYEE = '__no-employee__';
 import {
   CreateLetterTemplateDto,
   UpdateLetterTemplateDto,
@@ -192,9 +197,24 @@ export class LettersService {
     });
   }
 
-  async getGeneratedLetter(tenantId: string, id: string) {
+  /**
+   * Fetch one generated letter. Admin roles may read any letter in the tenant;
+   * everyone else only the letters addressed to their own employee record.
+   */
+  async getGeneratedLetter(
+    tenantId: string,
+    id: string,
+    requester?: Pick<AuthenticatedUser, 'role' | 'employeeId'>,
+  ) {
+    const isAdmin =
+      requester?.role === UserRole.SUPER_ADMIN || requester?.role === UserRole.HR_ADMIN;
+    const where =
+      requester && !isAdmin
+        ? { id, tenantId, employeeId: requester.employeeId ?? NO_EMPLOYEE }
+        : { id, tenantId };
+
     const letter = await this.prisma.letterGenerated.findFirst({
-      where: { id, tenantId },
+      where,
       include: {
         template: { select: { name: true, type: true } },
         employee: {
@@ -215,8 +235,12 @@ export class LettersService {
 
   // ── PDF Generation ─────────────────────────────────────────
 
-  async generatePdf(tenantId: string, id: string): Promise<Buffer> {
-    const letter = await this.getGeneratedLetter(tenantId, id);
+  async generatePdf(
+    tenantId: string,
+    id: string,
+    requester?: Pick<AuthenticatedUser, 'role' | 'employeeId'>,
+  ): Promise<Buffer> {
+    const letter = await this.getGeneratedLetter(tenantId, id, requester);
 
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ margin: 60, size: 'A4' });

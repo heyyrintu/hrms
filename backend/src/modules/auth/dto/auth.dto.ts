@@ -32,11 +32,6 @@ export class RegisterDto {
   @IsOptional()
   @IsEnum(UserRole)
   role?: UserRole;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  tenantId?: string;
 }
 
 export class AuthResponseDto {

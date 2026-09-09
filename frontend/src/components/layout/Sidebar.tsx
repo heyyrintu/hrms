@@ -38,6 +38,7 @@ import {
   MapPin,
   Network,
   LogOut,
+  Cpu,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -175,6 +176,7 @@ const sections: NavSection[] = [
           { name: 'Document Expiry', href: '/admin/document-expiry', icon: <FileWarning className="h-4 w-4" /> },
           { name: 'Letters', href: '/admin/letters', icon: <FileText className="h-4 w-4" /> },
           { name: 'Audit Logs', href: '/admin/audit', icon: <Shield className="h-4 w-4" /> },
+          { name: 'Biometric Devices', href: '/admin/biometric-devices', icon: <Cpu className="h-4 w-4" /> },
         ],
       },
     ],

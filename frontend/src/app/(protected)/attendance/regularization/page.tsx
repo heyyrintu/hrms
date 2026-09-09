@@ -60,8 +60,11 @@ export default function RegularizationPage() {
     try {
       await regularizationApi.create({
         date: formDate,
-        requestedClockIn,
-        requestedClockOut,
+        // Send an absolute instant. A naive "YYYY-MM-DDTHH:mm:00" string is
+        // parsed in the server's zone, so the same 09:00 entry would store a
+        // different moment depending on where the backend runs.
+        requestedClockIn: new Date(`${formDate}T${requestedClockIn}:00`).toISOString(),
+        requestedClockOut: new Date(`${formDate}T${requestedClockOut}:00`).toISOString(),
         reason: reason.trim(),
       });
       toast.success('Regularization request submitted successfully');

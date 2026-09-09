@@ -58,3 +58,15 @@ out
 
 # Uploads
 backend/uploads/
+
+# Real employee data and one-off import scripts (PII) - never commit
+onrole.xlsx
+*.xlsx
+backend/prisma/import-employees*.ts
+
+# Docker env file with real secrets
+.env.docker
+
+# Scratch files
+c[0-9]*.txt
+pr_body_tmp.md

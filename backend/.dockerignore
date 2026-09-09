@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.env.local
+coverage
+uploads
+*.md
+.git
+prisma/import-employees*.ts
+*.xlsx

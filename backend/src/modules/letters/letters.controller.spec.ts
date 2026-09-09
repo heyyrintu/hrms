@@ -158,7 +158,7 @@ describe('LettersController', () => {
 
       await controller.getGeneratedLetter(hrUser, 'gen-1');
 
-      expect(service.getGeneratedLetter).toHaveBeenCalledWith('tenant-1', 'gen-1');
+      expect(service.getGeneratedLetter).toHaveBeenCalledWith('tenant-1', 'gen-1', hrUser);
     });
   });
 
@@ -174,7 +174,7 @@ describe('LettersController', () => {
 
       await controller.downloadPdf(hrUser, 'gen-1', mockRes as any);
 
-      expect(service.generatePdf).toHaveBeenCalledWith('tenant-1', 'gen-1');
+      expect(service.generatePdf).toHaveBeenCalledWith('tenant-1', 'gen-1', hrUser);
       expect(mockRes.set).toHaveBeenCalledWith({
         'Content-Type': 'application/pdf',
         'Content-Disposition': 'attachment; filename="letter-gen-1.pdf"',
