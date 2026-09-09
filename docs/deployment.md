@@ -130,29 +130,52 @@ Only resolve a migration as applied if its tables already exist in that database
 
 #### Before applying `20260908091059_drona` to a database that still has `employees.designation`
 That migration drops the free-text `designation` column and replaces it with
-`designationId`. It does not carry the data across. Run this first, in a
-transaction, on any environment still on the old schema:
+`designationId`. It does not carry the data across.
+
+The backfill cannot run before the migration: the migration is what creates the
+`designations` table and the `designationId` column, so any statement touching
+them beforehand fails on the old schema. Stash the values first, migrate, then
+restore.
+
+**1. Before `migrate deploy`**, copy the free-text values out:
+
+```sql
+CREATE TABLE designation_backfill AS
+SELECT id AS employee_id, "tenantId", "designation"
+FROM "employees"
+WHERE "designation" IS NOT NULL AND "designation" <> '';
+```
+
+**2. Run the migration** (`npm run prisma:migrate:prod`). The column is dropped,
+but the stashed copy survives.
+
+**3. After it completes**, rebuild the rows and relink:
 
 ```sql
 BEGIN;
 INSERT INTO "designations" ("id", "tenantId", "name", "isActive", "createdAt", "updatedAt")
-SELECT gen_random_uuid()::text, e."tenantId", e."designation", true, now(), now()
-FROM "employees" e
-WHERE e."designation" IS NOT NULL AND e."designation" <> ''
-GROUP BY e."tenantId", e."designation"
+SELECT gen_random_uuid()::text, b."tenantId", b."designation", true, now(), now()
+FROM designation_backfill b
+GROUP BY b."tenantId", b."designation"
 ON CONFLICT ("tenantId", "name") DO NOTHING;
-
-ALTER TABLE "employees" ADD COLUMN IF NOT EXISTS "designationId" TEXT;
 
 UPDATE "employees" e
 SET "designationId" = d."id"
-FROM "designations" d
-WHERE d."tenantId" = e."tenantId" AND d."name" = e."designation";
+FROM designation_backfill b
+JOIN "designations" d
+  ON d."tenantId" = b."tenantId" AND d."name" = b."designation"
+WHERE e.id = b.employee_id;
 COMMIT;
+
+DROP TABLE designation_backfill;
 ```
 
-The migration's own `ADD COLUMN "designationId"` then becomes a no-op and the
-`DROP COLUMN "designation"` is safe.
+`gen_random_uuid()` needs PostgreSQL 13 or newer, or the `pgcrypto` extension.
+
+**If you skip this, the designations are lost permanently.** That is already the
+case for any database where this migration has already run: the column is gone
+and the values cannot be recovered from the database itself. Restore from a
+backup taken before the migration if you need them.
 
 ### Sensitive-field encryption
 Aadhaar numbers are encrypted at rest with AES-256-GCM. `FIELD_ENCRYPTION_KEY`
@@ -267,10 +290,14 @@ pm2 start dist/src/main.js --name hrms-backend
 
 ```bash
 # Copy the Docker env template and configure
-cp .env.docker .env
+cp .env.docker.example .env
 
-# Edit .env — at minimum set JWT_SECRET to a strong random value
-# Generate one with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+# Edit .env and set the three required values: POSTGRES_PASSWORD, JWT_SECRET
+# and FIELD_ENCRYPTION_KEY. Compose refuses to start without them.
+# Generate a secret or key with:
+#   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+# Set BIOMETRIC_ALLOWED_IPS too if you use biometric devices; empty rejects
+# every device push.
 
 # Build and start all services
 docker compose up --build -d
