@@ -114,6 +114,7 @@ model Tenant {
   professionalTaxSlabs    ProfessionalTaxSlab[]
   incomeTaxConfigs        IncomeTaxConfig[]
   taxDeclarations         EmployeeTaxDeclaration[]
+  settlements             Settlement[]
 
   @@map("tenants")
 }
@@ -342,6 +343,7 @@ model Employee {
   managedPIPs           ImprovementPlan[]          @relation("PIPManager")
   separations           Separation[]               @relation("SeparationEmployee")
   taxDeclarations       EmployeeTaxDeclaration[]
+  settlements           Settlement[]               @relation("SettlementEmployee")
   processedSeparations  Separation[]               @relation("SeparationProcessedBy")
 
   @@unique([tenantId, employeeCode])
@@ -1751,6 +1753,7 @@ model Separation {
   tenant    Tenant   @relation(fields: [tenantId], references: [id])
   employee  Employee @relation("SeparationEmployee", fields: [employeeId], references: [id])
   processor Employee? @relation("SeparationProcessedBy", fields: [processedBy], references: [id])
+  settlement Settlement?
 
   @@index([tenantId])
   @@index([employeeId])
@@ -1817,6 +1820,22 @@ model StatutoryConfig {
   /// Calendar months (1-12) in which LWF is deducted. Most states are
   /// half-yearly or annual rather than monthly.
   lwfMonths         Int[]   @default([])
+
+  // ---- Gratuity (Payment of Gratuity Act, 1972) ----
+  gratuityEnabled Boolean @default(true)
+  /// Days of wages per completed year. The Act says 15.
+  gratuityDaysPerYear Decimal @default(15) @db.Decimal(5, 2)
+  /// Days treated as a month's wages. The Act says 26 for covered establishments.
+  gratuityMonthDays Decimal @default(26) @db.Decimal(5, 2)
+  /// Completed years of service before any gratuity is payable.
+  gratuityMinYears Decimal @default(5) @db.Decimal(5, 2)
+  /// Lifetime exemption ceiling under section 10(10).
+  gratuityExemptionCap Decimal @default(2000000) @db.Decimal(12, 2)
+
+  // ---- Leave encashment on exit ----
+  leaveEncashmentEnabled Boolean @default(true)
+  /// Days treated as a month for valuing an encashed day.
+  encashmentMonthDays Decimal @default(30) @db.Decimal(5, 2)
 
   // ---- TDS (Income Tax Act, section 192) ----
   tdsEnabled       Boolean   @default(true)
@@ -1937,4 +1956,73 @@ model EmployeeTaxDeclaration {
   @@index([tenantId])
   @@index([employeeId])
   @@map("employee_tax_declarations")
+}
+
+// ============================================
+// EXIT SETTLEMENT
+// ============================================
+
+enum SettlementStatus {
+  DRAFT
+  APPROVED
+  PAID
+  CANCELLED
+}
+
+/// Full and final settlement for a leaver: what is still owed to them, what is
+/// recovered, and what is actually paid out.
+model Settlement {
+  id           String           @id @default(uuid())
+  tenantId     String
+  separationId String           @unique
+  employeeId   String
+  status       SettlementStatus @default(DRAFT)
+
+  /// Last working day the settlement was computed against.
+  lastWorkingDate DateTime
+
+  // ---- Payable ----
+  /// Salary for the part-month worked up to the last working day.
+  proRataSalary       Decimal @default(0) @db.Decimal(12, 2)
+  /// Unused leave being encashed, and its value.
+  leaveEncashmentDays Decimal @default(0) @db.Decimal(6, 2)
+  leaveEncashment     Decimal @default(0) @db.Decimal(12, 2)
+  /// Gratuity earned, and the portion exempt from tax.
+  gratuity            Decimal @default(0) @db.Decimal(12, 2)
+  gratuityExempt      Decimal @default(0) @db.Decimal(12, 2)
+  /// Anything else the employer chooses to pay: bonus, reimbursement, ex gratia.
+  otherEarnings       Decimal @default(0) @db.Decimal(12, 2)
+
+  // ---- Recovered ----
+  /// Days of notice not served, and the pay recovered for them.
+  noticeShortfallDays Int     @default(0)
+  noticeRecovery      Decimal @default(0) @db.Decimal(12, 2)
+  /// Advances, asset losses, anything else withheld.
+  otherRecoveries     Decimal @default(0) @db.Decimal(12, 2)
+
+  // ---- Statutory ----
+  tds Decimal @default(0) @db.Decimal(12, 2)
+
+  grossPayable    Decimal @default(0) @db.Decimal(12, 2)
+  totalRecoveries Decimal @default(0) @db.Decimal(12, 2)
+  netPayable      Decimal @default(0) @db.Decimal(12, 2)
+
+  /// How each figure was arrived at, so a leaver can be shown the working.
+  breakdown Json?
+
+  remarks    String?   @db.Text
+  approvedBy String?
+  approvedAt DateTime?
+  paidAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id])
+  separation Separation @relation(fields: [separationId], references: [id])
+  employee   Employee   @relation("SettlementEmployee", fields: [employeeId], references: [id])
+
+  @@index([tenantId])
+  @@index([employeeId])
+  @@map("settlements")
 }
