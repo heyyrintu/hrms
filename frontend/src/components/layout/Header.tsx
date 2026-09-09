@@ -36,8 +36,10 @@ export function Header({ onMenuClick }: HeaderProps) {
     try {
       const res = await notificationsApi.getUnreadCount();
       setUnreadCount(res.data.count);
-    } catch {
-      // Silently fail
+    } catch (error) {
+      // Not worth a toast on a 30-second poll, but swallowing it entirely made
+      // a persistently broken endpoint invisible.
+      console.warn('Could not refresh the unread notification count', error);
     }
   }, []);
 
@@ -46,8 +48,8 @@ export function Header({ onMenuClick }: HeaderProps) {
     try {
       const res = await notificationsApi.getAll({ limit: 8 });
       setNotifications(res.data.data || []);
-    } catch {
-      // Silently fail
+    } catch (error) {
+      console.warn('Could not load notifications', error);
     } finally {
       setLoadingNotifs(false);
     }

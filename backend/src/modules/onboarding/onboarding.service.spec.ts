@@ -410,6 +410,17 @@ describe('OnboardingService', () => {
       process: { status: 'IN_PROGRESS' },
     };
 
+    it('should stop a non-admin assignee handing their task to someone else', async () => {
+      prisma.onboardingTask.findFirst.mockResolvedValue(task);
+
+      await expect(
+        service.updateTask('tenant-1', 'task-1', 'emp-1', 'EMPLOYEE', {
+          assigneeId: 'emp-someone-else',
+        }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.onboardingTask.update).not.toHaveBeenCalled();
+    });
+
     it('should update a task assigned to the user', async () => {
       prisma.onboardingTask.findFirst.mockResolvedValue(task);
       const updated = { ...task, notes: 'Done' };

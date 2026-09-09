@@ -397,9 +397,17 @@ export class OnboardingService {
     if (!task) throw new NotFoundException('Onboarding task not found');
 
     // Auth: non-admin can only update their own tasks
-    if (userRole !== 'SUPER_ADMIN' && userRole !== 'HR_ADMIN') {
+    const isAdmin = userRole === 'SUPER_ADMIN' || userRole === 'HR_ADMIN';
+    if (!isAdmin) {
       if (task.assigneeId !== userId) {
         throw new ForbiddenException('You can only update tasks assigned to you');
+      }
+      // Reporting progress is one thing; handing the obligation to someone else
+      // is a reassignment, and that is an administrator's call.
+      if (dto.assigneeId !== undefined && dto.assigneeId !== task.assigneeId) {
+        throw new ForbiddenException(
+          'Only HR can reassign an onboarding task to someone else',
+        );
       }
     }
 

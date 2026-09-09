@@ -832,6 +832,22 @@ describe('PerformanceService', () => {
   });
 
   describe('updateGoal', () => {
+    it('should refuse to edit a goal once its review is COMPLETED', async () => {
+      // deleteGoal already blocks this; leaving update open let progress and
+      // weight be rewritten after the review was signed off.
+      prisma.goal.findFirst.mockResolvedValue({
+        id: 'goal-1',
+        tenantId: 'tenant-1',
+        employeeId: 'emp-1',
+        review: { status: 'COMPLETED' },
+      });
+
+      await expect(
+        service.updateGoal('tenant-1', 'goal-1', 'emp-1', { progress: 100 }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.goal.update).not.toHaveBeenCalled();
+    });
+
     it('should update a goal', async () => {
       prisma.goal.findFirst.mockResolvedValue({
         id: 'goal-1',
