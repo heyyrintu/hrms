@@ -35,6 +35,7 @@ import { PerformanceModule } from './modules/performance/performance.module';
 import { LettersModule } from './modules/letters/letters.module';
 import { ExitModule } from './modules/exit/exit.module';
 import { BiometricModule } from './modules/biometric/biometric.module';
+import { HealthModule } from './modules/health/health.module';
 
 @Module({
   imports: [
@@ -80,6 +81,7 @@ import { BiometricModule } from './modules/biometric/biometric.module';
     LettersModule,
     ExitModule,
     BiometricModule,
+    HealthModule,
   ],
 })
 export class AppModule {}

@@ -24,9 +24,18 @@ export class StorageService {
       './uploads',
     );
 
-    if (this.storageType === 'local') {
-      this.ensureLocalDirectory();
+    // S3 is documented as an option but no S3 client exists. Silently writing
+    // to local disk instead means a deployment believes its uploads are on S3
+    // while they sit on an ephemeral container filesystem, and disappear on the
+    // next restart. Refuse to start rather than lose files quietly.
+    if (this.storageType !== 'local') {
+      throw new Error(
+        `STORAGE_TYPE="${this.storageType}" is not implemented. Only "local" is supported; ` +
+          'uploads would otherwise be written to the container filesystem and lost on restart.',
+      );
     }
+
+    this.ensureLocalDirectory();
   }
 
   private ensureLocalDirectory(): void {
@@ -52,11 +61,7 @@ export class StorageService {
     const ext = path.extname(file.originalname);
     const key = `${entityType || 'general'}/${uuidv4()}${ext}`;
 
-    if (this.storageType === 'local') {
-      return this.uploadLocal(file, key);
-    }
-
-    // S3 upload can be added here later
+    // The constructor rejects any other storage type, so this is always local.
     return this.uploadLocal(file, key);
   }
 

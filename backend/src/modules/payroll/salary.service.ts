@@ -149,27 +149,31 @@ export class SalaryService {
     });
     if (!structure) throw new NotFoundException('Salary structure not found');
 
-    // Deactivate previous active salary
-    await this.prisma.employeeSalary.updateMany({
-      where: { tenantId, employeeId, isActive: true },
-      data: {
-        isActive: false,
-        effectiveTo: new Date(dto.effectiveFrom),
-      },
-    });
+    // Deactivate and replace as one unit. If the create failed on its own the
+    // employee would be left with no active salary at all, and would silently
+    // drop out of the next payroll run rather than raising an error.
+    return this.prisma.$transaction(async (tx) => {
+      await tx.employeeSalary.updateMany({
+        where: { tenantId, employeeId, isActive: true },
+        data: {
+          isActive: false,
+          effectiveTo: new Date(dto.effectiveFrom),
+        },
+      });
 
-    return this.prisma.employeeSalary.create({
-      data: {
-        tenantId,
-        employeeId,
-        salaryStructureId: dto.salaryStructureId,
-        basePay: dto.basePay,
-        effectiveFrom: new Date(dto.effectiveFrom),
-        effectiveTo: dto.effectiveTo ? new Date(dto.effectiveTo) : null,
-      },
-      include: {
-        salaryStructure: { select: { id: true, name: true } },
-      },
+      return tx.employeeSalary.create({
+        data: {
+          tenantId,
+          employeeId,
+          salaryStructureId: dto.salaryStructureId,
+          basePay: dto.basePay,
+          effectiveFrom: new Date(dto.effectiveFrom),
+          effectiveTo: dto.effectiveTo ? new Date(dto.effectiveTo) : null,
+        },
+        include: {
+          salaryStructure: { select: { id: true, name: true } },
+        },
+      });
     });
   }
 }

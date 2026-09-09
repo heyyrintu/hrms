@@ -6,6 +6,10 @@ import axios from 'axios';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button, Input, FormError } from '@/components/ui';
 
+// Demo credentials are a development affordance only. NODE_ENV is inlined by
+// Next at build time, so a production build drops this block entirely.
+const showDemoAccounts = process.env.NODE_ENV !== 'production';
+
 export default function LoginPage() {
   const router = useRouter();
   const { login, isAuthenticated, isLoading } = useAuth();
@@ -99,7 +103,9 @@ export default function LoginPage() {
           </Button>
         </form>
 
-        {/* Demo accounts info */}
+        {/* Demo accounts info. Build-time gated: a production build must not
+            hand every visitor working HR Admin credentials. */}
+        {showDemoAccounts && (
         <div className="mt-5 sm:mt-7 pt-5 sm:pt-6 border-t border-warm-200">
           <p className="text-xs text-warm-400 text-center mb-2 sm:mb-3 font-medium uppercase tracking-wider">Demo accounts</p>
           <p className="text-[11px] text-warm-400 text-center mb-2 sm:mb-3">password: password123</p>
@@ -122,6 +128,7 @@ export default function LoginPage() {
             ))}
           </div>
         </div>
+        )}
       </div>
     </div>
   );

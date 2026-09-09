@@ -194,6 +194,36 @@ describe('ExitService', () => {
   // ── complete ──────────────────────────────────────────────
 
   describe('complete', () => {
+    it('should exit the employee and close the separation in one transaction', async () => {
+      prisma.separation.findFirst.mockResolvedValue({
+        id: 'sep-1',
+        status: 'CLEARANCE_PENDING',
+        employeeId: 'emp-1',
+        lastWorkingDate: new Date('2025-06-30T12:00:00Z'),
+      });
+      prisma.employee.update.mockResolvedValue({});
+      prisma.separation.update.mockResolvedValue({ id: 'sep-1', status: 'COMPLETED' });
+
+      await service.complete('tenant-1', 'sep-1');
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+    });
+
+    it('should not exit the employee when closing the separation fails', async () => {
+      prisma.separation.findFirst.mockResolvedValue({
+        id: 'sep-1',
+        status: 'CLEARANCE_PENDING',
+        employeeId: 'emp-1',
+        lastWorkingDate: new Date('2025-06-30T12:00:00Z'),
+      });
+      prisma.employee.update.mockResolvedValue({});
+      prisma.separation.update.mockRejectedValue(new Error('separation write failed'));
+
+      await expect(service.complete('tenant-1', 'sep-1')).rejects.toThrow(
+        'separation write failed',
+      );
+    });
+
     it('should mark employee inactive and complete separation', async () => {
       prisma.separation.findFirst.mockResolvedValue({
         id: 'sep-1',

@@ -107,7 +107,17 @@ class EnvironmentVariables {
   @IsOptional()
   BIOMETRIC_ALLOWED_IPS?: string;
 
+  // Publishes /api/docs. Defaults to on only in development; set explicitly
+  // rather than relying on NODE_ENV being present in every deployment.
+  @IsString()
+  @IsOptional()
+  SWAGGER_ENABLED?: string;
+
   // Redis - optional, falls back to in-memory if not set
+  @IsString()
+  @IsOptional()
+  REDIS_ENABLED?: string;
+
   @IsString()
   @IsOptional()
   REDIS_HOST?: string;
@@ -119,6 +129,24 @@ class EnvironmentVariables {
   @IsString()
   @IsOptional()
   REDIS_PASSWORD?: string;
+
+  // S3 storage. Documented in deployment.md but not implemented; validated here
+  // so the variables are at least recognised rather than silently dropped.
+  @IsString()
+  @IsOptional()
+  AWS_S3_BUCKET?: string;
+
+  @IsString()
+  @IsOptional()
+  AWS_S3_REGION?: string;
+
+  @IsString()
+  @IsOptional()
+  AWS_ACCESS_KEY_ID?: string;
+
+  @IsString()
+  @IsOptional()
+  AWS_SECRET_ACCESS_KEY?: string;
 }
 
 export function validate(config: Record<string, unknown>) {
