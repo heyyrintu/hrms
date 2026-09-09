@@ -110,6 +110,10 @@ model Tenant {
   biometricDevices        BiometricDevice[]
   attendanceSessions      AttendanceSession[]
   deviceAttendanceLogs    DeviceAttendanceLog[]
+  statutoryConfig         StatutoryConfig?
+  professionalTaxSlabs    ProfessionalTaxSlab[]
+  incomeTaxConfigs        IncomeTaxConfig[]
+  taxDeclarations         EmployeeTaxDeclaration[]
 
   @@map("tenants")
 }
@@ -268,6 +272,18 @@ model Employee {
   emergencyContactName     String?
   emergencyContactNumber   String?
   emergencyContactRelation String?
+  // ---- Statutory identifiers (India) ----
+  // Required before PF/ESI/TDS can be filed. Aadhaar lives above and is
+  // encrypted; these are not secret but are personally identifying.
+  pan             String?  @db.VarChar(10)   // Permanent Account Number, for TDS
+  uan             String?  @db.VarChar(12)   // Universal Account Number, for EPF
+  esiNumber       String?  @db.VarChar(17)   // ESI insurance number
+  pfOptOut        Boolean  @default(false)   // Excluded employee under the EPF Act
+  taxRegime       TaxRegime?                 // Falls back to the tenant default
+  bankAccountNumber String? @db.VarChar(20)
+  bankIfsc          String? @db.VarChar(11)
+  bankName          String? @db.VarChar(100)
+
   // Duplicates EmployeeSalary.basePay, which is what payroll actually reads.
   // Written on employee create but never used in a calculation. Left in place
   // because dropping a column is irreversible; treat EmployeeSalary as the
@@ -325,6 +341,7 @@ model Employee {
   improvementPlans      ImprovementPlan[]          @relation("PIPEmployee")
   managedPIPs           ImprovementPlan[]          @relation("PIPManager")
   separations           Separation[]               @relation("SeparationEmployee")
+  taxDeclarations       EmployeeTaxDeclaration[]
   processedSeparations  Separation[]               @relation("SeparationProcessedBy")
 
   @@unique([tenantId, employeeCode])
@@ -1061,6 +1078,26 @@ model Payslip {
   totalDeductions Decimal  @default(0) @db.Decimal(12, 2)
   netPay          Decimal  @default(0) @db.Decimal(12, 2)
   otPay           Decimal  @default(0) @db.Decimal(12, 2)
+
+  // ---- Statutory (India) ----
+  // Held as columns rather than only inside the deductions JSON because
+  // returns and reconciliations query them directly.
+  pfWages         Decimal  @default(0) @db.Decimal(12, 2)
+  pfEmployee      Decimal  @default(0) @db.Decimal(12, 2)
+  pfEmployer      Decimal  @default(0) @db.Decimal(12, 2)
+  epsEmployer     Decimal  @default(0) @db.Decimal(12, 2)
+  edliEmployer    Decimal  @default(0) @db.Decimal(12, 2)
+  pfAdminEmployer Decimal  @default(0) @db.Decimal(12, 2)
+  esiWages        Decimal  @default(0) @db.Decimal(12, 2)
+  esiEmployee     Decimal  @default(0) @db.Decimal(12, 2)
+  esiEmployer     Decimal  @default(0) @db.Decimal(12, 2)
+  professionalTax Decimal  @default(0) @db.Decimal(10, 2)
+  lwfEmployee     Decimal  @default(0) @db.Decimal(10, 2)
+  lwfEmployer     Decimal  @default(0) @db.Decimal(10, 2)
+  tds             Decimal  @default(0) @db.Decimal(12, 2)
+  /// How the TDS figure was arrived at, for the payslip and for Form 16 later.
+  taxComputation  Json?
+
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -1719,4 +1756,185 @@ model Separation {
   @@index([employeeId])
   @@index([status])
   @@map("separations")
+}
+
+// ============================================
+// INDIAN STATUTORY PAYROLL
+// ============================================
+//
+// Rates, thresholds and slabs live in the database rather than in code because
+// they change most years and several vary by state. The seed ships values
+// current for FY 2025-26; verify them against the latest notifications before
+// running a real payroll, and update the rows rather than the source when they
+// change.
+
+enum TaxRegime {
+  OLD
+  NEW
+}
+
+/// Per-tenant switches and rates for the statutory deductions.
+model StatutoryConfig {
+  id       String @id @default(uuid())
+  tenantId String @unique
+
+  // ---- EPF (Employees Provident Funds Act, 1952) ----
+  pfEnabled      Boolean @default(true)
+  /// Employee share, percent of PF wages (Basic + DA).
+  pfEmployeeRate Decimal @default(12) @db.Decimal(5, 2)
+  /// Employer share, percent of PF wages. EPS is carved out of this, not added.
+  pfEmployerRate Decimal @default(12) @db.Decimal(5, 2)
+  /// Pension share, percent of PF wages capped at the ceiling.
+  epsRate        Decimal @default(8.33) @db.Decimal(5, 2)
+  /// Statutory wage ceiling. EPS is always capped at this.
+  pfWageCeiling  Decimal @default(15000) @db.Decimal(12, 2)
+  /// Whether employee and employer PF are also capped at the ceiling. Many
+  /// employers contribute on full wages instead; that is a policy choice.
+  applyPfCeiling Boolean @default(true)
+  /// EDLI, employer only, percent of capped PF wages.
+  edliRate       Decimal @default(0.5) @db.Decimal(5, 2)
+  /// EPF administration charges, employer only, percent of PF wages.
+  pfAdminRate    Decimal @default(0.5) @db.Decimal(5, 2)
+  /// Monthly minimum for administration charges.
+  pfAdminMinimum Decimal @default(500) @db.Decimal(12, 2)
+
+  // ---- ESI (Employees State Insurance Act, 1948) ----
+  esiEnabled      Boolean @default(true)
+  esiEmployeeRate Decimal @default(0.75) @db.Decimal(5, 2)
+  esiEmployerRate Decimal @default(3.25) @db.Decimal(5, 2)
+  /// Monthly gross at or below which an employee is covered.
+  esiWageLimit    Decimal @default(21000) @db.Decimal(12, 2)
+
+  // ---- Professional tax (state levy) ----
+  ptEnabled Boolean @default(true)
+  /// Which state's slab table applies. Slabs live in ProfessionalTaxSlab.
+  ptState   String? @db.VarChar(50)
+
+  // ---- Labour Welfare Fund (state levy) ----
+  lwfEnabled        Boolean @default(false)
+  lwfEmployeeAmount Decimal @default(0) @db.Decimal(10, 2)
+  lwfEmployerAmount Decimal @default(0) @db.Decimal(10, 2)
+  /// Calendar months (1-12) in which LWF is deducted. Most states are
+  /// half-yearly or annual rather than monthly.
+  lwfMonths         Int[]   @default([])
+
+  // ---- TDS (Income Tax Act, section 192) ----
+  tdsEnabled       Boolean   @default(true)
+  /// Applied to employees who have not chosen a regime themselves.
+  defaultTaxRegime TaxRegime @default(NEW)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("statutory_configs")
+}
+
+/// Professional tax is a state levy with its own slabs. A few states vary the
+/// amount by gender or charge a different figure in one month of the year.
+model ProfessionalTaxSlab {
+  id       String @id @default(uuid())
+  tenantId String
+  state    String @db.VarChar(50)
+
+  /// Inclusive lower bound of monthly gross.
+  fromAmount Decimal  @db.Decimal(12, 2)
+  /// Inclusive upper bound; null means no upper bound.
+  toAmount   Decimal? @db.Decimal(12, 2)
+  /// Amount deducted in a normal month.
+  amount     Decimal  @db.Decimal(10, 2)
+  /// Maharashtra deducts a higher figure in February; null means no override.
+  februaryAmount Decimal? @db.Decimal(10, 2)
+  /// Restricts the slab to one gender where the state distinguishes; null = all.
+  gender     String?  @db.VarChar(10)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, state])
+  @@map("professional_tax_slabs")
+}
+
+/// Income tax parameters for one financial year and regime.
+/// financialYear 2025 means FY 2025-26 (AY 2026-27).
+model IncomeTaxConfig {
+  id            String    @id @default(uuid())
+  tenantId      String
+  financialYear Int
+  regime        TaxRegime
+
+  standardDeduction Decimal @default(0) @db.Decimal(12, 2)
+  /// Section 87A: taxable income at or below which the rebate applies.
+  rebateIncomeLimit Decimal @default(0) @db.Decimal(12, 2)
+  /// Section 87A: the most the rebate can be worth.
+  rebateMaxAmount   Decimal @default(0) @db.Decimal(12, 2)
+  /// Health and education cess, percent of tax plus surcharge.
+  cessRate          Decimal @default(4) @db.Decimal(5, 2)
+  /// [{ "threshold": 5000000, "rate": 10 }, ...], applied to tax before cess.
+  surchargeSlabs    Json    @default("[]")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant          @relation(fields: [tenantId], references: [id])
+  slabs  IncomeTaxSlab[]
+
+  @@unique([tenantId, financialYear, regime])
+  @@index([tenantId])
+  @@map("income_tax_configs")
+}
+
+model IncomeTaxSlab {
+  id       String @id @default(uuid())
+  configId String
+
+  /// Inclusive lower bound of taxable income.
+  fromAmount Decimal  @db.Decimal(14, 2)
+  /// Inclusive upper bound; null means the top slab.
+  toAmount   Decimal? @db.Decimal(14, 2)
+  rate       Decimal  @db.Decimal(5, 2)
+
+  config IncomeTaxConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@index([configId])
+  @@map("income_tax_slabs")
+}
+
+/// What an employee has declared for the year, used to project their tax.
+/// These are declarations, not verified proofs; a proof-approval workflow is
+/// not implemented.
+model EmployeeTaxDeclaration {
+  id            String    @id @default(uuid())
+  tenantId      String
+  employeeId    String
+  financialYear Int
+  regime        TaxRegime
+
+  /// Chapter VI-A and exemptions. Only relevant under the old regime, except
+  /// section 80CCD(2), which both regimes allow.
+  section80C          Decimal @default(0) @db.Decimal(12, 2)
+  section80D          Decimal @default(0) @db.Decimal(12, 2)
+  section80CCD1B      Decimal @default(0) @db.Decimal(12, 2)
+  section80CCD2       Decimal @default(0) @db.Decimal(12, 2)
+  hraExemption        Decimal @default(0) @db.Decimal(12, 2)
+  homeLoanInterest    Decimal @default(0) @db.Decimal(12, 2)
+  otherDeductions     Decimal @default(0) @db.Decimal(12, 2)
+  /// Income declared from elsewhere, added to the projection.
+  otherIncome         Decimal @default(0) @db.Decimal(12, 2)
+  /// Tax already deducted by a previous employer this financial year.
+  previousEmployerTds Decimal @default(0) @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([tenantId, employeeId, financialYear])
+  @@index([tenantId])
+  @@index([employeeId])
+  @@map("employee_tax_declarations")
 }

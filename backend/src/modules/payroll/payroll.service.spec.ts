@@ -220,6 +220,15 @@ describe('PayrollService', () => {
         totalDeductions: 5000,
         netPay: 55000,
         otPay: 1000,
+        statutory: {
+          pfWages: new Decimal(0), pfEmployee: new Decimal(0), pfEmployer: new Decimal(0),
+          epsEmployer: new Decimal(0), edliEmployer: new Decimal(0),
+          pfAdminEmployer: new Decimal(0), esiWages: new Decimal(0),
+          esiEmployee: new Decimal(0), esiEmployer: new Decimal(0),
+          professionalTax: new Decimal(0), lwfEmployee: new Decimal(0),
+          lwfEmployer: new Decimal(0), tds: new Decimal(0),
+          taxComputation: null, totalEmployeeDeductions: new Decimal(0),
+        },
       };
 
       calculationService.calculateForEmployee
