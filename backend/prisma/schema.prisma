@@ -456,7 +456,8 @@ model DeviceAttendanceLog {
   device BiometricDevice @relation(fields: [deviceId], references: [id])
 
   // A device re-sends punches when our acknowledgement is lost; store each once.
-  @@unique([deviceId, deviceUserId, punchTime, punchType])
+  // Name pinned: the derived name exceeds PostgreSQL's 63-byte identifier limit.
+  @@unique([deviceId, deviceUserId, punchTime, punchType], map: "device_attendance_logs_punch_key")
   @@index([deviceId])
   @@index([deviceUserId, punchTime])
   @@index([processed])

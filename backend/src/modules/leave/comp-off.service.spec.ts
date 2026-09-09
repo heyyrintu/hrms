@@ -60,6 +60,30 @@ describe('CompOffService', () => {
       );
     });
 
+    it('should transition and credit the balance inside one transaction', async () => {
+      prisma.compOffRequest.findFirst.mockResolvedValue(pendingRequest);
+      prisma.compOffRequest.update.mockResolvedValue({ ...pendingRequest, status: 'APPROVED' });
+      prisma.leaveType.findUnique.mockResolvedValue({ id: 'lt-co' });
+      prisma.leaveBalance.findFirst.mockResolvedValue({ id: 'bal-1' });
+      prisma.leaveBalance.update.mockResolvedValue({});
+
+      await service.approve(tenantId, 'co-1', approverId, 'MANAGER', {});
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+    });
+
+    it('should propagate a balance-credit failure so the approval is rolled back', async () => {
+      prisma.compOffRequest.findFirst.mockResolvedValue(pendingRequest);
+      prisma.compOffRequest.update.mockResolvedValue({ ...pendingRequest, status: 'APPROVED' });
+      prisma.leaveType.findUnique.mockResolvedValue({ id: 'lt-co' });
+      prisma.leaveBalance.findFirst.mockResolvedValue({ id: 'bal-1' });
+      prisma.leaveBalance.update.mockRejectedValue(new Error('balance write failed'));
+
+      await expect(
+        service.approve(tenantId, 'co-1', approverId, 'MANAGER', {}),
+      ).rejects.toThrow('balance write failed');
+    });
+
     it('should throw ConflictException and not credit balance when already processed concurrently', async () => {
       prisma.compOffRequest.findFirst.mockResolvedValue(pendingRequest);
       prisma.compOffRequest.update.mockRejectedValue(alreadyProcessed());

@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+# Read-only by default. No job here writes to the repository, and `npm ci` can
+# run lifecycle scripts from pull-request-controlled dependencies.
+permissions:
+  contents: read
+
 jobs:
   test-backend:
     name: Backend Tests
@@ -15,6 +20,8 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -32,6 +39,8 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -47,6 +56,8 @@ jobs:
     needs: [test-backend, test-frontend]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Build backend image
         run: docker build -t hrms-backend ./backend
       - name: Build frontend image

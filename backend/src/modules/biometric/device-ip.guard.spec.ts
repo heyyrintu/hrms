@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, Logger } from '@nestjs/common';
 import { DeviceIpGuard } from './device-ip.guard';
 
 function ctxWithIp(ip: string) {
@@ -43,6 +43,16 @@ describe('DeviceIpGuard', () => {
     expect(() => guardWith('10.0.0.5').canActivate(ctxWithIp('203.0.113.9'))).toThrow(
       ForbiddenException,
     );
+  });
+
+  it('warns about an allowlist entry it cannot parse, instead of failing silently', () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    try {
+      guardWith('10.0.5.0/33');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('10.0.5.0/33'));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('matches IPv4 CIDR ranges', () => {

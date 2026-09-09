@@ -9,7 +9,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: ${POSTGRES_DB:-hrms}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # Loopback by default. Only the backend container needs the database, and
+      # publishing on 0.0.0.0 exposes it to the whole network. Set
+      # POSTGRES_BIND=0.0.0.0 to expose it deliberately.
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -30,11 +33,15 @@ services:
         fi
       '
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      # Loopback by default; Redis accepts unauthenticated connections when
+      # REDIS_PASSWORD is empty. Set REDIS_BIND=0.0.0.0 to expose it deliberately.
+      - "${REDIS_BIND:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     volumes:
       - redisdata:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # Authenticate when a password is set, otherwise the ping returns NOAUTH
+      # and the healthcheck reports unhealthy on a perfectly healthy server.
+      test: ["CMD-SHELL", "redis-cli ${REDIS_PASSWORD:+-a ${REDIS_PASSWORD}} ping | grep -q PONG"]
       interval: 5s
       timeout: 5s
       retries: 5

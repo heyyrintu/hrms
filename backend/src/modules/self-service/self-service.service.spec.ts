@@ -151,6 +151,24 @@ describe('SelfServiceService', () => {
       expect(data.newValue).not.toContain('444455556666');
     });
 
+    it('should reject a masked Aadhaar so the mask is never encrypted over the real value', async () => {
+      prisma.employee.findFirst.mockResolvedValue({
+        id: employeeId,
+        tenantId,
+        aadhaarNumber: crypto.encrypt('111122223333'),
+      });
+      prisma.employeeChangeRequest.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.createChangeRequest(tenantId, employeeId, {
+          fieldName: 'aadhaarNumber',
+          newValue: 'XXXX XXXX 3333',
+          reason: 'oops',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.employeeChangeRequest.create).not.toHaveBeenCalled();
+    });
+
     it('should throw BadRequestException for disallowed field', async () => {
       await expect(
         service.createChangeRequest(tenantId, employeeId, {

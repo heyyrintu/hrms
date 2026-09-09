@@ -66,3 +66,7 @@ backend/prisma/import-employees*.ts
 
 # Docker env file with real secrets
 .env.docker
+
+# Scratch files
+c[0-9]*.txt
+pr_body_tmp.md

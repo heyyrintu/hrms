@@ -82,10 +82,25 @@ export class DeviceIpGuard implements CanActivate {
   private parseRule(entry: string): { base: number; mask: number } | string {
     const [addr, bits] = entry.split('/');
     const n = this.ipv4ToInt(addr);
-    if (n === null) return entry; // not IPv4: exact-string match only
+    if (n === null) {
+      // Not IPv4 (e.g. an IPv6 literal): falls back to exact-string matching,
+      // which will not match equivalent IPv6 spellings. Say so rather than
+      // silently blocking the operator's intended range.
+      this.logger.warn(
+        `BIOMETRIC_ALLOWED_IPS entry "${entry}" is not an IPv4 address or CIDR range; ` +
+          'it will only match by exact text and may never match a real request.',
+      );
+      return entry;
+    }
     if (bits === undefined) return { base: n, mask: 0xffffffff };
     const prefix = Number(bits);
-    if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) return entry;
+    if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+      this.logger.warn(
+        `BIOMETRIC_ALLOWED_IPS entry "${entry}" has an invalid CIDR prefix; ` +
+          'the intended range will be rejected. Use /0 to /32.',
+      );
+      return entry;
+    }
     const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
     return { base: (n & mask) >>> 0, mask };
   }

@@ -181,8 +181,12 @@ export class LeaveAccrualService {
     const alreadyCredited = new Set<string>();
 
     if (existingRun) {
-      await this.prisma.leaveAccrualRun.update({
-        where: { id: existingRun.id },
+      // Claim conditionally: two concurrent resumes would otherwise both flip the
+      // run to PENDING and both enter the crediting loop, and the alreadyCredited
+      // snapshot is taken before crediting starts so it would not exclude the
+      // pairs the other run is writing. The loser sees count === 0.
+      const claimed = await this.prisma.leaveAccrualRun.updateMany({
+        where: { id: existingRun.id, status: AccrualStatus.FAILED },
         data: {
           status: AccrualStatus.PENDING,
           errorMessage: null,
@@ -191,6 +195,9 @@ export class LeaveAccrualService {
           triggeredBy,
         },
       });
+      if (claimed.count === 0) {
+        throw new ConflictException(`Accrual for ${label} is already in progress`);
+      }
       const priorEntries = await this.prisma.leaveAccrualEntry.findMany({
         where: { accrualRunId: existingRun.id },
         select: { employeeId: true, leaveTypeId: true },

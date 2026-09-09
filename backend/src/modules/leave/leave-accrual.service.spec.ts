@@ -51,6 +51,8 @@ describe('LeaveAccrualService.triggerAccrual', () => {
     prisma.leaveAccrualRule.findMany.mockResolvedValue([rule]);
     prisma.leaveAccrualEntry.findMany.mockResolvedValue([]);
     prisma.leaveAccrualRun.update.mockResolvedValue({});
+    // Resuming a FAILED run claims it conditionally; default to winning the claim.
+    prisma.leaveAccrualRun.updateMany.mockResolvedValue({ count: 1 });
     prisma.leaveBalance.update.mockResolvedValue({ totalDays: 10 });
     prisma.leaveAccrualEntry.create.mockResolvedValue({});
   });
@@ -62,9 +64,9 @@ describe('LeaveAccrualService.triggerAccrual', () => {
     const result = await service.triggerAccrual(tenantId, dto, AccrualTriggerType.MANUAL_ADMIN, 'user-1');
 
     expect(prisma.leaveAccrualRun.create).not.toHaveBeenCalled();
-    expect(prisma.leaveAccrualRun.update).toHaveBeenCalledWith(
+    expect(prisma.leaveAccrualRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'run-failed' },
+        where: { id: 'run-failed', status: AccrualStatus.FAILED },
         data: expect.objectContaining({ status: AccrualStatus.PENDING, errorMessage: null }),
       }),
     );
@@ -84,6 +86,30 @@ describe('LeaveAccrualService.triggerAccrual', () => {
     expect(prisma.leaveBalance.update).not.toHaveBeenCalled();
     expect(prisma.leaveAccrualEntry.create).not.toHaveBeenCalled();
     expect(result.processedCount).toBe(0);
+  });
+
+  it('should claim a FAILED run conditionally so two concurrent resumes cannot both credit', async () => {
+    prisma.leaveAccrualRun.findUnique.mockResolvedValue(failedRun);
+    prisma.employee.findMany.mockResolvedValue([]);
+    prisma.leaveAccrualRun.updateMany.mockResolvedValue({ count: 1 });
+
+    await service.triggerAccrual(tenantId, dto, AccrualTriggerType.MANUAL_ADMIN, 'user-1');
+
+    expect(prisma.leaveAccrualRun.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'run-failed', status: AccrualStatus.FAILED },
+      }),
+    );
+  });
+
+  it('should throw ConflictException when another resume already claimed the failed run', async () => {
+    prisma.leaveAccrualRun.findUnique.mockResolvedValue(failedRun);
+    prisma.leaveAccrualRun.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      service.triggerAccrual(tenantId, dto, AccrualTriggerType.MANUAL_ADMIN, 'user-1'),
+    ).rejects.toThrow(ConflictException);
+    expect(prisma.leaveBalance.update).not.toHaveBeenCalled();
   });
 
   it('should throw ConflictException when a run for the month is still PENDING', async () => {

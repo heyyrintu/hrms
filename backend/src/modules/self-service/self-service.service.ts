@@ -8,6 +8,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CreateChangeRequestDto, ReviewChangeRequestDto } from './dto/change-request.dto';
 import { ChangeRequestStatus, NotificationType } from '@prisma/client';
 import { FieldEncryptionService } from '../../common/crypto/field-encryption.service';
+import { assertValidAadhaar } from '../../common/validation/aadhaar';
 
 /** Fields that are stored encrypted and must only ever be shown masked. */
 const ENCRYPTED_FIELDS = new Set(['aadhaarNumber']);
@@ -57,9 +58,18 @@ export class SelfServiceService {
     return String(raw ?? '');
   }
 
-  /** New value as it will be written to the employee row on approval. */
+  /**
+   * New value as it will be written to the employee row on approval.
+   * Encrypted fields are validated first: the profile response only carries the
+   * masked form, so an edit form prefilled from it must not be able to post the
+   * mask back and have it encrypted over the real number.
+   */
   private storableValueFor(fieldName: string, newValue: string): string {
-    return ENCRYPTED_FIELDS.has(fieldName) ? this.crypto.encrypt(newValue) : newValue;
+    if (!ENCRYPTED_FIELDS.has(fieldName)) return newValue;
+    if (fieldName === 'aadhaarNumber') {
+      return this.crypto.encrypt(assertValidAadhaar(newValue));
+    }
+    return this.crypto.encrypt(newValue);
   }
 
   /** Never leak an encrypted blob through change-request listings. */

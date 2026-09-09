@@ -3,6 +3,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../../common/email/email.service';
 import { CreateEmployeeDto, UpdateEmployeeDto, EmployeeQueryDto } from './dto/employee.dto';
 import { FieldEncryptionService } from '../../common/crypto/field-encryption.service';
+import { assertValidAadhaar } from '../../common/validation/aadhaar';
 import * as bcrypt from 'bcrypt';
 
 export interface OrgNode {
@@ -32,6 +33,16 @@ export class EmployeesService {
   private redact<T extends { aadhaarNumber?: string | null }>(employee: T): T {
     if (!employee || employee.aadhaarNumber === undefined) return employee;
     return { ...employee, aadhaarNumber: this.crypto.mask(employee.aadhaarNumber) };
+  }
+
+  /**
+   * Validate then encrypt. Reads only ever return the masked form, so a client
+   * that prefills an edit form from a profile response could otherwise post the
+   * mask back and encrypt it over the real number.
+   */
+  private encryptAadhaar(value: string | null | undefined) {
+    if (value === null || value === undefined || value === '') return value;
+    return this.crypto.encrypt(assertValidAadhaar(value));
   }
 
   /**
@@ -85,7 +96,7 @@ export class EmployeesService {
           gender: dto.gender,
           dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null,
           fatherName: dto.fatherName,
-          aadhaarNumber: this.crypto.encryptNullable(dto.aadhaarNumber),
+          aadhaarNumber: this.encryptAadhaar(dto.aadhaarNumber),
           maritalStatus: dto.maritalStatus,
           bloodGroup: dto.bloodGroup,
           mobileNumber: dto.mobileNumber,
@@ -356,7 +367,7 @@ export class EmployeesService {
         ...dto,
         aadhaarNumber:
           dto.aadhaarNumber !== undefined
-            ? this.crypto.encryptNullable(dto.aadhaarNumber)
+            ? this.encryptAadhaar(dto.aadhaarNumber)
             : undefined,
         exitDate: dto.exitDate ? new Date(dto.exitDate) : undefined,
       },

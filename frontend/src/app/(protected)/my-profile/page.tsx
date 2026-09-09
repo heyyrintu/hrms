@@ -105,6 +105,11 @@ const categoryOptions = Object.values(DocumentCategory).map((c) => ({
 }));
 
 // Editable fields grouped by section
+// Fields the API only ever returns masked (e.g. "XXXX XXXX 1234"). They must not
+// be prefilled into the edit form: submitting the mask back would store the mask
+// as the real value. Blank means "leave unchanged".
+const MASKED_FIELD_KEYS = new Set(['aadhaarNumber']);
+
 const editableFieldGroups = [
     {
         title: 'Personal Information',
@@ -244,8 +249,7 @@ export default function MyProfilePage() {
         if (!profile) return;
         if (activeTab === 'documents') loadDocuments();
         if (activeTab === 'requests') loadChangeRequests();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeTab]);
+    }, [activeTab, profile, loadDocuments, loadChangeRequests]);
 
     const getOriginalValue = useCallback((key: string): string => {
         if (!profile) return '';
@@ -257,7 +261,10 @@ export default function MyProfilePage() {
         const formData: EditFormData = {};
         for (const group of editableFieldGroups) {
             for (const field of group.fields) {
-                formData[field.key] = getOriginalValue(field.key);
+                // Masked fields start blank; the current masked value is shown as a hint.
+                formData[field.key] = MASKED_FIELD_KEYS.has(field.key)
+                    ? ''
+                    : getOriginalValue(field.key);
             }
         }
         setEditForm(formData);
@@ -278,6 +285,13 @@ export default function MyProfilePage() {
         if (!isEditing || !profile) return [];
         const changes: Array<{ fieldName: string; newValue: string }> = [];
         for (const key of Object.keys(editForm)) {
+            if (MASKED_FIELD_KEYS.has(key)) {
+                // Only a non-empty entry is a real change; blank keeps the stored value.
+                if (editForm[key]) {
+                    changes.push({ fieldName: key, newValue: editForm[key] });
+                }
+                continue;
+            }
             if (editForm[key] !== getOriginalValue(key)) {
                 changes.push({ fieldName: key, newValue: editForm[key] });
             }
@@ -506,7 +520,10 @@ export default function MyProfilePage() {
                                     <CardContent>
                                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                             {group.fields.map((field) => {
-                                                const isChanged = editForm[field.key] !== getOriginalValue(field.key);
+                                                const isMasked = MASKED_FIELD_KEYS.has(field.key);
+                                                const isChanged = isMasked
+                                                    ? !!editForm[field.key]
+                                                    : editForm[field.key] !== getOriginalValue(field.key);
                                                 const fieldDef = field as { key: string; label: string; type?: string; options?: Array<{ value: string; label: string }> };
                                                 return (
                                                     <div key={field.key}>
@@ -538,7 +555,11 @@ export default function MyProfilePage() {
                                                                     'w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 text-sm',
                                                                     isChanged ? 'border-amber-400 bg-amber-50' : 'border-warm-300'
                                                                 )}
-                                                                placeholder={`Enter ${field.label.toLowerCase()}`}
+                                                                placeholder={
+                                                                    isMasked
+                                                                        ? `${getOriginalValue(field.key) || 'Not set'} — leave blank to keep`
+                                                                        : `Enter ${field.label.toLowerCase()}`
+                                                                }
                                                             />
                                                         )}
                                                     </div>

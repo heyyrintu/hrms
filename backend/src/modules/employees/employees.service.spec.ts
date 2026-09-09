@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException, ConflictException } from '@nestjs/common';
+import { NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { EmployeesService } from './employees.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../../common/email/email.service';
@@ -129,6 +129,23 @@ describe('EmployeesService', () => {
       const result = await service.create(tenantId, { ...createDto, aadhaarNumber: '123412341234' });
 
       expect(result.aadhaarNumber).toBe('XXXX XXXX 1234');
+    });
+
+    it('should reject a masked Aadhaar value so a re-submitted mask cannot overwrite the real number', async () => {
+      prisma.employee.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.create(tenantId, { ...createDto, aadhaarNumber: 'XXXX XXXX 1234' }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.employee.create).not.toHaveBeenCalled();
+    });
+
+    it('should reject an Aadhaar that is not 12 digits', async () => {
+      prisma.employee.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.create(tenantId, { ...createDto, aadhaarNumber: '12345' }),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('should throw ConflictException when employee code already exists', async () => {

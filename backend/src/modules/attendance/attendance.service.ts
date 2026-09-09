@@ -6,7 +6,11 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { isPrismaError, PRISMA_WRITE_CONFLICT } from '../../common/utils/prisma-errors';
+import {
+  isPrismaError,
+  PRISMA_UNIQUE_VIOLATION,
+  PRISMA_WRITE_CONFLICT,
+} from '../../common/utils/prisma-errors';
 import { OtCalculationService } from './ot-calculation.service';
 import {
   ClockInDto,
@@ -136,7 +140,13 @@ export class AttendanceService {
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
     } catch (err) {
-      if (isPrismaError(err, PRISMA_WRITE_CONFLICT)) {
+      // P2034: serializable write conflict. P2002: the loser of a create race on
+      // the (tenantId, employeeId, date) unique key. Both mean another clock-in
+      // for this employee and day won; neither is a server fault.
+      if (
+        isPrismaError(err, PRISMA_WRITE_CONFLICT) ||
+        isPrismaError(err, PRISMA_UNIQUE_VIOLATION)
+      ) {
         throw new ConflictException('Clock-in already in progress. Please try again.');
       }
       throw err;

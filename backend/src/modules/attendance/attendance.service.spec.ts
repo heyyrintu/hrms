@@ -132,6 +132,21 @@ describe('AttendanceService', () => {
       );
     });
 
+    it('should surface a lost create race on the daily unique key as ConflictException', async () => {
+      prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+      prisma.tenant.findUnique.mockResolvedValue(null);
+      prisma.$transaction.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+        }),
+      );
+
+      await expect(service.clockIn(tenantId, employeeId, { ...mockCoords })).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
     it('should surface a concurrent double-tap as ConflictException instead of a second open session', async () => {
       prisma.employee.findFirst.mockResolvedValue(mockEmployee);
       prisma.tenant.findUnique.mockResolvedValue(null);
