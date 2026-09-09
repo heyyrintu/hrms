@@ -99,7 +99,7 @@ export class AttendanceService {
             }
 
             await tx.attendanceSession.create({
-              data: { attendanceId: attendance.id, inTime: now },
+              data: { tenantId, attendanceId: attendance.id, inTime: now },
             });
 
             // Update clock in time if this is the first session of the day
@@ -131,7 +131,7 @@ export class AttendanceService {
               clockInLatitude: dto.latitude,
               clockInLongitude: dto.longitude,
               standardWorkMinutes: 480, // 8 hours default
-              sessions: { create: { inTime: now } },
+              sessions: { create: { tenantId, inTime: now } },
             },
             include: { sessions: true },
           });

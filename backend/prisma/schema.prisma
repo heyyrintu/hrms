@@ -108,6 +108,8 @@ model Tenant {
   designations            Designation[]
   branches                Branch[]
   biometricDevices        BiometricDevice[]
+  attendanceSessions      AttendanceSession[]
+  deviceAttendanceLogs    DeviceAttendanceLog[]
 
   @@map("tenants")
 }
@@ -388,6 +390,9 @@ model AttendanceRecord {
 
 model AttendanceSession {
   id             String    @id @default(uuid())
+  // Denormalised from the parent record so a query on this table can be
+  // tenant-scoped directly instead of relying on every caller to join.
+  tenantId       String
   attendanceId   String
   inTime         DateTime
   outTime        DateTime?
@@ -397,7 +402,9 @@ model AttendanceSession {
 
   // Relations
   attendance AttendanceRecord @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
 
+  @@index([tenantId])
   @@index([attendanceId])
   @@map("attendance_sessions")
 }
@@ -449,6 +456,8 @@ model BiometricDevice {
 
 model DeviceAttendanceLog {
   id           String    @id @default(uuid())
+  // Denormalised from the device so raw logs can be tenant-scoped directly.
+  tenantId     String
   deviceId     String
   deviceUserId String    // User ID enrolled in the device
   punchTime    DateTime
@@ -463,10 +472,12 @@ model DeviceAttendanceLog {
   createdAt    DateTime  @default(now())
 
   device BiometricDevice @relation(fields: [deviceId], references: [id])
+  tenant Tenant          @relation(fields: [tenantId], references: [id])
 
   // A device re-sends punches when our acknowledgement is lost; store each once.
   // Name pinned: the derived name exceeds PostgreSQL's 63-byte identifier limit.
   @@unique([deviceId, deviceUserId, punchTime, punchType], map: "device_attendance_logs_punch_key")
+  @@index([tenantId])
   @@index([deviceId])
   @@index([deviceUserId, punchTime])
   @@index([processed])

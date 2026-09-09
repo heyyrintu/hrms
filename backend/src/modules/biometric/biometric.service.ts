@@ -122,6 +122,7 @@ export class BiometricService {
     try {
       log = await this.prisma.deviceAttendanceLog.create({
         data: {
+          tenantId,
           deviceId,
           deviceUserId,
           punchTime,
@@ -229,7 +230,7 @@ export class BiometricService {
       }
 
       await this.prisma.attendanceSession.create({
-        data: { attendanceId: attendance.id, inTime: punchTime },
+        data: { tenantId, attendanceId: attendance.id, inTime: punchTime },
       });
 
       return attendance.id;
@@ -245,7 +246,7 @@ export class BiometricService {
         status: 'PRESENT',
         source: 'BIOMETRIC',
         standardWorkMinutes: 480,
-        sessions: { create: { inTime: punchTime } },
+        sessions: { create: { tenantId, inTime: punchTime } },
       },
       include: { sessions: true },
     });

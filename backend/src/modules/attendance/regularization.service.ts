@@ -315,6 +315,7 @@ export class RegularizationService {
     await this.prisma.attendanceSession.deleteMany({ where: { attendanceId } });
     await this.prisma.attendanceSession.create({
       data: {
+        tenantId,
         attendanceId,
         inTime: clockIn,
         outTime: clockOut,
