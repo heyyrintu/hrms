@@ -2,7 +2,12 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
+import {
+  isPrismaError,
+  PRISMA_RECORD_NOT_FOUND,
+} from '../../common/utils/prisma-errors';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateChangeRequestDto, ReviewChangeRequestDto } from './dto/change-request.dto';
@@ -289,20 +294,30 @@ export class SelfServiceService {
         });
       }
 
-      return tx.employeeChangeRequest.update({
-        where: { id: requestId },
-        data: {
-          status: dto.status,
-          reviewedBy: reviewerId,
-          reviewNote: dto.reviewNote,
-          reviewedAt: new Date(),
-        },
-        include: {
-          employee: {
-            select: { firstName: true, lastName: true, employeeCode: true },
+      // Guard on the status inside the transaction as well: the check above
+      // happens before it, so two reviewers could otherwise both pass and one
+      // would apply the field change while the other wrote the final status.
+      try {
+        return await tx.employeeChangeRequest.update({
+          where: { id: requestId, status: ChangeRequestStatus.PENDING },
+          data: {
+            status: dto.status,
+            reviewedBy: reviewerId,
+            reviewNote: dto.reviewNote,
+            reviewedAt: new Date(),
           },
-        },
-      });
+          include: {
+            employee: {
+              select: { firstName: true, lastName: true, employeeCode: true },
+            },
+          },
+        });
+      } catch (err) {
+        if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
+          throw new ConflictException('This request has already been reviewed');
+        }
+        throw err;
+      }
     });
 
     // Notify the employee

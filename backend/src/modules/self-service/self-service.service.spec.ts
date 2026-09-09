@@ -2,7 +2,9 @@ import { Test, TestingModule } from '@nestjs/testing';
 import {
   NotFoundException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { SelfServiceService } from './self-service.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -278,6 +280,52 @@ describe('SelfServiceService', () => {
   // ============================
   // reviewChangeRequest()
   // ============================
+  describe('reviewChangeRequest concurrency', () => {
+    it('should throw ConflictException and not apply the field when another reviewer got there first', async () => {
+      prisma.employeeChangeRequest.findFirst.mockResolvedValue({
+        id: 'cr-1',
+        tenantId: 'tenant-1',
+        employeeId: 'emp-1',
+        fieldName: 'phone',
+        newValue: '999',
+        status: 'PENDING',
+      });
+      prisma.employeeChangeRequest.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Record to update not found.', {
+          code: 'P2025',
+          clientVersion: 'test',
+        }),
+      );
+
+      await expect(
+        service.reviewChangeRequest('tenant-1', 'cr-1', 'reviewer-1', {
+          status: 'APPROVED' as any,
+        }),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('should guard the transition on the request still being PENDING', async () => {
+      prisma.employeeChangeRequest.findFirst.mockResolvedValue({
+        id: 'cr-1',
+        tenantId: 'tenant-1',
+        employeeId: 'emp-1',
+        fieldName: 'phone',
+        newValue: '999',
+        status: 'PENDING',
+      });
+      prisma.employee.update.mockResolvedValue({});
+      prisma.employeeChangeRequest.update.mockResolvedValue({ id: 'cr-1' });
+
+      await service.reviewChangeRequest('tenant-1', 'cr-1', 'reviewer-1', {
+        status: 'APPROVED' as any,
+      });
+
+      expect(prisma.employeeChangeRequest.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'cr-1', status: 'PENDING' } }),
+      );
+    });
+  });
+
   describe('reviewChangeRequest', () => {
     const tenantId = 'tenant-1';
     const requestId = 'cr-1';
@@ -308,7 +356,8 @@ describe('SelfServiceService', () => {
         data: { phone: '999' },
       });
       expect(prisma.employeeChangeRequest.update).toHaveBeenCalledWith({
-        where: { id: requestId },
+        // Status-guarded so a concurrent reviewer cannot double-apply.
+        where: { id: requestId, status: 'PENDING' },
         data: {
           status: 'APPROVED',
           reviewedBy: reviewerId,
