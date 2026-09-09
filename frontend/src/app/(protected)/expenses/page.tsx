@@ -109,11 +109,27 @@ export default function ExpensesPage() {
     };
 
     const handleSave = async () => {
+        // The amount input is not inside a <form>, so the browser never runs its
+        // min/step validation. Check here instead of letting the API reject it.
+        const amount = parseFloat(formData.amount);
+        if (!formData.categoryId) {
+            toast.error('Choose a category');
+            return;
+        }
+        if (!Number.isFinite(amount) || amount < 0.01) {
+            toast.error('Enter an amount greater than zero');
+            return;
+        }
+        if (!formData.expenseDate) {
+            toast.error('Choose the date of the expense');
+            return;
+        }
+
         setSaving(true);
         try {
             const payload = {
                 categoryId: formData.categoryId,
-                amount: parseFloat(formData.amount),
+                amount,
                 description: formData.description,
                 expenseDate: formData.expenseDate,
             };

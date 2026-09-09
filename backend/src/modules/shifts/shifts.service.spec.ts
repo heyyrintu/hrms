@@ -240,6 +240,18 @@ describe('ShiftsService', () => {
       startDate: '2025-02-01',
     };
 
+    it('should deactivate the old assignment and create the new one in one transaction', async () => {
+      prisma.employee.findFirst.mockResolvedValue({ id: 'emp-1', tenantId: 'tenant-1' });
+      prisma.shift.findFirst.mockResolvedValue({ id: 's1', tenantId: 'tenant-1' });
+      prisma.shiftAssignment.updateMany.mockResolvedValue({ count: 1 });
+      prisma.shiftAssignment.create.mockResolvedValue({ id: 'sa-1' });
+
+      await service.assignShift('tenant-1', dto);
+
+      // Without this, a failed create leaves the employee on no shift at all.
+      expect(prisma.$transaction).toHaveBeenCalled();
+    });
+
     it('should assign a shift to an employee', async () => {
       prisma.employee.findFirst.mockResolvedValue({ id: 'emp-1', tenantId: 'tenant-1' });
       prisma.shift.findFirst.mockResolvedValue({ id: 's1', tenantId: 'tenant-1', name: 'Day' });

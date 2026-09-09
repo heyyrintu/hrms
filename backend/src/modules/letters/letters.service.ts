@@ -13,6 +13,14 @@ import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 
 /** Sentinel that can never match a real employee id. */
 const NO_EMPLOYEE = '__no-employee__';
+
+/**
+ * Templates render here, not on the shared Handlebars singleton, so helpers
+ * registered elsewhere in the process are unreachable from template content.
+ * Nothing is registered on it deliberately: only the variables passed at render
+ * time are in scope.
+ */
+const LETTER_TEMPLATE_ENV = Handlebars.create();
 import {
   CreateLetterTemplateDto,
   UpdateLetterTemplateDto,
@@ -118,8 +126,20 @@ export class LettersService {
 
     let renderedContent: string;
     try {
-      const compiled = Handlebars.compile(template.content);
-      renderedContent = compiled(variables);
+      // Compile in an isolated environment. Letter templates are authored
+      // content, and compiling them on the shared Handlebars instance would
+      // hand every helper registered anywhere in the app to whoever can edit a
+      // template. The runtime flags additionally refuse prototype traversal,
+      // the usual route from template injection to code execution.
+      const compiled = LETTER_TEMPLATE_ENV.compile(template.content, {
+        // Unknown fields render empty rather than throwing, matching the
+        // previous behaviour for templates that reference a missing variable.
+        strict: false,
+      });
+      renderedContent = compiled(variables, {
+        allowProtoPropertiesByDefault: false,
+        allowProtoMethodsByDefault: false,
+      });
     } catch {
       throw new BadRequestException('Failed to render template — check template syntax');
     }

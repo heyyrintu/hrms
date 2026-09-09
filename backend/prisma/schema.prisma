@@ -268,6 +268,10 @@ model Employee {
   emergencyContactName     String?
   emergencyContactNumber   String?
   emergencyContactRelation String?
+  // Duplicates EmployeeSalary.basePay, which is what payroll actually reads.
+  // Written on employee create but never used in a calculation. Left in place
+  // because dropping a column is irreversible; treat EmployeeSalary as the
+  // source of truth.
   monthlySalary  Decimal?       @db.Decimal(12, 2)
   employmentType EmploymentType @default(PERMANENT)
   payType        PayType        @default(MONTHLY)
@@ -328,6 +332,10 @@ model Employee {
   @@index([tenantId])
   @@index([departmentId])
   @@index([managerId])
+  @@index([designationId])
+  @@index([branchId])
+  // Looked up on every biometric punch to resolve the device user to a person.
+  @@index([tenantId, biometricUserId])
   @@map("employees")
 }
 
@@ -1523,6 +1531,9 @@ enum FeedbackVisibility {
   PUBLIC
 }
 
+// NOT IMPLEMENTED. This table is defined but nothing in backend/src reads or
+// writes it: there is no service, controller or route behind it. Kept because
+// dropping a table is irreversible, but do not assume the feature exists.
 model Feedback {
   id         String             @id @default(uuid())
   tenantId   String
@@ -1556,6 +1567,9 @@ enum PIPStatus {
   TERMINATED
 }
 
+// NOT IMPLEMENTED. This table is defined but nothing in backend/src reads or
+// writes it: there is no service, controller or route behind it. Kept because
+// dropping a table is irreversible, but do not assume the feature exists.
 model ImprovementPlan {
   id          String    @id @default(uuid())
   tenantId    String
@@ -1581,6 +1595,9 @@ model ImprovementPlan {
   @@map("improvement_plans")
 }
 
+// NOT IMPLEMENTED. This table is defined but nothing in backend/src reads or
+// writes it: there is no service, controller or route behind it. Kept because
+// dropping a table is irreversible, but do not assume the feature exists.
 model ImprovementPlanGoal {
   id          String    @id @default(uuid())
   planId      String
@@ -1602,6 +1619,9 @@ model ImprovementPlanGoal {
 // WEBHOOKS
 // ============================================
 
+// NOT IMPLEMENTED. This table is defined but nothing in backend/src reads or
+// writes it: there is no service, controller or route behind it. Kept because
+// dropping a table is irreversible, but do not assume the feature exists.
 model Webhook {
   id          String   @id @default(uuid())
   tenantId    String
@@ -1626,6 +1646,9 @@ enum WebhookLogStatus {
   RETRYING
 }
 
+// NOT IMPLEMENTED. This table is defined but nothing in backend/src reads or
+// writes it: there is no service, controller or route behind it. Kept because
+// dropping a table is irreversible, but do not assume the feature exists.
 model WebhookLog {
   id           String           @id @default(uuid())
   tenantId     String

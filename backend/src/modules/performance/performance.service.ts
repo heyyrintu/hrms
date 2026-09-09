@@ -496,6 +496,14 @@ export class PerformanceService {
     });
     if (!goal) throw new NotFoundException('Goal not found');
 
+    // A signed-off review is a record. deleteGoal already refuses this; leaving
+    // update open let progress and weight be rewritten after the fact.
+    if (goal.review.status === PerformanceReviewStatus.COMPLETED) {
+      throw new BadRequestException(
+        'This review is completed; its goals can no longer be changed',
+      );
+    }
+
     const data: any = {};
     if (dto.title !== undefined) data.title = dto.title;
     if (dto.description !== undefined) data.description = dto.description;

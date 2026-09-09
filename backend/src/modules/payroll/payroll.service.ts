@@ -289,12 +289,27 @@ export class PayrollService {
       where: { id, tenantId },
     });
     if (!run) throw new NotFoundException('Payroll run not found');
+
+    // An approved or paid run is a financial record. Deleting it takes its
+    // payslips with it and leaves no trace that people were paid, which no
+    // role should be able to do. Corrections belong in a supplementary run.
+    if (
+      run.status === PayrollRunStatus.PAID ||
+      run.status === PayrollRunStatus.APPROVED
+    ) {
+      throw new BadRequestException(
+        `A ${run.status} payroll run cannot be deleted; it is the record of what was paid.`,
+      );
+    }
     if (userRole !== UserRole.SUPER_ADMIN && run.status !== PayrollRunStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT runs can be deleted');
     }
 
-    await this.prisma.payslip.deleteMany({ where: { payrollRunId: id } });
-    await this.prisma.payrollRun.delete({ where: { id } });
+    // Both writes together: a half-deleted run would leave orphaned payslips.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.payslip.deleteMany({ where: { payrollRunId: id } });
+      await tx.payrollRun.delete({ where: { id } });
+    });
   }
 
   // ============================================

@@ -102,31 +102,35 @@ export class ShiftsService {
       throw new NotFoundException('Shift not found');
     }
 
-    // Deactivate any current active assignment for this employee
-    await this.prisma.shiftAssignment.updateMany({
-      where: {
-        tenantId,
-        employeeId: dto.employeeId,
-        isActive: true,
-      },
-      data: {
-        isActive: false,
-        endDate: new Date(dto.startDate),
-      },
-    });
+    // Deactivate and replace as one unit. Separately, a failed create would
+    // leave the employee on no shift at all, and two concurrent calls could
+    // both deactivate and then both insert, leaving two active assignments.
+    return this.prisma.$transaction(async (tx) => {
+      await tx.shiftAssignment.updateMany({
+        where: {
+          tenantId,
+          employeeId: dto.employeeId,
+          isActive: true,
+        },
+        data: {
+          isActive: false,
+          endDate: new Date(dto.startDate),
+        },
+      });
 
-    return this.prisma.shiftAssignment.create({
-      data: {
-        tenantId,
-        employeeId: dto.employeeId,
-        shiftId: dto.shiftId,
-        startDate: new Date(dto.startDate),
-        endDate: dto.endDate ? new Date(dto.endDate) : null,
-      },
-      include: {
-        employee: { select: { firstName: true, lastName: true, employeeCode: true } },
-        shift: { select: { name: true, code: true } },
-      },
+      return tx.shiftAssignment.create({
+        data: {
+          tenantId,
+          employeeId: dto.employeeId,
+          shiftId: dto.shiftId,
+          startDate: new Date(dto.startDate),
+          endDate: dto.endDate ? new Date(dto.endDate) : null,
+        },
+        include: {
+          employee: { select: { firstName: true, lastName: true, employeeCode: true } },
+          shift: { select: { name: true, code: true } },
+        },
+      });
     });
   }
 

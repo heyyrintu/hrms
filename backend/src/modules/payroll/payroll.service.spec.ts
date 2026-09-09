@@ -4,7 +4,7 @@ import { PayrollService } from './payroll.service';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createMockPrismaService } from '../../test/helpers';
-import { PayrollRunStatus, Prisma } from '@prisma/client';
+import { PayrollRunStatus, Prisma, UserRole } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 
 describe('PayrollService', () => {
@@ -444,6 +444,20 @@ describe('PayrollService', () => {
   // ============================================
 
   describe('deleteRun', () => {
+    it('should refuse to delete a PAID run even for a SUPER_ADMIN', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        id: 'run-1',
+        tenantId,
+        status: PayrollRunStatus.PAID,
+      });
+
+      await expect(
+        service.deleteRun(tenantId, 'run-1', UserRole.SUPER_ADMIN),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.payslip.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.payrollRun.delete).not.toHaveBeenCalled();
+    });
+
     it('should delete a DRAFT run and its payslips', async () => {
       const run = {
         id: 'run-1',

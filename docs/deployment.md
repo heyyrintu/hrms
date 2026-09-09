@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 18+ runtime
+- Node.js 20+ runtime (the Dockerfiles and CI both pin 20)
 - PostgreSQL 14+ database server
 - (Optional) Redis server for background jobs
 - (Optional) SMTP server for email notifications
@@ -259,7 +259,7 @@ Before going to production, verify:
 Swagger UI at `/api/docs` is **automatically disabled** when `NODE_ENV=production`. No action needed.
 
 ### Logging
-In production, Winston outputs structured JSON logs. Configure `LOG_LEVEL=info` to reduce noise. Log levels: `error`, `warn`, `info`, `http`, `verbose`, `debug`.
+Winston writes human-readable, colourised lines in every environment; it is not currently configured to emit JSON. If your log pipeline needs structured output, change the format in `backend/src/config/logger.config.ts`. Configure `LOG_LEVEL=info` to reduce noise. Log levels: `error`, `warn`, `info`, `http`, `verbose`, `debug`.
 
 ### Background Jobs
 If `REDIS_ENABLED=true`, BullMQ processes background jobs for:

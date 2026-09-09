@@ -169,6 +169,38 @@ describe('LettersService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
+    it('should not expose globally registered helpers to letter templates', async () => {
+      // Letter templates are authored content. Compiling them on the shared
+      // Handlebars instance hands every app helper to whoever can edit a
+      // template, which widens a compromised HR_ADMIN into code execution.
+      const globalHandlebars = require('handlebars');
+      const leaked = jest.fn().mockReturnValue('LEAKED');
+      globalHandlebars.registerHelper('appSecretHelper', leaked);
+
+      try {
+        prisma.letterTemplate.findFirst.mockResolvedValue({
+          id: 'tpl-1',
+          content: 'X{{appSecretHelper}}X',
+          type: 'OFFER_LETTER',
+          isActive: true,
+        });
+        prisma.employee.findFirst.mockResolvedValue({
+          id: 'emp-1', firstName: 'John', lastName: 'Doe', employeeCode: 'E1',
+          email: 'j@t.com', joinDate: null, exitDate: null,
+          designation: null, department: null, branch: null, manager: null,
+          tenant: { name: 'Acme' },
+        });
+        prisma.letterGenerated.create.mockImplementation(async (args: any) => args.data);
+
+        const result: any = await service.generateLetter('tenant-1', 'user-1', dto);
+
+        expect(leaked).not.toHaveBeenCalled();
+        expect(result.content).not.toContain('LEAKED');
+      } finally {
+        globalHandlebars.unregisterHelper('appSecretHelper');
+      }
+    });
+
     it('should generate a letter with variable substitution', async () => {
       const template = {
         id: 'tpl-1',
