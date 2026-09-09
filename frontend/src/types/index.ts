@@ -1127,3 +1127,6 @@ export interface Separation {
   };
   processor?: { id: string; firstName: string; lastName: string };
 }
+
+// Indian statutory payroll: returns, Form 16, gratuity and settlement.
+export * from './statutory';

@@ -1,5 +1,7 @@
 import axios from 'axios';
 
+import { StatutoryReturnKind, UpdateSettlementPayload } from '@/types/statutory';
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
 export const api = axios.create({
@@ -42,6 +44,24 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+/**
+ * Hands a blob to the browser as a download.
+ *
+ * The object URL is revoked straight after the click because the blob is held
+ * in memory until it is, and a payroll return can be large.
+ */
+function downloadBlob(data: Blob, filename: string, contentType: string) {
+  if (typeof window === 'undefined') return;
+  const url = window.URL.createObjectURL(new Blob([data], { type: contentType }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
 
 // Companies API (SUPER_ADMIN only)
 export const companiesApi = {
@@ -525,4 +545,80 @@ export const biometricApi = {
   // Employee mapping
   setEmployeeBiometricId: (employeeId: string, biometricUserId: string) =>
     api.patch(`/biometric/employees/${employeeId}`, { biometricUserId }),
+};
+
+// ============================================
+// STATUTORY RETURN AND CHALLAN FILES
+// ============================================
+/**
+ * Files are generated from a payroll run that has been computed. A run still in
+ * draft is refused by the server, deliberately: a return filed from figures
+ * that may still change is worse than no return.
+ *
+ * `preview` asks for the whole object as JSON so the warnings can be shown
+ * before anyone files anything. `download` streams the file itself.
+ */
+export const returnsApi = {
+  preview: (payrollRunId: string, kind: StatutoryReturnKind) =>
+    api.get(`/payroll/returns/${payrollRunId}/${kind}`, { params: { download: 'false' } }),
+  download: async (payrollRunId: string, kind: StatutoryReturnKind, filename: string) => {
+    const response = await api.get(`/payroll/returns/${payrollRunId}/${kind}`, {
+      responseType: 'blob',
+    });
+    downloadBlob(response.data as Blob, filename, 'text/plain');
+  },
+  /** Saves a preview the caller already holds, without a second round trip. */
+  saveContent: (content: string, filename: string, contentType = 'text/plain') => {
+    downloadBlob(new Blob([content], { type: contentType }), filename, contentType);
+  },
+};
+
+// ============================================
+// FORM 16 (PART B ONLY)
+// ============================================
+/**
+ * Part A is issued by TRACES against the returns actually filed and is not
+ * available here. Anything that imitated it would be a forgery.
+ */
+export const form16Api = {
+  getMine: (financialYear: number) => api.get(`/payroll/form16/my/${financialYear}`),
+  getMyQuarters: (financialYear: number) =>
+    api.get(`/payroll/form16/my/${financialYear}/quarters`),
+  downloadMine: async (financialYear: number, filename: string) => {
+    const response = await api.get(`/payroll/form16/my/${financialYear}/pdf`, {
+      responseType: 'blob',
+    });
+    downloadBlob(response.data as Blob, filename, 'application/pdf');
+  },
+
+  getForEmployee: (employeeId: string, financialYear: number) =>
+    api.get(`/payroll/form16/${employeeId}/${financialYear}`),
+  getQuartersForEmployee: (employeeId: string, financialYear: number) =>
+    api.get(`/payroll/form16/${employeeId}/${financialYear}/quarters`),
+  downloadForEmployee: async (
+    employeeId: string,
+    financialYear: number,
+    filename: string,
+  ) => {
+    const response = await api.get(`/payroll/form16/${employeeId}/${financialYear}/pdf`, {
+      responseType: 'blob',
+    });
+    downloadBlob(response.data as Blob, filename, 'application/pdf');
+  },
+};
+
+// ============================================
+// FULL AND FINAL SETTLEMENT
+// ============================================
+export const settlementApi = {
+  /** Recomputes from the separation, replacing any existing draft. */
+  compute: (separationId: string, data?: { waiveGratuityMinimumService?: boolean }) =>
+    api.post(`/exit/settlements/separations/${separationId}/compute`, data ?? {}),
+  getBySeparation: (separationId: string) =>
+    api.get(`/exit/settlements/separations/${separationId}`),
+  getById: (id: string) => api.get(`/exit/settlements/${id}`),
+  update: (id: string, data: UpdateSettlementPayload) =>
+    api.put(`/exit/settlements/${id}`, data),
+  approve: (id: string) => api.post(`/exit/settlements/${id}/approve`),
+  markAsPaid: (id: string) => api.post(`/exit/settlements/${id}/pay`),
 };
