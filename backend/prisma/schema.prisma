@@ -107,6 +107,7 @@ model Tenant {
   separations             Separation[]
   designations            Designation[]
   branches                Branch[]
+  biometricDevices        BiometricDevice[]
 
   @@map("tenants")
 }
@@ -263,9 +264,10 @@ model Employee {
   otMultiplier   Decimal        @default(1.5) @db.Decimal(3, 2)
   departmentId   String?
   designationId  String?
-  branchId       String?
-  managerId      String?
-  joinDate       DateTime
+  branchId        String?
+  managerId       String?
+  biometricUserId String?  // Device user ID for biometric device matching
+  joinDate        DateTime
   exitDate       DateTime?
   status         EmployeeStatus @default(ACTIVE)
   createdAt      DateTime       @default(now())
@@ -336,6 +338,7 @@ enum AttendanceSource {
   MOBILE
   API
   IMPORT
+  BIOMETRIC
 }
 
 model AttendanceRecord {
@@ -411,6 +414,53 @@ model OtRule {
   @@unique([tenantId, employmentType])
   @@index([tenantId])
   @@map("ot_rules")
+}
+
+// ============================================
+// BIOMETRIC DEVICE INTEGRATION
+// ============================================
+
+model BiometricDevice {
+  id           String    @id @default(uuid())
+  tenantId     String
+  serialNumber String    @unique
+  name         String    // e.g., "Main Entrance", "Factory Gate"
+  deviceType   String    @default("ESSL_ICLOCK")
+  isActive     Boolean   @default(true)
+  lastSeenAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  tenant Tenant                @relation(fields: [tenantId], references: [id])
+  logs   DeviceAttendanceLog[]
+
+  @@index([tenantId])
+  @@map("biometric_devices")
+}
+
+model DeviceAttendanceLog {
+  id           String    @id @default(uuid())
+  deviceId     String
+  deviceUserId String    // User ID enrolled in the device
+  punchTime    DateTime
+  punchType    Int       // 0=clock-in, 1=clock-out (ZKTeco convention)
+  verifyType   Int       // 15=face, 0=fingerprint, 1=password, 2=card
+  rawData      String    // Original raw log line from device
+  processed    Boolean   @default(false)
+  processedAt  DateTime?
+  employeeId   String?   // Resolved HRMS employee ID after matching
+  attendanceId String?   // Linked AttendanceRecord ID
+  error        String?   // Error message if processing failed
+  createdAt    DateTime  @default(now())
+
+  device BiometricDevice @relation(fields: [deviceId], references: [id])
+
+  // A device re-sends punches when our acknowledgement is lost; store each once.
+  @@unique([deviceId, deviceUserId, punchTime, punchType])
+  @@index([deviceId])
+  @@index([deviceUserId, punchTime])
+  @@index([processed])
+  @@map("device_attendance_logs")
 }
 
 // ============================================

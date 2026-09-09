@@ -1,6 +1,8 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import LoginPage from './page';
+
+const mockLogin = jest.fn();
 
 // Mock lucide-react icons
 jest.mock('lucide-react', () =>
@@ -25,7 +27,7 @@ jest.mock('@/contexts/AuthContext', () => ({
     isAdmin: false,
     isSuperAdmin: false,
     hasRole: jest.fn().mockReturnValue(false),
-    login: jest.fn(),
+    login: mockLogin,
     logout: jest.fn(),
   }),
 }));
@@ -46,6 +48,20 @@ jest.mock('@/components/ui', () => ({
 }));
 
 describe('LoginPage', () => {
+  it('keeps the form available and displays the server error after rejected credentials', async () => {
+    mockLogin.mockRejectedValueOnce({
+      isAxiosError: true,
+      response: { status: 401, data: { message: 'Invalid credentials' } },
+    });
+    render(<LoginPage />);
+    fireEvent.change(screen.getByLabelText('Email address'), { target: { value: 'wrong@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'wrong' } });
+    fireEvent.submit(screen.getByRole('button', { name: 'Sign in' }).closest('form')!);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Invalid credentials');
+    expect(screen.getByLabelText('Email address')).toHaveValue('wrong@example.com');
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeEnabled();
+  });
+
   it('renders the welcome heading', () => {
     render(<LoginPage />);
     expect(screen.getByText('Welcome back')).toBeInTheDocument();

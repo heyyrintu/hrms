@@ -9,9 +9,10 @@ import { LeaveAccrualCronService } from './leave-accrual-cron.service';
 import { CompOffService } from './comp-off.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { AuditModule } from '../audit/audit.module';
+import { HolidaysModule } from '../holidays/holidays.module';
 
 @Module({
-  imports: [ScheduleModule.forRoot(), NotificationsModule, AuditModule],
+  imports: [ScheduleModule.forRoot(), NotificationsModule, AuditModule, HolidaysModule],
   controllers: [LeaveController, LeaveAccrualController, CompOffController],
   providers: [LeaveService, LeaveAccrualService, LeaveAccrualCronService, CompOffService],
   exports: [LeaveService, LeaveAccrualService, CompOffService],

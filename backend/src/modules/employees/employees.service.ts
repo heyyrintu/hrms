@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ConflictException, Logger } from '@nestj
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../../common/email/email.service';
 import { CreateEmployeeDto, UpdateEmployeeDto, EmployeeQueryDto } from './dto/employee.dto';
+import { FieldEncryptionService } from '../../common/crypto/field-encryption.service';
 import * as bcrypt from 'bcrypt';
 
 export interface OrgNode {
@@ -21,7 +22,17 @@ export class EmployeesService {
   constructor(
     private prisma: PrismaService,
     private emailService: EmailService,
+    private crypto: FieldEncryptionService,
   ) {}
+
+  /**
+   * Aadhaar is stored encrypted and never returned in full: every read path
+   * replaces it with a masked form (XXXX XXXX 1234).
+   */
+  private redact<T extends { aadhaarNumber?: string | null }>(employee: T): T {
+    if (!employee || employee.aadhaarNumber === undefined) return employee;
+    return { ...employee, aadhaarNumber: this.crypto.mask(employee.aadhaarNumber) };
+  }
 
   /**
    * Create a new employee
@@ -74,7 +85,7 @@ export class EmployeesService {
           gender: dto.gender,
           dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : null,
           fatherName: dto.fatherName,
-          aadhaarNumber: dto.aadhaarNumber,
+          aadhaarNumber: this.crypto.encryptNullable(dto.aadhaarNumber),
           maritalStatus: dto.maritalStatus,
           bloodGroup: dto.bloodGroup,
           mobileNumber: dto.mobileNumber,
@@ -159,7 +170,7 @@ export class EmployeesService {
       this.logger.error(`Failed to send welcome email: ${err}`);
     });
 
-    return employee;
+    return this.redact(employee);
   }
 
   /**
@@ -207,7 +218,7 @@ export class EmployeesService {
     ]);
 
     return {
-      data: employees,
+      data: employees.map((e) => this.redact(e)),
       meta: {
         total,
         page,
@@ -251,7 +262,7 @@ export class EmployeesService {
       throw new NotFoundException('Employee not found');
     }
 
-    return employee;
+    return this.redact(employee);
   }
 
   /**
@@ -311,7 +322,7 @@ export class EmployeesService {
     });
 
     return {
-      employee,
+      employee: this.redact(employee),
       attendanceSummary,
       leaveBalances,
       pendingLeaveRequests,
@@ -339,10 +350,14 @@ export class EmployeesService {
       }
     }
 
-    return this.prisma.employee.update({
+    const updated = await this.prisma.employee.update({
       where: { id },
       data: {
         ...dto,
+        aadhaarNumber:
+          dto.aadhaarNumber !== undefined
+            ? this.crypto.encryptNullable(dto.aadhaarNumber)
+            : undefined,
         exitDate: dto.exitDate ? new Date(dto.exitDate) : undefined,
       },
       include: {
@@ -359,6 +374,7 @@ export class EmployeesService {
         },
       },
     });
+    return this.redact(updated);
   }
 
   /**

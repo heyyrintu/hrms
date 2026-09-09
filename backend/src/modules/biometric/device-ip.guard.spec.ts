@@ -1,0 +1,38 @@
+import { ForbiddenException } from '@nestjs/common';
+import { DeviceIpGuard } from './device-ip.guard';
+
+function ctxWithIp(ip: string) {
+  return {
+    switchToHttp: () => ({ getRequest: () => ({ ip }) }),
+  } as any;
+}
+
+function guardWith(allowed?: string) {
+  return new DeviceIpGuard({ get: () => allowed } as any);
+}
+
+describe('DeviceIpGuard', () => {
+  it('allows every source when BIOMETRIC_ALLOWED_IPS is not configured', () => {
+    expect(guardWith(undefined).canActivate(ctxWithIp('203.0.113.9'))).toBe(true);
+  });
+
+  it('allows an IP that is on the list', () => {
+    expect(guardWith('10.0.0.5, 10.0.0.6').canActivate(ctxWithIp('10.0.0.6'))).toBe(true);
+  });
+
+  it('rejects an IP that is not on the list', () => {
+    expect(() => guardWith('10.0.0.5').canActivate(ctxWithIp('203.0.113.9'))).toThrow(
+      ForbiddenException,
+    );
+  });
+
+  it('matches IPv4 CIDR ranges', () => {
+    const guard = guardWith('192.168.10.0/24');
+    expect(guard.canActivate(ctxWithIp('192.168.10.77'))).toBe(true);
+    expect(() => guard.canActivate(ctxWithIp('192.168.11.1'))).toThrow(ForbiddenException);
+  });
+
+  it('normalises IPv4-mapped IPv6 addresses before matching', () => {
+    expect(guardWith('10.0.0.5').canActivate(ctxWithIp('::ffff:10.0.0.5'))).toBe(true);
+  });
+});

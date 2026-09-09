@@ -297,6 +297,17 @@ describe('ExpensesService', () => {
       expect(result).toEqual(updated);
     });
 
+    it('should enforce the category limit when only the amount changes', async () => {
+      prisma.expenseClaim.findFirst.mockResolvedValue({ ...draftClaim, categoryId: 'cat-1' });
+      prisma.expenseCategory.findFirst.mockResolvedValue({ id: 'cat-1', maxAmount: 1000 });
+
+      await expect(
+        service.updateClaim('tenant-1', 'emp-1', 'claim-1', { amount: 50000 }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prisma.expenseClaim.update).not.toHaveBeenCalled();
+    });
+
     it('should throw ForbiddenException when not own claim', async () => {
       prisma.expenseClaim.findFirst.mockResolvedValue({
         ...draftClaim,

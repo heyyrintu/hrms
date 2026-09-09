@@ -126,7 +126,7 @@ export class LettersController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
   ) {
-    return this.lettersService.getGeneratedLetter(user.tenantId, id);
+    return this.lettersService.getGeneratedLetter(user.tenantId, id, user);
   }
 
   @Get('generated/:id/pdf')
@@ -137,7 +137,7 @@ export class LettersController {
     @Param('id') id: string,
     @Res() res: Response,
   ) {
-    const buffer = await this.lettersService.generatePdf(user.tenantId, id);
+    const buffer = await this.lettersService.generatePdf(user.tenantId, id, user);
 
     res.set({
       'Content-Type': 'application/pdf',

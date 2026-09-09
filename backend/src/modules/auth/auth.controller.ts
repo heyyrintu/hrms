@@ -1,5 +1,6 @@
 import { Controller, Post, Get, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { LoginDto, RegisterDto } from './dto/auth.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
@@ -26,8 +27,11 @@ export class AuthController {
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
-  async register(@Body() dto: RegisterDto) {
-    return this.authService.register(dto);
+  async register(
+    @Body() dto: RegisterDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.authService.register(dto, user);
   }
 
   /**
@@ -35,8 +39,12 @@ export class AuthController {
    * POST /api/auth/login
    */
   @Post('login')
+  // Brute-force protection: 5 attempts per minute per IP.
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiOperation({ summary: 'Login with credentials' })
   @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 429, description: 'Too many login attempts' })
   async login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
   }

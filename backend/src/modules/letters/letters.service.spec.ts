@@ -252,5 +252,41 @@ describe('LettersService', () => {
 
       await expect(service.getGeneratedLetter('tenant-1', 'none')).rejects.toThrow(NotFoundException);
     });
+
+    it('should restrict a non-admin requester to letters addressed to them', async () => {
+      prisma.letterGenerated.findFirst.mockResolvedValue({ id: 'gen-1' });
+
+      await service.getGeneratedLetter('tenant-1', 'gen-1', {
+        role: 'EMPLOYEE' as any,
+        employeeId: 'emp-7',
+      });
+
+      expect(prisma.letterGenerated.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'gen-1', tenantId: 'tenant-1', employeeId: 'emp-7' },
+        }),
+      );
+    });
+
+    it('should not scope by employee for HR_ADMIN', async () => {
+      prisma.letterGenerated.findFirst.mockResolvedValue({ id: 'gen-1' });
+
+      await service.getGeneratedLetter('tenant-1', 'gen-1', {
+        role: 'HR_ADMIN' as any,
+        employeeId: 'emp-hr',
+      });
+
+      expect(prisma.letterGenerated.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'gen-1', tenantId: 'tenant-1' } }),
+      );
+    });
+
+    it('should never match when a non-admin requester has no employee link', async () => {
+      prisma.letterGenerated.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.getGeneratedLetter('tenant-1', 'gen-1', { role: 'EMPLOYEE' as any }),
+      ).rejects.toThrow(NotFoundException);
+    });
   });
 });

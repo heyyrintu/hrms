@@ -24,11 +24,19 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
+    // A rejected login belongs to the form, not the session-expiry handler.
+    if (error.response?.status === 401 && error.config?.url !== '/auth/login') {
       if (typeof window !== 'undefined') {
+        const token = localStorage.getItem('hrms_token');
+        // Ignore unauthenticated requests and responses from an older session.
+        if (!token || error.config?.headers?.Authorization !== `Bearer ${token}`) {
+          return Promise.reject(error);
+        }
         localStorage.removeItem('hrms_token');
         localStorage.removeItem('hrms_user');
-        window.location.href = '/login';
+        if (window.location.pathname !== '/login') {
+          window.location.replace('/login');
+        }
       }
     }
     return Promise.reject(error);
@@ -252,6 +260,8 @@ export const selfServiceApi = {
   getProfile: () => api.get('/self-service/profile'),
   createChangeRequest: (data: Record<string, unknown>) =>
     api.post('/self-service/change-requests', data),
+  createBatchChangeRequests: (changes: Array<{ fieldName: string; newValue: string; reason?: string }>) =>
+    api.post('/self-service/change-requests/batch', { changes }),
   getMyChangeRequests: () => api.get('/self-service/change-requests'),
 
   // Admin
@@ -499,4 +509,20 @@ export const performanceApi = {
   updateGoal: (id: string, data: Record<string, unknown>) =>
     api.put(`/performance/goals/${id}`, data),
   deleteGoal: (id: string) => api.delete(`/performance/goals/${id}`),
+};
+
+// ============================================
+// BIOMETRIC DEVICE MANAGEMENT
+// ============================================
+export const biometricApi = {
+  // Devices
+  listDevices: () => api.get('/biometric/devices'),
+  registerDevice: (data: Record<string, unknown>) => api.post('/biometric/devices', data),
+  updateDevice: (deviceId: string, data: Record<string, unknown>) =>
+    api.patch(`/biometric/devices/${deviceId}`, data),
+  getDeviceLogs: (deviceId: string, limit?: number) =>
+    api.get(`/biometric/devices/${deviceId}/logs`, { params: limit ? { limit } : {} }),
+  // Employee mapping
+  setEmployeeBiometricId: (employeeId: string, biometricUserId: string) =>
+    api.patch(`/biometric/employees/${employeeId}`, { biometricUserId }),
 };

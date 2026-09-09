@@ -4,6 +4,9 @@ import { EmployeesService } from './employees.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../../common/email/email.service';
 import { createMockPrismaService, createMockEmailService } from '../../test/helpers';
+import { FieldEncryptionService } from '../../common/crypto/field-encryption.service';
+
+const TEST_ENCRYPTION_KEY = 'b'.repeat(64);
 
 describe('EmployeesService', () => {
   let service: EmployeesService;
@@ -17,6 +20,10 @@ describe('EmployeesService', () => {
         EmployeesService,
         { provide: PrismaService, useValue: createMockPrismaService() },
         { provide: EmailService, useValue: createMockEmailService() },
+        {
+          provide: FieldEncryptionService,
+          useValue: new FieldEncryptionService({ get: () => TEST_ENCRYPTION_KEY } as any),
+        },
       ],
     }).compile();
 
@@ -98,6 +105,30 @@ describe('EmployeesService', () => {
           ],
         },
       });
+    });
+
+    it('should store the Aadhaar number encrypted, never as plaintext', async () => {
+      prisma.employee.findFirst.mockResolvedValue(null);
+      prisma.employee.create.mockResolvedValue(mockEmployee);
+
+      await service.create(tenantId, { ...createDto, aadhaarNumber: '123412341234' });
+
+      const data = prisma.employee.create.mock.calls[0][0].data;
+      expect(data.aadhaarNumber).toMatch(/^enc:v1:/);
+      expect(data.aadhaarNumber).not.toContain('123412341234');
+    });
+
+    it('should return the Aadhaar number masked from the create response', async () => {
+      prisma.employee.findFirst.mockResolvedValue(null);
+      prisma.employee.create.mockResolvedValue({ ...mockEmployee, aadhaarNumber: 'enc:v1:whatever' });
+      prisma.employee.create.mockImplementation(async (args: any) => ({
+        ...mockEmployee,
+        aadhaarNumber: args.data.aadhaarNumber,
+      }));
+
+      const result = await service.create(tenantId, { ...createDto, aadhaarNumber: '123412341234' });
+
+      expect(result.aadhaarNumber).toBe('XXXX XXXX 1234');
     });
 
     it('should throw ConflictException when employee code already exists', async () => {
@@ -286,6 +317,18 @@ describe('EmployeesService', () => {
           directReports: expect.any(Object),
         }),
       });
+    });
+
+    it('should mask the Aadhaar number in the response', async () => {
+      const crypto = new FieldEncryptionService({ get: () => TEST_ENCRYPTION_KEY } as any);
+      prisma.employee.findFirst.mockResolvedValue({
+        ...mockEmployee,
+        aadhaarNumber: crypto.encrypt('999988887777'),
+      });
+
+      const result = await service.findOne(tenantId, 'emp-1');
+
+      expect(result.aadhaarNumber).toBe('XXXX XXXX 7777');
     });
 
     it('should throw NotFoundException when employee does not exist', async () => {

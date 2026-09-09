@@ -58,9 +58,12 @@ const prismaModels = [
   'letterGenerated',
   'separation',
   'leaveAccrualRule',
+  'leaveAccrualRun',
   'leaveAccrualEntry',
   'attendanceRegularization',
   'compOffRequest',
+  'biometricDevice',
+  'deviceAttendanceLog',
   'feedback',
   'improvementPlan',
 ];

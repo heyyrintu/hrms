@@ -1,11 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { createMockPrismaService } from '../../test/helpers';
+import { createMockPrismaService, mockHrAdmin } from '../../test/helpers';
 
 jest.mock('bcrypt');
 
@@ -53,7 +53,6 @@ describe('AuthService', () => {
     const registerDto = {
       email: 'new@test.com',
       password: 'password123',
-      tenantId: 'test-tenant',
     };
 
     const mockTenant = { id: 'test-tenant', name: 'Test Tenant' };
@@ -68,13 +67,39 @@ describe('AuthService', () => {
       isActive: true,
     };
 
+    it('should create the user in the caller tenant, ignoring any tenantId in the body', async () => {
+      prisma.tenant.findUnique.mockResolvedValue(mockTenant);
+      prisma.user.findUnique.mockResolvedValue(null);
+      (mockBcrypt.hash as jest.Mock).mockResolvedValue('hashed-password');
+      prisma.user.create.mockResolvedValue(mockCreatedUser);
+
+      await service.register(
+        { ...registerDto, tenantId: 'victim-tenant' } as any,
+        mockHrAdmin,
+      );
+
+      expect(prisma.tenant.findUnique).toHaveBeenCalledWith({
+        where: { id: mockHrAdmin.tenantId },
+      });
+      expect(prisma.user.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ tenantId: mockHrAdmin.tenantId }),
+      });
+    });
+
+    it('should forbid HR_ADMIN from creating a SUPER_ADMIN', async () => {
+      await expect(
+        service.register({ ...registerDto, role: 'SUPER_ADMIN' as any }, mockHrAdmin),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
     it('should register a new user successfully', async () => {
       prisma.tenant.findUnique.mockResolvedValue(mockTenant);
       prisma.user.findUnique.mockResolvedValue(null);
       (mockBcrypt.hash as jest.Mock).mockResolvedValue('hashed-password');
       prisma.user.create.mockResolvedValue(mockCreatedUser);
 
-      const result = await service.register(registerDto);
+      const result = await service.register(registerDto, mockHrAdmin);
 
       expect(result).toEqual({
         accessToken: 'mock-jwt-token',
@@ -116,42 +141,19 @@ describe('AuthService', () => {
       });
     });
 
-    it('should use DEFAULT_TENANT_ID when tenantId is not provided', async () => {
-      const dtoWithoutTenant = { email: 'new@test.com', password: 'password123' };
-      prisma.tenant.findUnique.mockResolvedValue(mockTenant);
-      prisma.user.findUnique.mockResolvedValue(null);
-      (mockBcrypt.hash as jest.Mock).mockResolvedValue('hashed-password');
-      prisma.user.create.mockResolvedValue(mockCreatedUser);
-
-      await service.register(dtoWithoutTenant);
-
-      expect(configService.get).toHaveBeenCalledWith('DEFAULT_TENANT_ID');
-      expect(prisma.tenant.findUnique).toHaveBeenCalledWith({
-        where: { id: 'default-tenant-id' },
-      });
-    });
-
-    it('should throw ConflictException when tenantId is not resolved', async () => {
-      configService.get.mockReturnValue(undefined);
-      const dtoWithoutTenant = { email: 'new@test.com', password: 'password123' };
-
-      await expect(service.register(dtoWithoutTenant)).rejects.toThrow(ConflictException);
-      await expect(service.register(dtoWithoutTenant)).rejects.toThrow('Tenant ID is required');
-    });
-
     it('should throw ConflictException when tenant does not exist', async () => {
       prisma.tenant.findUnique.mockResolvedValue(null);
 
-      await expect(service.register(registerDto)).rejects.toThrow(ConflictException);
-      await expect(service.register(registerDto)).rejects.toThrow('Tenant not found');
+      await expect(service.register(registerDto, mockHrAdmin)).rejects.toThrow(ConflictException);
+      await expect(service.register(registerDto, mockHrAdmin)).rejects.toThrow('Tenant not found');
     });
 
     it('should throw ConflictException when user already exists', async () => {
       prisma.tenant.findUnique.mockResolvedValue(mockTenant);
       prisma.user.findUnique.mockResolvedValue(mockCreatedUser);
 
-      await expect(service.register(registerDto)).rejects.toThrow(ConflictException);
-      await expect(service.register(registerDto)).rejects.toThrow(
+      await expect(service.register(registerDto, mockHrAdmin)).rejects.toThrow(ConflictException);
+      await expect(service.register(registerDto, mockHrAdmin)).rejects.toThrow(
         'User with this email already exists',
       );
     });
@@ -163,7 +165,7 @@ describe('AuthService', () => {
       (mockBcrypt.hash as jest.Mock).mockResolvedValue('hashed-password');
       prisma.user.create.mockResolvedValue({ ...mockCreatedUser, role: 'HR_ADMIN' });
 
-      await service.register(dtoWithRole);
+      await service.register(dtoWithRole, mockHrAdmin);
 
       expect(prisma.user.create).toHaveBeenCalledWith({
         data: expect.objectContaining({ role: 'HR_ADMIN' }),

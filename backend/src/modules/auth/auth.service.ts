@@ -1,10 +1,16 @@
-import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto, RegisterDto, AuthResponseDto } from './dto/auth.dto';
-import { JwtPayload } from '../../common/types/jwt-payload.type';
+import { AuthenticatedUser, JwtPayload } from '../../common/types/jwt-payload.type';
 
 @Injectable()
 export class AuthService {
@@ -15,13 +21,19 @@ export class AuthService {
   ) {}
 
   /**
-   * Register a new user (dev mode or tenant bootstrap)
+   * Register a new user inside the caller's tenant.
+   * The tenant is always taken from the caller's JWT, never from the body,
+   * and an HR_ADMIN may not mint a SUPER_ADMIN.
    */
-  async register(dto: RegisterDto): Promise<AuthResponseDto> {
-    const tenantId = dto.tenantId || this.configService.get<string>('DEFAULT_TENANT_ID');
+  async register(
+    dto: RegisterDto,
+    caller: AuthenticatedUser,
+  ): Promise<AuthResponseDto> {
+    const tenantId = caller.tenantId;
+    const role = dto.role || UserRole.EMPLOYEE;
 
-    if (!tenantId) {
-      throw new ConflictException('Tenant ID is required');
+    if (role === UserRole.SUPER_ADMIN && caller.role !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Only a SUPER_ADMIN can create SUPER_ADMIN accounts');
     }
 
     // Check if tenant exists
@@ -56,7 +68,7 @@ export class AuthService {
         tenantId,
         email: dto.email,
         passwordHash,
-        role: dto.role || 'EMPLOYEE',
+        role,
       },
     });
 

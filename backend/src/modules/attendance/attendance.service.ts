@@ -1,5 +1,12 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isPrismaError, PRISMA_WRITE_CONFLICT } from '../../common/utils/prisma-errors';
 import { OtCalculationService } from './ot-calculation.service';
 import {
   ClockInDto,
@@ -67,72 +74,75 @@ export class AttendanceService {
       }
     }
 
-    // Check if already clocked in today
-    let attendance = await this.prisma.attendanceRecord.findUnique({
-      where: {
-        tenantId_employeeId_date: {
-          tenantId,
-          employeeId,
-          date: today,
-        },
-      },
-      include: { sessions: true },
-    });
-
-    if (attendance) {
-      // Check if there's an open session
-      const openSession = attendance.sessions.find((s) => !s.outTime);
-      if (openSession) {
-        throw new BadRequestException('Already clocked in. Please clock out first.');
-      }
-
-      // Create a new session for the existing attendance record
-      await this.prisma.attendanceSession.create({
-        data: {
-          attendanceId: attendance.id,
-          inTime: now,
-        },
-      });
-
-      // Update clock in time if this is the first session of the day
-      if (!attendance.clockInTime) {
-        await this.prisma.attendanceRecord.update({
-          where: { id: attendance.id },
-          data: {
-            clockInTime: now,
-            status: 'PRESENT',
-            source: dto.source || 'WEB',
-            remarks: dto.remarks,
-            clockInLatitude: dto.latitude,
-            clockInLongitude: dto.longitude,
-          },
-        });
-      }
-    } else {
-      // Create new attendance record with first session
-      attendance = await this.prisma.attendanceRecord.create({
-        data: {
-          tenantId,
-          employeeId,
-          date: today,
-          clockInTime: now,
-          status: 'PRESENT',
-          source: dto.source || 'WEB',
-          remarks: dto.remarks,
-          clockInLatitude: dto.latitude,
-          clockInLongitude: dto.longitude,
-          standardWorkMinutes: 480, // 8 hours default
-          sessions: {
-            create: {
-              inTime: now,
+    // The "is there an open session?" check and the session insert must be one
+    // atomic unit, otherwise two near-simultaneous taps both see "no open session"
+    // and both insert. A SERIALIZABLE transaction makes the loser fail with P2034.
+    let attendanceId: string;
+    try {
+      attendanceId = await this.prisma.$transaction(
+        async (tx) => {
+          const attendance = await tx.attendanceRecord.findUnique({
+            where: {
+              tenantId_employeeId_date: { tenantId, employeeId, date: today },
             },
-          },
+            include: { sessions: true },
+          });
+
+          if (attendance) {
+            const openSession = attendance.sessions.find((s) => !s.outTime);
+            if (openSession) {
+              throw new BadRequestException('Already clocked in. Please clock out first.');
+            }
+
+            await tx.attendanceSession.create({
+              data: { attendanceId: attendance.id, inTime: now },
+            });
+
+            // Update clock in time if this is the first session of the day
+            if (!attendance.clockInTime) {
+              await tx.attendanceRecord.update({
+                where: { id: attendance.id },
+                data: {
+                  clockInTime: now,
+                  status: 'PRESENT',
+                  source: dto.source || 'WEB',
+                  remarks: dto.remarks,
+                  clockInLatitude: dto.latitude,
+                  clockInLongitude: dto.longitude,
+                },
+              });
+            }
+            return attendance.id;
+          }
+
+          const created = await tx.attendanceRecord.create({
+            data: {
+              tenantId,
+              employeeId,
+              date: today,
+              clockInTime: now,
+              status: 'PRESENT',
+              source: dto.source || 'WEB',
+              remarks: dto.remarks,
+              clockInLatitude: dto.latitude,
+              clockInLongitude: dto.longitude,
+              standardWorkMinutes: 480, // 8 hours default
+              sessions: { create: { inTime: now } },
+            },
+            include: { sessions: true },
+          });
+          return created.id;
         },
-        include: { sessions: true },
-      });
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    } catch (err) {
+      if (isPrismaError(err, PRISMA_WRITE_CONFLICT)) {
+        throw new ConflictException('Clock-in already in progress. Please try again.');
+      }
+      throw err;
     }
 
-    return this.getAttendanceById(tenantId, attendance.id);
+    return this.getAttendanceById(tenantId, attendanceId);
   }
 
   /**

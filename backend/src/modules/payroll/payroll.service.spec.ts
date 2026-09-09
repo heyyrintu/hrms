@@ -4,7 +4,7 @@ import { PayrollService } from './payroll.service';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createMockPrismaService } from '../../test/helpers';
-import { PayrollRunStatus } from '@prisma/client';
+import { PayrollRunStatus, Prisma } from '@prisma/client';
 
 describe('PayrollService', () => {
   let service: PayrollService;
@@ -234,7 +234,7 @@ describe('PayrollService', () => {
       const result = await service.processRun(tenantId, runId);
 
       expect(prisma.payrollRun.update).toHaveBeenCalledWith({
-        where: { id: runId },
+        where: { id: runId, status: PayrollRunStatus.DRAFT },
         data: { status: PayrollRunStatus.PROCESSING },
       });
       expect(prisma.payslip.deleteMany).toHaveBeenCalledWith({
@@ -262,6 +262,22 @@ describe('PayrollService', () => {
       await expect(service.processRun(tenantId, runId)).rejects.toThrow(
         BadRequestException,
       );
+    });
+
+    it('should throw ConflictException and not touch payslips when another process call claimed the run first', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(draftRun);
+      prisma.payrollRun.update.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('Record to update not found.', {
+          code: 'P2025',
+          clientVersion: 'test',
+        }),
+      );
+
+      await expect(service.processRun(tenantId, runId)).rejects.toThrow(ConflictException);
+
+      expect(prisma.payslip.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.payslip.create).not.toHaveBeenCalled();
+      expect(prisma.payrollRun.update).toHaveBeenCalledTimes(1);
     });
 
     it('should revert to DRAFT status on processing error', async () => {

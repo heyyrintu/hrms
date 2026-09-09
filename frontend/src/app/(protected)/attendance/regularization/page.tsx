@@ -60,8 +60,8 @@ export default function RegularizationPage() {
     try {
       await regularizationApi.create({
         date: formDate,
-        requestedClockIn,
-        requestedClockOut,
+        requestedClockIn: `${formDate}T${requestedClockIn}:00`,
+        requestedClockOut: `${formDate}T${requestedClockOut}:00`,
         reason: reason.trim(),
       });
       toast.success('Regularization request submitted successfully');

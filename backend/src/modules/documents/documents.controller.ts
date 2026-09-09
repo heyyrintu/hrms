@@ -100,7 +100,7 @@ export class DocumentsController {
     @Param('docId') docId: string,
   ) {
     this.assertEmployeeAccess(user, employeeId);
-    return this.documentsService.getDocumentById(user.tenantId, docId);
+    return this.documentsService.getDocumentById(user.tenantId, employeeId, docId);
   }
 
   @Get(':docId/download')
@@ -117,7 +117,7 @@ export class DocumentsController {
     this.assertEmployeeAccess(user, employeeId);
 
     const { filePath, fileName, mimeType } =
-      await this.documentsService.downloadDocument(user.tenantId, docId);
+      await this.documentsService.downloadDocument(user.tenantId, employeeId, docId);
 
     res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
     res.setHeader('Content-Type', mimeType);
@@ -133,10 +133,12 @@ export class DocumentsController {
   @ApiResponse({ status: 404, description: 'Not found' })
   async verifyDocument(
     @CurrentUser() user: AuthenticatedUser,
+    @Param('employeeId') employeeId: string,
     @Param('docId') docId: string,
   ) {
     return this.documentsService.verifyDocument(
       user.tenantId,
+      employeeId,
       docId,
       user.employeeId || user.userId,
     );
@@ -151,8 +153,9 @@ export class DocumentsController {
   @ApiResponse({ status: 404, description: 'Not found' })
   async deleteDocument(
     @CurrentUser() user: AuthenticatedUser,
+    @Param('employeeId') employeeId: string,
     @Param('docId') docId: string,
   ) {
-    return this.documentsService.deleteDocument(user.tenantId, docId);
+    return this.documentsService.deleteDocument(user.tenantId, employeeId, docId);
   }
 }

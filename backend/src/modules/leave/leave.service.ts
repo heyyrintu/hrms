@@ -9,6 +9,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../../common/email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { HolidaysService } from '../holidays/holidays.service';
 import { NotificationType } from '@prisma/client';
 import {
   CreateLeaveRequestDto,
@@ -21,6 +22,7 @@ import {
   InitializeBalancesDto,
 } from './dto/leave.dto';
 import { Decimal } from '@prisma/client/runtime/library';
+import { isPrismaError, PRISMA_RECORD_NOT_FOUND } from '../../common/utils/prisma-errors';
 
 @Injectable()
 export class LeaveService {
@@ -30,6 +32,7 @@ export class LeaveService {
     private prisma: PrismaService,
     private emailService: EmailService,
     private notificationsService: NotificationsService,
+    private holidaysService: HolidaysService,
   ) {}
 
   /**
@@ -73,8 +76,10 @@ export class LeaveService {
       }
     }
 
-    // Calculate total days
-    const totalDays = dto.isHalfDay ? 0.5 : this.calculateLeaveDays(startDate, endDate);
+    // Calculate total days (weekends and company holidays are not charged)
+    const totalDays = dto.isHalfDay
+      ? 0.5
+      : await this.calculateLeaveDays(tenantId, startDate, endDate);
 
     // Check if leave type exists
     const leaveType = await this.prisma.leaveType.findFirst({
@@ -323,40 +328,53 @@ export class LeaveService {
     }
     // SUPER_ADMIN and HR_ADMIN can approve any leave request
 
-    // Update request
-    const updated = await this.prisma.leaveRequest.update({
-      where: { id: requestId },
-      data: {
-        status: 'APPROVED',
-        approverId,
-        approverNote: dto.approverNote,
-        approvedAt: new Date(),
-      },
-      include: {
-        leaveType: true,
-        employee: true,
-      },
-    });
+    // Transition + balance adjustment are atomic, and the transition only
+    // succeeds if the request is still PENDING, so a concurrent approve/reject
+    // cannot apply the balance change twice.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      let transitioned;
+      try {
+        transitioned = await tx.leaveRequest.update({
+          where: { id: requestId, status: 'PENDING' },
+          data: {
+            status: 'APPROVED',
+            approverId,
+            approverNote: dto.approverNote,
+            approvedAt: new Date(),
+          },
+          include: {
+            leaveType: true,
+            employee: true,
+          },
+        });
+      } catch (err) {
+        if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
+          throw new ConflictException('Leave request has already been processed');
+        }
+        throw err;
+      }
 
-    // Update leave balance
-    const balance = await this.prisma.leaveBalance.findFirst({
-      where: {
-        tenantId,
-        employeeId: request.employeeId,
-        leaveTypeId: request.leaveTypeId,
-        year: request.startDate.getFullYear(),
-      },
-    });
-
-    if (balance) {
-      await this.prisma.leaveBalance.update({
-        where: { id: balance.id },
-        data: {
-          usedDays: { increment: Number(request.totalDays) },
-          pendingDays: { decrement: Number(request.totalDays) },
+      const balance = await tx.leaveBalance.findFirst({
+        where: {
+          tenantId,
+          employeeId: request.employeeId,
+          leaveTypeId: request.leaveTypeId,
+          year: request.startDate.getFullYear(),
         },
       });
-    }
+
+      if (balance) {
+        await tx.leaveBalance.update({
+          where: { id: balance.id },
+          data: {
+            usedDays: { increment: Number(request.totalDays) },
+            pendingDays: { decrement: Number(request.totalDays) },
+          },
+        });
+      }
+
+      return transitioned;
+    });
 
     // Mark attendance as LEAVE for the leave dates
     await this.markAttendanceAsLeave(tenantId, request.employeeId, request.startDate, request.endDate);
@@ -429,38 +447,49 @@ export class LeaveService {
     }
     // SUPER_ADMIN and HR_ADMIN can reject any leave request
 
-    // Update request
-    const updated = await this.prisma.leaveRequest.update({
-      where: { id: requestId },
-      data: {
-        status: 'REJECTED',
-        approverId,
-        approverNote: dto.approverNote,
-      },
-      include: {
-        leaveType: true,
-        employee: true,
-      },
-    });
+    const updated = await this.prisma.$transaction(async (tx) => {
+      let transitioned;
+      try {
+        transitioned = await tx.leaveRequest.update({
+          where: { id: requestId, status: 'PENDING' },
+          data: {
+            status: 'REJECTED',
+            approverId,
+            approverNote: dto.approverNote,
+          },
+          include: {
+            leaveType: true,
+            employee: true,
+          },
+        });
+      } catch (err) {
+        if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
+          throw new ConflictException('Leave request has already been processed');
+        }
+        throw err;
+      }
 
-    // Update leave balance - remove from pending
-    const balance = await this.prisma.leaveBalance.findFirst({
-      where: {
-        tenantId,
-        employeeId: request.employeeId,
-        leaveTypeId: request.leaveTypeId,
-        year: request.startDate.getFullYear(),
-      },
-    });
-
-    if (balance) {
-      await this.prisma.leaveBalance.update({
-        where: { id: balance.id },
-        data: {
-          pendingDays: { decrement: Number(request.totalDays) },
+      // Remove from pending
+      const balance = await tx.leaveBalance.findFirst({
+        where: {
+          tenantId,
+          employeeId: request.employeeId,
+          leaveTypeId: request.leaveTypeId,
+          year: request.startDate.getFullYear(),
         },
       });
-    }
+
+      if (balance) {
+        await tx.leaveBalance.update({
+          where: { id: balance.id },
+          data: {
+            pendingDays: { decrement: Number(request.totalDays) },
+          },
+        });
+      }
+
+      return transitioned;
+    });
 
     // Notify the employee (in-app + email)
     this.notificationsService.notifyEmployee(
@@ -509,32 +538,40 @@ export class LeaveService {
       throw new NotFoundException('Leave request not found or cannot be cancelled');
     }
 
-    // Update request
-    const updated = await this.prisma.leaveRequest.update({
-      where: { id: requestId },
-      data: { status: 'CANCELLED' },
-    });
+    return this.prisma.$transaction(async (tx) => {
+      let transitioned;
+      try {
+        transitioned = await tx.leaveRequest.update({
+          where: { id: requestId, status: 'PENDING' },
+          data: { status: 'CANCELLED' },
+        });
+      } catch (err) {
+        if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
+          throw new ConflictException('Leave request has already been processed');
+        }
+        throw err;
+      }
 
-    // Update leave balance
-    const balance = await this.prisma.leaveBalance.findFirst({
-      where: {
-        tenantId,
-        employeeId: request.employeeId,
-        leaveTypeId: request.leaveTypeId,
-        year: request.startDate.getFullYear(),
-      },
-    });
-
-    if (balance) {
-      await this.prisma.leaveBalance.update({
-        where: { id: balance.id },
-        data: {
-          pendingDays: { decrement: Number(request.totalDays) },
+      const balance = await tx.leaveBalance.findFirst({
+        where: {
+          tenantId,
+          employeeId: request.employeeId,
+          leaveTypeId: request.leaveTypeId,
+          year: request.startDate.getFullYear(),
         },
       });
-    }
 
-    return updated;
+      if (balance) {
+        await tx.leaveBalance.update({
+          where: { id: balance.id },
+          data: {
+            pendingDays: { decrement: Number(request.totalDays) },
+          },
+        });
+      }
+
+      return transitioned;
+    });
   }
 
   /**
@@ -668,22 +705,35 @@ export class LeaveService {
   }
 
   /**
-   * Calculate leave days (excluding weekends)
+   * Calculate chargeable leave days: excludes weekends and the tenant's
+   * non-optional company holidays that fall inside the range.
    */
-  private calculateLeaveDays(startDate: Date, endDate: Date): number {
+  private async calculateLeaveDays(
+    tenantId: string,
+    startDate: Date,
+    endDate: Date,
+  ): Promise<number> {
+    const holidays = await this.holidaysService.getHolidaysBetween(tenantId, startDate, endDate);
+    const holidayKeys = new Set(holidays.map((h) => this.dayKey(new Date(h.date))));
+
     let count = 0;
     const current = new Date(startDate);
 
     while (current <= endDate) {
       const dayOfWeek = current.getDay();
-      // Exclude Saturday (6) and Sunday (0)
-      if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+      const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+      if (!isWeekend && !holidayKeys.has(this.dayKey(current))) {
         count++;
       }
       current.setDate(current.getDate() + 1);
     }
 
     return count;
+  }
+
+  /** Calendar-day key (UTC) so a holiday matches regardless of stored time-of-day. */
+  private dayKey(d: Date): string {
+    return d.toISOString().slice(0, 10);
   }
 
   /**

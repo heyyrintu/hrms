@@ -88,9 +88,13 @@ export class DocumentsService {
     });
   }
 
-  async getDocumentById(tenantId: string, docId: string) {
+  /**
+   * Look up a document scoped to BOTH the tenant and the employee named in the
+   * route. Filtering by tenant alone let any employee fetch a coworker's file.
+   */
+  async getDocumentById(tenantId: string, employeeId: string, docId: string) {
     const doc = await this.prisma.employeeDocument.findFirst({
-      where: { id: docId, tenantId },
+      where: { id: docId, tenantId, employeeId },
       include: {
         upload: { select: { fileName: true, mimeType: true, size: true, key: true } },
         employee: { select: { firstName: true, lastName: true, employeeCode: true } },
@@ -104,18 +108,19 @@ export class DocumentsService {
     return doc;
   }
 
-  async downloadDocument(tenantId: string, docId: string) {
-    const doc = await this.getDocumentById(tenantId, docId);
+  async downloadDocument(tenantId: string, employeeId: string, docId: string) {
+    const doc = await this.getDocumentById(tenantId, employeeId, docId);
     const filePath = await this.storageService.getFilePath(doc.upload.key);
     return { filePath, fileName: doc.upload.fileName, mimeType: doc.upload.mimeType };
   }
 
   async verifyDocument(
     tenantId: string,
+    employeeId: string,
     docId: string,
     verifiedBy: string,
   ) {
-    const doc = await this.getDocumentById(tenantId, docId);
+    const doc = await this.getDocumentById(tenantId, employeeId, docId);
 
     return this.prisma.employeeDocument.update({
       where: { id: doc.id },
@@ -130,8 +135,8 @@ export class DocumentsService {
     });
   }
 
-  async deleteDocument(tenantId: string, docId: string) {
-    const doc = await this.getDocumentById(tenantId, docId);
+  async deleteDocument(tenantId: string, employeeId: string, docId: string) {
+    const doc = await this.getDocumentById(tenantId, employeeId, docId);
 
     // Delete file from storage
     try {

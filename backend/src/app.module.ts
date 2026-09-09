@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { CacheModule } from '@nestjs/cache-manager';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { WinstonModule } from 'nest-winston';
+import { CryptoModule } from './common/crypto/crypto.module';
 import { validate } from './config/env.validation';
 import { loggerConfig } from './config/logger.config';
 import { PrismaModule } from './prisma/prisma.module';
@@ -32,6 +34,7 @@ import { AuditModule } from './modules/audit/audit.module';
 import { PerformanceModule } from './modules/performance/performance.module';
 import { LettersModule } from './modules/letters/letters.module';
 import { ExitModule } from './modules/exit/exit.module';
+import { BiometricModule } from './modules/biometric/biometric.module';
 
 @Module({
   imports: [
@@ -45,6 +48,9 @@ import { ExitModule } from './modules/exit/exit.module';
       isGlobal: true,
       ttl: 300,
     }),
+    // Rate-limit storage; the guard is applied per-route (see AuthController.login).
+    ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 60 }]),
+    CryptoModule,
     PrismaModule,
     StorageModule,
     EmailModule,
@@ -73,6 +79,7 @@ import { ExitModule } from './modules/exit/exit.module';
     PerformanceModule,
     LettersModule,
     ExitModule,
+    BiometricModule,
   ],
 })
 export class AppModule {}

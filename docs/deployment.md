@@ -114,6 +114,71 @@ npm run prisma:migrate
 npm run prisma:migrate:prod
 ```
 
+#### Databases that were built with `prisma db push`
+Several features shipped without migration files and were applied to existing
+databases with `db push`. On such a database, `migrate deploy` fails with
+"relation already exists". Mark the migrations that match the current schema
+as applied, then deploy normally:
+
+```bash
+npx prisma migrate resolve --applied 20251203105041_drona_hrms
+npx prisma migrate resolve --applied 20260908091059_drona
+npm run prisma:migrate:prod
+```
+
+Only resolve a migration as applied if its tables already exist in that database.
+
+#### Before applying `20260908091059_drona` to a database that still has `employees.designation`
+That migration drops the free-text `designation` column and replaces it with
+`designationId`. It does not carry the data across. Run this first, in a
+transaction, on any environment still on the old schema:
+
+```sql
+BEGIN;
+INSERT INTO "designations" ("id", "tenantId", "name", "isActive", "createdAt", "updatedAt")
+SELECT gen_random_uuid()::text, e."tenantId", e."designation", true, now(), now()
+FROM "employees" e
+WHERE e."designation" IS NOT NULL AND e."designation" <> ''
+GROUP BY e."tenantId", e."designation"
+ON CONFLICT ("tenantId", "name") DO NOTHING;
+
+ALTER TABLE "employees" ADD COLUMN IF NOT EXISTS "designationId" TEXT;
+
+UPDATE "employees" e
+SET "designationId" = d."id"
+FROM "designations" d
+WHERE d."tenantId" = e."tenantId" AND d."name" = e."designation";
+COMMIT;
+```
+
+The migration's own `ADD COLUMN "designationId"` then becomes a no-op and the
+`DROP COLUMN "designation"` is safe.
+
+### Sensitive-field encryption
+Aadhaar numbers are encrypted at rest with AES-256-GCM. `FIELD_ENCRYPTION_KEY`
+(32 bytes, hex) is required to create or update an employee with an Aadhaar
+number, and API responses only ever return a masked form. After enabling the
+key on an existing database, encrypt legacy plaintext rows once:
+
+```bash
+npm run prisma:encrypt-aadhaar
+```
+
+Rotating the key requires decrypting with the old key and re-encrypting with
+the new one; there is no automated rotation.
+
+### Biometric device push
+`/iclock/*` cannot authenticate the device, so restrict where pushes may come
+from with `BIOMETRIC_ALLOWED_IPS` (comma-separated IPv4 addresses or CIDR
+ranges). Leaving it empty accepts pushes from any address and logs a warning.
+If the API runs behind a reverse proxy, enable `trust proxy` so the real client
+address is seen.
+
+### One-off import scripts
+`prisma/import-employees*.ts` delete existing tenant data before importing. They
+refuse to run unless both `IMPORT_TENANT_ID` and `CONFIRM_WIPE_TENANT` are set
+to the same tenant id.
+
 ### Seeding
 The seed script creates demo data. **Do NOT run in production** unless you need initial data:
 ```bash
@@ -173,11 +238,43 @@ pm2 start dist/src/main.js --name hrms-backend
 # Or use systemd, Docker, etc.
 ```
 
-## Docker (Planned)
+## Docker
 
-Docker and docker-compose configuration is planned as a future enhancement. This will provide:
-- Containerized backend and frontend
-- PostgreSQL and Redis containers
-- Single-command deployment via `docker-compose up`
+### Quick Start
 
-Check the repository for updates on Docker support.
+```bash
+# Copy the Docker env template and configure
+cp .env.docker .env
+
+# Edit .env — at minimum set JWT_SECRET to a strong random value
+# Generate one with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+
+# Build and start all services
+docker compose up --build -d
+
+# Check logs
+docker compose logs -f
+
+# Stop
+docker compose down
+```
+
+### Services
+- **postgres** — PostgreSQL 16, port 5432
+- **redis** — Redis 7, port 6379
+- **backend** — NestJS API, port 3001 (auto-runs migrations on start)
+- **frontend** — Next.js app, port 3000
+
+### Data Persistence
+Docker volumes are used for data persistence:
+- `pgdata` — PostgreSQL database files
+- `redisdata` — Redis data
+- `uploads` — File uploads
+
+To reset all data: `docker compose down -v`
+
+### Seeding (first run)
+After the first `docker compose up`, seed the database:
+```bash
+docker compose exec backend npx prisma db seed
+```

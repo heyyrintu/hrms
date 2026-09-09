@@ -207,21 +207,16 @@ describe('SelfServiceController', () => {
       );
     });
 
-    it('should fallback to userId when employeeId is undefined', async () => {
+    it('should reject reviewers whose account has no linked employee', async () => {
       const adminNoEmp: AuthenticatedUser = {
         ...adminUser,
         employeeId: undefined,
       };
-      service.reviewChangeRequest.mockResolvedValue({ id: 'cr-1' });
 
-      await controller.reviewChangeRequest(adminNoEmp, 'cr-1', dto);
-
-      expect(service.reviewChangeRequest).toHaveBeenCalledWith(
-        adminNoEmp.tenantId,
-        'cr-1',
-        adminNoEmp.userId,
-        dto,
-      );
+      await expect(
+        controller.reviewChangeRequest(adminNoEmp, 'cr-1', dto),
+      ).rejects.toThrow(BadRequestException);
+      expect(service.reviewChangeRequest).not.toHaveBeenCalled();
     });
   });
 });

@@ -158,6 +158,7 @@ describe('DocumentsController', () => {
       expect(result).toEqual(expected);
       expect(service.getDocumentById).toHaveBeenCalledWith(
         adminUser.tenantId,
+        'emp-1',
         'doc-1',
       );
     });
@@ -189,6 +190,7 @@ describe('DocumentsController', () => {
 
       expect(service.downloadDocument).toHaveBeenCalledWith(
         adminUser.tenantId,
+        'emp-1',
         'doc-1',
       );
       expect(mockRes.setHeader).toHaveBeenCalledWith(
@@ -217,11 +219,12 @@ describe('DocumentsController', () => {
       const expected = { id: 'doc-1', verified: true };
       service.verifyDocument.mockResolvedValue(expected);
 
-      const result = await controller.verifyDocument(adminUser, 'doc-1');
+      const result = await controller.verifyDocument(adminUser, 'emp-1', 'doc-1');
 
       expect(result).toEqual(expected);
       expect(service.verifyDocument).toHaveBeenCalledWith(
         adminUser.tenantId,
+        'emp-1',
         'doc-1',
         adminUser.employeeId,
       );
@@ -234,10 +237,11 @@ describe('DocumentsController', () => {
       };
       service.verifyDocument.mockResolvedValue({ id: 'doc-1' });
 
-      await controller.verifyDocument(userNoEmployee, 'doc-1');
+      await controller.verifyDocument(userNoEmployee, 'emp-1', 'doc-1');
 
       expect(service.verifyDocument).toHaveBeenCalledWith(
         userNoEmployee.tenantId,
+        'emp-1',
         'doc-1',
         userNoEmployee.userId,
       );
@@ -252,11 +256,12 @@ describe('DocumentsController', () => {
       const expected = { id: 'doc-1', deleted: true };
       service.deleteDocument.mockResolvedValue(expected);
 
-      const result = await controller.deleteDocument(adminUser, 'doc-1');
+      const result = await controller.deleteDocument(adminUser, 'emp-1', 'doc-1');
 
       expect(result).toEqual(expected);
       expect(service.deleteDocument).toHaveBeenCalledWith(
         adminUser.tenantId,
+        'emp-1',
         'doc-1',
       );
     });

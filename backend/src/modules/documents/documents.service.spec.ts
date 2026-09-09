@@ -189,10 +189,10 @@ describe('DocumentsService', () => {
       };
       prisma.employeeDocument.findFirst.mockResolvedValue(doc);
 
-      const result = await service.getDocumentById('tenant-1', 'doc-1');
+      const result = await service.getDocumentById('tenant-1', 'emp-1', 'doc-1');
 
       expect(prisma.employeeDocument.findFirst).toHaveBeenCalledWith({
-        where: { id: 'doc-1', tenantId: 'tenant-1' },
+        where: { id: 'doc-1', tenantId: 'tenant-1', employeeId: 'emp-1' },
         include: {
           upload: { select: { fileName: true, mimeType: true, size: true, key: true } },
           employee: { select: { firstName: true, lastName: true, employeeCode: true } },
@@ -204,7 +204,7 @@ describe('DocumentsService', () => {
     it('should throw NotFoundException when document not found', async () => {
       prisma.employeeDocument.findFirst.mockResolvedValue(null);
 
-      await expect(service.getDocumentById('tenant-1', 'missing-id')).rejects.toThrow(
+      await expect(service.getDocumentById('tenant-1', 'emp-1', 'missing-id')).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -223,7 +223,7 @@ describe('DocumentsService', () => {
       prisma.employeeDocument.findFirst.mockResolvedValue(doc);
       storageService.getFilePath.mockResolvedValue('/uploads/docs/file.pdf');
 
-      const result = await service.downloadDocument('tenant-1', 'doc-1');
+      const result = await service.downloadDocument('tenant-1', 'emp-1', 'doc-1');
 
       expect(result).toEqual({
         filePath: '/uploads/docs/file.pdf',
@@ -236,7 +236,7 @@ describe('DocumentsService', () => {
     it('should throw NotFoundException when document not found', async () => {
       prisma.employeeDocument.findFirst.mockResolvedValue(null);
 
-      await expect(service.downloadDocument('tenant-1', 'missing')).rejects.toThrow(
+      await expect(service.downloadDocument('tenant-1', 'emp-1', 'missing')).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -257,7 +257,7 @@ describe('DocumentsService', () => {
       const updated = { ...doc, isVerified: true, verifiedBy: 'admin-1' };
       prisma.employeeDocument.update.mockResolvedValue(updated);
 
-      const result = await service.verifyDocument('tenant-1', 'doc-1', 'admin-1');
+      const result = await service.verifyDocument('tenant-1', 'emp-1', 'doc-1', 'admin-1');
 
       expect(prisma.employeeDocument.update).toHaveBeenCalledWith({
         where: { id: 'doc-1' },
@@ -276,7 +276,7 @@ describe('DocumentsService', () => {
     it('should throw NotFoundException when document not found', async () => {
       prisma.employeeDocument.findFirst.mockResolvedValue(null);
 
-      await expect(service.verifyDocument('tenant-1', 'missing', 'admin-1')).rejects.toThrow(
+      await expect(service.verifyDocument('tenant-1', 'emp-1', 'missing', 'admin-1')).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -298,7 +298,7 @@ describe('DocumentsService', () => {
       prisma.employeeDocument.delete.mockResolvedValue(doc);
       prisma.upload.delete.mockResolvedValue({});
 
-      const result = await service.deleteDocument('tenant-1', 'doc-1');
+      const result = await service.deleteDocument('tenant-1', 'emp-1', 'doc-1');
 
       expect(storageService.delete).toHaveBeenCalledWith('docs/file.pdf');
       expect(prisma.employeeDocument.delete).toHaveBeenCalledWith({ where: { id: 'doc-1' } });
@@ -318,7 +318,7 @@ describe('DocumentsService', () => {
       prisma.employeeDocument.delete.mockResolvedValue(doc);
       prisma.upload.delete.mockResolvedValue({});
 
-      const result = await service.deleteDocument('tenant-1', 'doc-1');
+      const result = await service.deleteDocument('tenant-1', 'emp-1', 'doc-1');
 
       expect(prisma.employeeDocument.delete).toHaveBeenCalled();
       expect(result).toEqual({ message: 'Document deleted' });
@@ -327,7 +327,7 @@ describe('DocumentsService', () => {
     it('should throw NotFoundException when document not found', async () => {
       prisma.employeeDocument.findFirst.mockResolvedValue(null);
 
-      await expect(service.deleteDocument('tenant-1', 'missing')).rejects.toThrow(
+      await expect(service.deleteDocument('tenant-1', 'emp-1', 'missing')).rejects.toThrow(
         NotFoundException,
       );
     });

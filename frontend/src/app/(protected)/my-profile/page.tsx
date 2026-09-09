@@ -1,17 +1,17 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
-import { selfServiceApi, documentsApi } from '@/lib/api';
+import { selfServiceApi, employeesApi, documentsApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
+import toast from 'react-hot-toast';
 import {
     UserCircle,
-    RefreshCw,
     FileText,
     Upload,
     Download,
@@ -25,8 +25,14 @@ import {
     Phone,
     Building2,
     CalendarDays,
+    Pencil,
+    Save,
+    X,
+    MapPin,
+    Heart,
+    User,
 } from 'lucide-react';
-import { DocumentCategory, ChangeRequestStatus } from '@/types';
+import { DocumentCategory } from '@/types';
 
 interface EmployeeProfile {
     id: string;
@@ -35,12 +41,34 @@ interface EmployeeProfile {
     lastName: string;
     email: string;
     phone?: string;
+    mobileNumber?: string;
+    personalEmail?: string;
+    gender?: string;
+    dateOfBirth?: string;
+    fatherName?: string;
+    aadhaarNumber?: string;
+    maritalStatus?: string;
+    bloodGroup?: string;
+    currentAddress?: string;
+    currentCity?: string;
+    currentState?: string;
+    currentZipCode?: string;
+    currentCountry?: string;
+    permanentAddress?: string;
+    permanentCity?: string;
+    permanentState?: string;
+    permanentZipCode?: string;
+    permanentCountry?: string;
+    emergencyContactName?: string;
+    emergencyContactNumber?: string;
+    emergencyContactRelation?: string;
     employmentType: string;
     payType: string;
-    designation?: string;
     joinDate: string;
     status: string;
     department?: { name: string; code: string };
+    designation?: { id: string; name: string };
+    branch?: { id: string; name: string };
     manager?: { firstName: string; lastName: string; employeeCode: string };
     shiftAssignments?: Array<{
         shift: { name: string; code: string; startTime: string; endTime: string };
@@ -76,21 +104,89 @@ const categoryOptions = Object.values(DocumentCategory).map((c) => ({
     label: c.replace(/_/g, ' '),
 }));
 
-const editableFields = [
-    { value: 'phone', label: 'Phone Number' },
-    { value: 'email', label: 'Email Address' },
-    { value: 'firstName', label: 'First Name' },
-    { value: 'lastName', label: 'Last Name' },
-    { value: 'designation', label: 'Designation' },
+// Editable fields grouped by section
+const editableFieldGroups = [
+    {
+        title: 'Personal Information',
+        icon: User,
+        fields: [
+            { key: 'firstName', label: 'First Name' },
+            { key: 'lastName', label: 'Last Name' },
+            { key: 'email', label: 'Email Address' },
+            { key: 'phone', label: 'Phone Number' },
+            { key: 'mobileNumber', label: 'Mobile Number' },
+            { key: 'personalEmail', label: 'Personal Email' },
+            { key: 'gender', label: 'Gender', type: 'select', options: [
+                { value: '', label: 'Select' },
+                { value: 'Male', label: 'Male' },
+                { value: 'Female', label: 'Female' },
+                { value: 'Other', label: 'Other' },
+            ]},
+            { key: 'fatherName', label: "Father's Name" },
+            { key: 'maritalStatus', label: 'Marital Status', type: 'select', options: [
+                { value: '', label: 'Select' },
+                { value: 'Unmarried', label: 'Unmarried' },
+                { value: 'Married', label: 'Married' },
+                { value: 'Divorced', label: 'Divorced' },
+                { value: 'Widowed', label: 'Widowed' },
+            ]},
+            { key: 'bloodGroup', label: 'Blood Group', type: 'select', options: [
+                { value: '', label: 'Select' },
+                { value: 'A+', label: 'A+' }, { value: 'A-', label: 'A-' },
+                { value: 'B+', label: 'B+' }, { value: 'B-', label: 'B-' },
+                { value: 'AB+', label: 'AB+' }, { value: 'AB-', label: 'AB-' },
+                { value: 'O+', label: 'O+' }, { value: 'O-', label: 'O-' },
+            ]},
+            { key: 'aadhaarNumber', label: 'Aadhaar Number' },
+        ],
+    },
+    {
+        title: 'Current Address',
+        icon: MapPin,
+        fields: [
+            { key: 'currentAddress', label: 'Address' },
+            { key: 'currentCity', label: 'City' },
+            { key: 'currentState', label: 'State' },
+            { key: 'currentZipCode', label: 'ZIP Code' },
+            { key: 'currentCountry', label: 'Country' },
+        ],
+    },
+    {
+        title: 'Permanent Address',
+        icon: MapPin,
+        fields: [
+            { key: 'permanentAddress', label: 'Address' },
+            { key: 'permanentCity', label: 'City' },
+            { key: 'permanentState', label: 'State' },
+            { key: 'permanentZipCode', label: 'ZIP Code' },
+            { key: 'permanentCountry', label: 'Country' },
+        ],
+    },
+    {
+        title: 'Emergency Contact',
+        icon: Heart,
+        fields: [
+            { key: 'emergencyContactName', label: 'Contact Name' },
+            { key: 'emergencyContactNumber', label: 'Contact Number' },
+            { key: 'emergencyContactRelation', label: 'Relationship' },
+        ],
+    },
 ];
 
+type EditFormData = Record<string, string>;
+
 export default function MyProfilePage() {
-    const { user } = useAuth();
+    const { user, isAdmin } = useAuth();
     const [activeTab, setActiveTab] = useState<TabType>('profile');
     const [profile, setProfile] = useState<EmployeeProfile | null>(null);
     const [documents, setDocuments] = useState<Document[]>([]);
     const [changeRequests, setChangeRequests] = useState<ChangeRequest[]>([]);
     const [loading, setLoading] = useState(true);
+
+    // Edit mode
+    const [isEditing, setIsEditing] = useState(false);
+    const [editForm, setEditForm] = useState<EditFormData>({});
+    const [saving, setSaving] = useState(false);
 
     // Upload modal
     const [uploadModalOpen, setUploadModalOpen] = useState(false);
@@ -103,54 +199,129 @@ export default function MyProfilePage() {
     });
     const [uploading, setUploading] = useState(false);
 
-    // Change request modal
-    const [changeModalOpen, setChangeModalOpen] = useState(false);
-    const [changeForm, setChangeForm] = useState({
-        fieldName: 'phone',
-        newValue: '',
-        reason: '',
-    });
-    const [submitting, setSubmitting] = useState(false);
-
-    useEffect(() => {
-        loadProfile();
-    }, []);
-
-    useEffect(() => {
-        if (profile) {
-            if (activeTab === 'documents') loadDocuments();
-            if (activeTab === 'requests') loadChangeRequests();
-        }
-    }, [activeTab, profile]);
-
-    const loadProfile = async () => {
+    const loadProfile = useCallback(async () => {
         setLoading(true);
         try {
             const res = await selfServiceApi.getProfile();
             setProfile(res.data);
-        } catch (error) {
-            console.error('Failed to load profile:', error);
+        } catch (error: unknown) {
+            const msg = (error as { response?: { data?: { message?: string } } })
+                ?.response?.data?.message || 'Failed to load profile';
+            toast.error(msg);
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
-    const loadDocuments = async () => {
+    const loadDocuments = useCallback(async () => {
         if (!profile) return;
         try {
             const res = await documentsApi.getByEmployee(profile.id);
             setDocuments(res.data);
-        } catch (error) {
-            console.error('Failed to load documents:', error);
+        } catch (error: unknown) {
+            const msg = (error as { response?: { data?: { message?: string } } })
+                ?.response?.data?.message || 'Failed to load documents';
+            toast.error(msg);
         }
-    };
+    }, [profile]);
 
-    const loadChangeRequests = async () => {
+    const loadChangeRequests = useCallback(async () => {
         try {
             const res = await selfServiceApi.getMyChangeRequests();
             setChangeRequests(res.data);
-        } catch (error) {
-            console.error('Failed to load change requests:', error);
+        } catch (error: unknown) {
+            const msg = (error as { response?: { data?: { message?: string } } })
+                ?.response?.data?.message || 'Failed to load change requests';
+            toast.error(msg);
+        }
+    }, []);
+
+    useEffect(() => {
+        loadProfile();
+    }, [loadProfile]);
+
+    useEffect(() => {
+        if (!profile) return;
+        if (activeTab === 'documents') loadDocuments();
+        if (activeTab === 'requests') loadChangeRequests();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTab]);
+
+    const getOriginalValue = useCallback((key: string): string => {
+        if (!profile) return '';
+        return String((profile as unknown as Record<string, unknown>)[key] ?? '');
+    }, [profile]);
+
+    const startEditing = () => {
+        if (!profile) return;
+        const formData: EditFormData = {};
+        for (const group of editableFieldGroups) {
+            for (const field of group.fields) {
+                formData[field.key] = getOriginalValue(field.key);
+            }
+        }
+        setEditForm(formData);
+        setIsEditing(true);
+    };
+
+    const cancelEditing = () => {
+        setIsEditing(false);
+        setEditForm({});
+    };
+
+    const handleFieldChange = (key: string, value: string) => {
+        setEditForm(prev => ({ ...prev, [key]: value }));
+    };
+
+    // Memoize changed fields to avoid redundant computation
+    const changedFields = useMemo(() => {
+        if (!isEditing || !profile) return [];
+        const changes: Array<{ fieldName: string; newValue: string }> = [];
+        for (const key of Object.keys(editForm)) {
+            if (editForm[key] !== getOriginalValue(key)) {
+                changes.push({ fieldName: key, newValue: editForm[key] });
+            }
+        }
+        return changes;
+    }, [isEditing, editForm, profile, getOriginalValue]);
+
+    const changedCount = changedFields.length;
+
+    const handleSaveProfile = async () => {
+        if (!profile) return;
+
+        if (changedFields.length === 0) {
+            toast.success('No changes to save');
+            setIsEditing(false);
+            return;
+        }
+
+        setSaving(true);
+        try {
+            if (isAdmin) {
+                // Admin: direct update via employees API
+                const updatePayload = Object.fromEntries(
+                    changedFields.map(c => [c.fieldName, c.newValue])
+                );
+                await employeesApi.update(profile.id, updatePayload);
+                toast.success('Profile updated successfully');
+                setIsEditing(false);
+                await loadProfile();
+            } else {
+                // Employee: create batch change requests
+                await selfServiceApi.createBatchChangeRequests(
+                    changedFields.map(c => ({ fieldName: c.fieldName, newValue: c.newValue }))
+                );
+                toast.success(`${changedFields.length} change request(s) submitted for approval`);
+                setIsEditing(false);
+                await loadProfile();
+            }
+        } catch (error: unknown) {
+            const msg = error instanceof Error ? error.message :
+                (error as { response?: { data?: { message?: string } } })?.response?.data?.message || 'Failed to save changes';
+            toast.error(msg);
+        } finally {
+            setSaving(false);
         }
     };
 
@@ -170,8 +341,10 @@ export default function MyProfilePage() {
             setUploadFile(null);
             setUploadForm({ name: '', category: DocumentCategory.OTHER, documentDate: '', expiryDate: '' });
             await loadDocuments();
-        } catch (error) {
-            console.error('Failed to upload document:', error);
+        } catch (error: unknown) {
+            const msg = (error as { response?: { data?: { message?: string } } })
+                ?.response?.data?.message || 'Failed to upload document';
+            toast.error(msg);
         } finally {
             setUploading(false);
         }
@@ -189,22 +362,10 @@ export default function MyProfilePage() {
             link.click();
             link.remove();
             window.URL.revokeObjectURL(url);
-        } catch (error) {
-            console.error('Failed to download:', error);
-        }
-    };
-
-    const handleSubmitChangeRequest = async () => {
-        setSubmitting(true);
-        try {
-            await selfServiceApi.createChangeRequest(changeForm);
-            setChangeModalOpen(false);
-            setChangeForm({ fieldName: 'phone', newValue: '', reason: '' });
-            await loadChangeRequests();
-        } catch (error) {
-            console.error('Failed to submit change request:', error);
-        } finally {
-            setSubmitting(false);
+        } catch (error: unknown) {
+            const msg = (error as { response?: { data?: { message?: string } } })
+                ?.response?.data?.message || 'Failed to download document';
+            toast.error(msg);
         }
     };
 
@@ -223,31 +384,35 @@ export default function MyProfilePage() {
         }
     };
 
+    const fieldLabel = (fieldName: string): string => {
+        for (const group of editableFieldGroups) {
+            const field = group.fields.find(f => f.key === fieldName);
+            if (field) return field.label;
+        }
+        return fieldName;
+    };
+
     if (loading) {
         return (
-            <>
-                <div className="flex items-center justify-center py-20">
-                    <div className="h-12 w-12 animate-spin rounded-full border-4 border-primary-600 border-t-transparent" />
-                </div>
-            </>
+            <div className="flex items-center justify-center py-20">
+                <div className="h-12 w-12 animate-spin rounded-full border-4 border-primary-600 border-t-transparent" />
+            </div>
         );
     }
 
     if (!profile) {
         return (
-            <>
-                <Card>
-                    <CardContent className="py-16 text-center">
-                        <UserCircle className="w-16 h-16 text-warm-300 mx-auto mb-4" />
-                        <h3 className="text-lg font-semibold text-warm-900 mb-2">
-                            No Employee Profile
-                        </h3>
-                        <p className="text-warm-600">
-                            Your account is not linked to an employee profile.
-                        </p>
-                    </CardContent>
-                </Card>
-            </>
+            <Card>
+                <CardContent className="py-16 text-center">
+                    <UserCircle className="w-16 h-16 text-warm-300 mx-auto mb-4" />
+                    <h3 className="text-lg font-semibold text-warm-900 mb-2">
+                        No Employee Profile
+                    </h3>
+                    <p className="text-warm-600">
+                        Your account is not linked to an employee profile.
+                    </p>
+                </CardContent>
+            </Card>
         );
     }
 
@@ -262,38 +427,156 @@ export default function MyProfilePage() {
                             My Profile
                         </h1>
                         <p className="text-warm-600 mt-1">
-                            View your profile, documents, and change requests
+                            {isEditing
+                                ? isAdmin
+                                    ? 'Edit your profile — changes apply immediately'
+                                    : 'Edit your profile — changes will be sent for admin approval'
+                                : 'View your profile, documents, and change requests'
+                            }
                         </p>
                     </div>
+                    {activeTab === 'profile' && !isEditing && (
+                        <Button onClick={startEditing}>
+                            <Pencil className="w-4 h-4 mr-2" />
+                            Edit Profile
+                        </Button>
+                    )}
+                    {isEditing && (
+                        <div className="flex gap-2">
+                            <Button variant="secondary" onClick={cancelEditing} disabled={saving}>
+                                <X className="w-4 h-4 mr-2" />
+                                Cancel
+                            </Button>
+                            <Button onClick={handleSaveProfile} loading={saving} disabled={changedCount === 0}>
+                                <Save className="w-4 h-4 mr-2" />
+                                {isAdmin ? 'Save Changes' : `Submit ${changedCount > 0 ? `(${changedCount})` : ''}`}
+                            </Button>
+                        </div>
+                    )}
                 </div>
 
                 {/* Tabs */}
-                <div className="border-b border-warm-200">
-                    <div className="flex gap-4">
-                        {([
-                            { key: 'profile', label: 'Profile', icon: UserCircle },
-                            { key: 'documents', label: 'Documents', icon: FileText },
-                            { key: 'requests', label: 'Change Requests', icon: Send },
-                        ] as const).map(({ key, label, icon: Icon }) => (
-                            <button
-                                key={key}
-                                onClick={() => setActiveTab(key)}
-                                className={cn(
-                                    'pb-3 px-1 text-sm font-medium border-b-2 transition-colors',
-                                    activeTab === key
-                                        ? 'border-primary-600 text-primary-600'
-                                        : 'border-transparent text-warm-500 hover:text-warm-700'
-                                )}
-                            >
-                                <Icon className="w-4 h-4 inline mr-2" />
-                                {label}
-                            </button>
-                        ))}
+                {!isEditing && (
+                    <div className="border-b border-warm-200">
+                        <div className="flex gap-4">
+                            {([
+                                { key: 'profile', label: 'Profile', icon: UserCircle },
+                                { key: 'documents', label: 'Documents', icon: FileText },
+                                { key: 'requests', label: 'Change Requests', icon: Send },
+                            ] as const).map(({ key, label, icon: Icon }) => (
+                                <button
+                                    key={key}
+                                    onClick={() => setActiveTab(key)}
+                                    className={cn(
+                                        'pb-3 px-1 text-sm font-medium border-b-2 transition-colors',
+                                        activeTab === key
+                                            ? 'border-primary-600 text-primary-600'
+                                            : 'border-transparent text-warm-500 hover:text-warm-700'
+                                    )}
+                                >
+                                    <Icon className="w-4 h-4 inline mr-2" />
+                                    {label}
+                                </button>
+                            ))}
+                        </div>
                     </div>
-                </div>
+                )}
 
-                {/* Profile Tab */}
-                {activeTab === 'profile' && (
+                {/* Edit Mode */}
+                {isEditing && (
+                    <div className="space-y-6">
+                        {!isAdmin && (
+                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                                <p className="text-sm text-blue-800">
+                                    Your changes will be submitted as change requests. An admin will review and approve them before they take effect.
+                                </p>
+                            </div>
+                        )}
+
+                        {editableFieldGroups.map((group) => {
+                            const GroupIcon = group.icon;
+                            return (
+                                <Card key={group.title}>
+                                    <CardHeader>
+                                        <CardTitle className="flex items-center gap-2 text-base">
+                                            <GroupIcon className="w-5 h-5 text-primary-600" />
+                                            {group.title}
+                                        </CardTitle>
+                                    </CardHeader>
+                                    <CardContent>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                            {group.fields.map((field) => {
+                                                const isChanged = editForm[field.key] !== getOriginalValue(field.key);
+                                                const fieldDef = field as { key: string; label: string; type?: string; options?: Array<{ value: string; label: string }> };
+                                                return (
+                                                    <div key={field.key}>
+                                                        <label className="block text-sm font-medium text-warm-700 mb-1">
+                                                            {field.label}
+                                                            {isChanged && (
+                                                                <span className="ml-2 text-xs text-amber-600 font-normal">modified</span>
+                                                            )}
+                                                        </label>
+                                                        {fieldDef.type === 'select' ? (
+                                                            <select
+                                                                value={editForm[field.key] || ''}
+                                                                onChange={(e) => handleFieldChange(field.key, e.target.value)}
+                                                                className={cn(
+                                                                    'w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 text-sm',
+                                                                    isChanged ? 'border-amber-400 bg-amber-50' : 'border-warm-300'
+                                                                )}
+                                                            >
+                                                                {fieldDef.options?.map((opt) => (
+                                                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                                                ))}
+                                                            </select>
+                                                        ) : (
+                                                            <input
+                                                                type="text"
+                                                                value={editForm[field.key] || ''}
+                                                                onChange={(e) => handleFieldChange(field.key, e.target.value)}
+                                                                className={cn(
+                                                                    'w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary-500 text-sm',
+                                                                    isChanged ? 'border-amber-400 bg-amber-50' : 'border-warm-300'
+                                                                )}
+                                                                placeholder={`Enter ${field.label.toLowerCase()}`}
+                                                            />
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </CardContent>
+                                </Card>
+                            );
+                        })}
+
+                        {/* Summary of changes */}
+                        {changedCount > 0 && (
+                            <Card>
+                                <CardHeader>
+                                    <CardTitle className="text-base">
+                                        {changedCount} Change{changedCount > 1 ? 's' : ''} to {isAdmin ? 'Save' : 'Submit'}
+                                    </CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                    <div className="space-y-2">
+                                        {changedFields.map((change) => (
+                                            <div key={change.fieldName} className="flex items-center gap-2 text-sm">
+                                                <span className="text-warm-500 min-w-[140px]">{fieldLabel(change.fieldName)}:</span>
+                                                <span className="text-warm-400 line-through">{getOriginalValue(change.fieldName) || '(empty)'}</span>
+                                                <span className="text-warm-400">&rarr;</span>
+                                                <span className="font-medium text-warm-900">{change.newValue || '(empty)'}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        )}
+                    </div>
+                )}
+
+                {/* Profile Tab (View Mode) */}
+                {activeTab === 'profile' && !isEditing && (
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         {/* Main Info */}
                         <Card className="lg:col-span-2">
@@ -327,7 +610,7 @@ export default function MyProfilePage() {
                                         <Briefcase className="w-5 h-5 text-warm-400" />
                                         <div>
                                             <p className="text-xs text-warm-500">Designation</p>
-                                            <p className="text-sm font-medium">{profile.designation || '—'}</p>
+                                            <p className="text-sm font-medium">{profile.designation?.name || '—'}</p>
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-3">
@@ -344,6 +627,42 @@ export default function MyProfilePage() {
                                             <p className="text-sm font-medium">{new Date(profile.joinDate).toLocaleDateString()}</p>
                                         </div>
                                     </div>
+                                    {profile.gender && (
+                                        <div className="flex items-center gap-3">
+                                            <User className="w-5 h-5 text-warm-400" />
+                                            <div>
+                                                <p className="text-xs text-warm-500">Gender</p>
+                                                <p className="text-sm font-medium">{profile.gender}</p>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {profile.fatherName && (
+                                        <div className="flex items-center gap-3">
+                                            <User className="w-5 h-5 text-warm-400" />
+                                            <div>
+                                                <p className="text-xs text-warm-500">Father&apos;s Name</p>
+                                                <p className="text-sm font-medium">{profile.fatherName}</p>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {profile.maritalStatus && (
+                                        <div className="flex items-center gap-3">
+                                            <Heart className="w-5 h-5 text-warm-400" />
+                                            <div>
+                                                <p className="text-xs text-warm-500">Marital Status</p>
+                                                <p className="text-sm font-medium">{profile.maritalStatus}</p>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {profile.bloodGroup && (
+                                        <div className="flex items-center gap-3">
+                                            <Heart className="w-5 h-5 text-warm-400" />
+                                            <div>
+                                                <p className="text-xs text-warm-500">Blood Group</p>
+                                                <p className="text-sm font-medium">{profile.bloodGroup}</p>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </CardContent>
                         </Card>
@@ -372,6 +691,14 @@ export default function MyProfilePage() {
                                     </p>
                                 </CardContent>
                             </Card>
+                            {profile.branch && (
+                                <Card>
+                                    <CardContent className="py-4">
+                                        <p className="text-xs text-warm-500 mb-1">Location</p>
+                                        <p className="text-sm font-medium">{profile.branch.name}</p>
+                                    </CardContent>
+                                </Card>
+                            )}
                             {profile.shiftAssignments?.[0] && (
                                 <Card>
                                     <CardContent className="py-4">
@@ -382,16 +709,62 @@ export default function MyProfilePage() {
                                     </CardContent>
                                 </Card>
                             )}
-                            <Button className="w-full" onClick={() => setChangeModalOpen(true)}>
-                                <Send className="w-4 h-4 mr-2" />
-                                Request Profile Change
-                            </Button>
                         </div>
+
+                        {/* Address & Emergency Contact */}
+                        {(profile.currentAddress || profile.permanentAddress || profile.emergencyContactName) && (
+                            <Card className="lg:col-span-3">
+                                <CardContent className="py-4">
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                        {profile.currentAddress && (
+                                            <div>
+                                                <p className="text-xs text-warm-500 mb-1 flex items-center gap-1">
+                                                    <MapPin className="w-3 h-3" /> Current Address
+                                                </p>
+                                                <p className="text-sm">
+                                                    {profile.currentAddress}
+                                                    {profile.currentCity && `, ${profile.currentCity}`}
+                                                    {profile.currentState && `, ${profile.currentState}`}
+                                                    {profile.currentZipCode && ` - ${profile.currentZipCode}`}
+                                                </p>
+                                            </div>
+                                        )}
+                                        {profile.permanentAddress && (
+                                            <div>
+                                                <p className="text-xs text-warm-500 mb-1 flex items-center gap-1">
+                                                    <MapPin className="w-3 h-3" /> Permanent Address
+                                                </p>
+                                                <p className="text-sm">
+                                                    {profile.permanentAddress}
+                                                    {profile.permanentCity && `, ${profile.permanentCity}`}
+                                                    {profile.permanentState && `, ${profile.permanentState}`}
+                                                    {profile.permanentZipCode && ` - ${profile.permanentZipCode}`}
+                                                </p>
+                                            </div>
+                                        )}
+                                        {profile.emergencyContactName && (
+                                            <div>
+                                                <p className="text-xs text-warm-500 mb-1 flex items-center gap-1">
+                                                    <Heart className="w-3 h-3" /> Emergency Contact
+                                                </p>
+                                                <p className="text-sm font-medium">{profile.emergencyContactName}</p>
+                                                {profile.emergencyContactRelation && (
+                                                    <p className="text-xs text-warm-500">{profile.emergencyContactRelation}</p>
+                                                )}
+                                                {profile.emergencyContactNumber && (
+                                                    <p className="text-sm">{profile.emergencyContactNumber}</p>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        )}
                     </div>
                 )}
 
                 {/* Documents Tab */}
-                {activeTab === 'documents' && (
+                {activeTab === 'documents' && !isEditing && (
                     <div className="space-y-4">
                         <div className="flex justify-end">
                             <Button onClick={() => setUploadModalOpen(true)}>
@@ -467,15 +840,8 @@ export default function MyProfilePage() {
                 )}
 
                 {/* Change Requests Tab */}
-                {activeTab === 'requests' && (
+                {activeTab === 'requests' && !isEditing && (
                     <div className="space-y-4">
-                        <div className="flex justify-end">
-                            <Button onClick={() => setChangeModalOpen(true)}>
-                                <Send className="w-4 h-4 mr-2" />
-                                New Request
-                            </Button>
-                        </div>
-
                         {changeRequests.length === 0 ? (
                             <Card>
                                 <CardContent className="py-16 text-center">
@@ -494,10 +860,10 @@ export default function MyProfilePage() {
                                                     {statusIcon(req.status)}
                                                     <div>
                                                         <p className="text-sm font-medium text-warm-900">
-                                                            Change <span className="text-primary-600">{req.fieldName}</span>
+                                                            Change <span className="text-primary-600">{fieldLabel(req.fieldName)}</span>
                                                         </p>
                                                         <p className="text-xs text-warm-500 mt-1">
-                                                            {req.oldValue || '(empty)'} → <span className="font-medium">{req.newValue}</span>
+                                                            {req.oldValue || '(empty)'} &rarr; <span className="font-medium">{req.newValue}</span>
                                                         </p>
                                                         {req.reason && (
                                                             <p className="text-xs text-warm-400 mt-1">Reason: {req.reason}</p>
@@ -592,63 +958,6 @@ export default function MyProfilePage() {
                     <Button variant="secondary" onClick={() => setUploadModalOpen(false)} disabled={uploading}>Cancel</Button>
                     <Button onClick={handleUploadDocument} loading={uploading} disabled={!uploadForm.name || !uploadFile}>
                         Upload
-                    </Button>
-                </ModalFooter>
-            </Modal>
-
-            {/* Change Request Modal */}
-            <Modal
-                isOpen={changeModalOpen}
-                onClose={() => setChangeModalOpen(false)}
-                title="Request Profile Change"
-                size="md"
-            >
-                <div className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-warm-700 mb-1">Field to Change *</label>
-                        <select
-                            value={changeForm.fieldName}
-                            onChange={(e) => setChangeForm({ ...changeForm, fieldName: e.target.value })}
-                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-                        >
-                            {editableFields.map((f) => (
-                                <option key={f.value} value={f.value}>{f.label}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-warm-700 mb-1">
-                            Current Value
-                        </label>
-                        <p className="text-sm text-warm-600 bg-warm-50 px-3 py-2 rounded-lg">
-                            {String((profile as unknown as Record<string, unknown>)?.[changeForm.fieldName] ?? '(empty)')}
-                        </p>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-warm-700 mb-1">New Value *</label>
-                        <input
-                            type="text"
-                            value={changeForm.newValue}
-                            onChange={(e) => setChangeForm({ ...changeForm, newValue: e.target.value })}
-                            placeholder="Enter new value"
-                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-warm-700 mb-1">Reason</label>
-                        <textarea
-                            value={changeForm.reason}
-                            onChange={(e) => setChangeForm({ ...changeForm, reason: e.target.value })}
-                            placeholder="Why do you need this change?"
-                            rows={2}
-                            className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 resize-none"
-                        />
-                    </div>
-                </div>
-                <ModalFooter>
-                    <Button variant="secondary" onClick={() => setChangeModalOpen(false)} disabled={submitting}>Cancel</Button>
-                    <Button onClick={handleSubmitChangeRequest} loading={submitting} disabled={!changeForm.newValue}>
-                        Submit Request
                     </Button>
                 </ModalFooter>
             </Modal>

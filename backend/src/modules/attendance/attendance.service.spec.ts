@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { AttendanceService } from './attendance.service';
 import { OtCalculationService } from './ot-calculation.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -114,6 +115,37 @@ describe('AttendanceService', () => {
       await expect(service.clockIn(tenantId, employeeId, { ...mockCoords })).rejects.toThrow(
         NotFoundException,
       );
+    });
+
+    it('should run the open-session check and session insert in one serializable transaction', async () => {
+      prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+      prisma.tenant.findUnique.mockResolvedValue(null);
+      prisma.attendanceRecord.findUnique.mockResolvedValue(null);
+      prisma.attendanceRecord.create.mockResolvedValue({ id: 'att-1', sessions: [] });
+      prisma.attendanceRecord.findFirst.mockResolvedValue({ id: 'att-1', employee: mockEmployee });
+
+      await service.clockIn(tenantId, employeeId, { ...mockCoords });
+
+      expect(prisma.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.objectContaining({ isolationLevel: 'Serializable' }),
+      );
+    });
+
+    it('should surface a concurrent double-tap as ConflictException instead of a second open session', async () => {
+      prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+      prisma.tenant.findUnique.mockResolvedValue(null);
+      prisma.$transaction.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('write conflict', {
+          code: 'P2034',
+          clientVersion: 'test',
+        }),
+      );
+
+      await expect(service.clockIn(tenantId, employeeId, { ...mockCoords })).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prisma.attendanceSession.create).not.toHaveBeenCalled();
     });
 
     it('should throw BadRequestException when already clocked in (open session exists)', async () => {

@@ -2,9 +2,11 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isPrismaError, PRISMA_RECORD_NOT_FOUND } from '../../common/utils/prisma-errors';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   CreateRegularizationDto,
@@ -227,33 +229,13 @@ export class RegularizationService {
       }
     }
 
-    // Update the regularization record
-    const updated = await this.prisma.attendanceRegularization.update({
-      where: { id },
-      data: {
-        status: RegularizationStatus.APPROVED,
-        approverId: approverId || null,
-        approverNote: dto.approverNote || null,
-        approvedAt: new Date(),
-      },
-      include: {
-        employee: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            employeeCode: true,
-            department: { select: { name: true } },
-          },
-        },
-        approver: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
-      },
+    // Status-guarded transition: a concurrent approve/reject makes this throw
+    // 409 instead of rewriting the attendance record twice.
+    const updated = await this.transitionPending(id, {
+      status: RegularizationStatus.APPROVED,
+      approverId: approverId || null,
+      approverNote: dto.approverNote || null,
+      approvedAt: new Date(),
     });
 
     // Update the actual AttendanceRecord
@@ -360,32 +342,11 @@ export class RegularizationService {
       }
     }
 
-    const updated = await this.prisma.attendanceRegularization.update({
-      where: { id },
-      data: {
-        status: RegularizationStatus.REJECTED,
-        approverId: approverId || null,
-        approverNote: dto.approverNote || null,
-        approvedAt: new Date(),
-      },
-      include: {
-        employee: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            employeeCode: true,
-            department: { select: { name: true } },
-          },
-        },
-        approver: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
-      },
+    const updated = await this.transitionPending(id, {
+      status: RegularizationStatus.REJECTED,
+      approverId: approverId || null,
+      approverNote: dto.approverNote || null,
+      approvedAt: new Date(),
     });
 
     // Fire-and-forget notification
@@ -401,6 +362,51 @@ export class RegularizationService {
       .catch(() => {}); // Fire and forget
 
     return updated;
+  }
+
+  /**
+   * Move a PENDING regularization to a terminal status. The where-clause
+   * includes the status so a concurrent reviewer cannot transition it twice;
+   * Prisma raises P2025 when the row no longer matches.
+   */
+  private async transitionPending(
+    id: string,
+    data: {
+      status: RegularizationStatus;
+      approverId: string | null;
+      approverNote: string | null;
+      approvedAt: Date;
+    },
+  ) {
+    try {
+      return await this.prisma.attendanceRegularization.update({
+        where: { id, status: RegularizationStatus.PENDING },
+        data,
+        include: {
+          employee: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              employeeCode: true,
+              department: { select: { name: true } },
+            },
+          },
+          approver: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      });
+    } catch (err) {
+      if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
+        throw new ConflictException('This request has already been processed');
+      }
+      throw err;
+    }
   }
 
   /**

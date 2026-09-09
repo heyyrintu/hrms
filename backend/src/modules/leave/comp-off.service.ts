@@ -8,6 +8,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '@prisma/client';
+import { isPrismaError, PRISMA_RECORD_NOT_FOUND } from '../../common/utils/prisma-errors';
 import {
   CreateCompOffDto,
   ApproveCompOffDto,
@@ -226,34 +227,13 @@ export class CompOffService {
       }
     }
 
-    // Update request
-    const updated = await this.prisma.compOffRequest.update({
-      where: { id },
-      data: {
+    // Status-guarded transition: fails with P2025 if a concurrent approve/reject won.
+    const updated = await this.transitionPending(id, {
         status: 'APPROVED',
         approverId,
         approverNote: dto.approverNote,
         approvedAt: new Date(),
-      },
-      include: {
-        employee: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            employeeCode: true,
-            department: { select: { name: true } },
-          },
-        },
-        approver: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
-      },
-    });
+      });
 
     // Credit comp-off balance: find or create a COMP_OFF leave type, then update balance
     await this.creditCompOffBalance(
@@ -316,33 +296,11 @@ export class CompOffService {
       }
     }
 
-    // Update request
-    const updated = await this.prisma.compOffRequest.update({
-      where: { id },
-      data: {
+    const updated = await this.transitionPending(id, {
         status: 'REJECTED',
         approverId,
         approverNote: dto.approverNote,
-      },
-      include: {
-        employee: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            employeeCode: true,
-            department: { select: { name: true } },
-          },
-        },
-        approver: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
-      },
-    });
+      });
 
     // Notify the employee
     this.notificationsService
@@ -409,6 +367,52 @@ export class CompOffService {
         totalPages: Math.ceil(total / limit),
       },
     };
+  }
+
+  /**
+   * Move a PENDING comp-off request to a terminal status.
+   * The where-clause includes the status, so if a concurrent reviewer already
+   * transitioned the row, Prisma raises P2025 and we surface a 409 instead of
+   * applying the side effects twice.
+   */
+  private async transitionPending(
+    id: string,
+    data: {
+      status: 'APPROVED' | 'REJECTED';
+      approverId: string;
+      approverNote?: string;
+      approvedAt?: Date;
+    },
+  ) {
+    try {
+      return await this.prisma.compOffRequest.update({
+        where: { id, status: 'PENDING' },
+        data,
+        include: {
+          employee: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              employeeCode: true,
+              department: { select: { name: true } },
+            },
+          },
+          approver: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+            },
+          },
+        },
+      });
+    } catch (err) {
+      if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
+        throw new ConflictException('Comp-off request has already been processed');
+      }
+      throw err;
+    }
   }
 
   /**
