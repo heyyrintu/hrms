@@ -2,6 +2,21 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createMockPrismaService } from '../../test/helpers';
+import { Decimal } from '@prisma/client/runtime/library';
+import { StatutoryService } from './statutory/statutory.service';
+
+const zero = () => new Decimal(0);
+
+/** Statutory deductions off by default, so these tests stay about the base pay maths. */
+function noStatutory() {
+  return {
+    pfWages: zero(), pfEmployee: zero(), pfEmployer: zero(), epsEmployer: zero(),
+    edliEmployer: zero(), pfAdminEmployer: zero(), esiWages: zero(),
+    esiEmployee: zero(), esiEmployer: zero(), professionalTax: zero(),
+    lwfEmployee: zero(), lwfEmployer: zero(), tds: zero(),
+    taxComputation: null, totalEmployeeDeductions: zero(),
+  };
+}
 
 // Money is returned as Decimal; compare on plain numbers for readability.
 const toPlainAmounts = (rows: { name: string; amount: unknown }[]) =>
@@ -10,6 +25,7 @@ const toPlainAmounts = (rows: { name: string; amount: unknown }[]) =>
 describe('PayrollCalculationService', () => {
   let service: PayrollCalculationService;
   let prisma: any;
+  let statutory: { compute: jest.Mock };
 
   const tenantId = 'tenant-1';
   const employeeId = 'emp-1';
@@ -21,11 +37,16 @@ describe('PayrollCalculationService', () => {
       providers: [
         PayrollCalculationService,
         { provide: PrismaService, useValue: createMockPrismaService() },
+        {
+          provide: StatutoryService,
+          useValue: { compute: jest.fn().mockResolvedValue(noStatutory()) },
+        },
       ],
     }).compile();
 
     service = module.get<PayrollCalculationService>(PayrollCalculationService);
     prisma = module.get(PrismaService);
+    statutory = module.get(StatutoryService);
   });
 
   it('should be defined', () => {
@@ -75,6 +96,64 @@ describe('PayrollCalculationService', () => {
 
     beforeEach(() => {
       prisma.employeeSalary.findFirst.mockResolvedValue(mockSalary);
+    });
+
+    it('should compute provident fund on basic plus flagged components, not on gross', async () => {
+      prisma.employeeSalary.findFirst.mockResolvedValue({
+        ...mockSalary,
+        basePay: 20000,
+        salaryStructure: {
+          ...mockSalary.salaryStructure,
+          components: [
+            // Dearness allowance forms part of PF wages; HRA does not.
+            { name: 'DA', type: 'earning', calcType: 'fixed', value: 5000, pfApplicable: true },
+            { name: 'HRA', type: 'earning', calcType: 'fixed', value: 8000 },
+          ],
+        },
+      });
+      prisma.holiday.findMany.mockResolvedValue([]);
+      prisma.attendanceRecord.findMany.mockResolvedValue(
+        Array.from({ length: 22 }, (_, i) => ({
+          status: 'PRESENT', date: new Date(2026, 0, i + 1),
+          otMinutesApproved: 0, otMinutesCalculated: 0,
+        })),
+      );
+      prisma.leaveRequest.findMany.mockResolvedValue([]);
+
+      await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+      // 20,000 basic + 5,000 DA. The 8,000 HRA is excluded.
+      expect(statutory.compute).toHaveBeenCalledWith(
+        expect.objectContaining({ pfWages: expect.anything() }),
+      );
+      expect(statutory.compute.mock.calls[0][0].pfWages.toString()).toBe('25000');
+      expect(statutory.compute.mock.calls[0][0].grossPay.toString()).toBe('33000');
+    });
+
+    it('should subtract statutory deductions from net pay and list them on the payslip', async () => {
+      statutory.compute.mockResolvedValue({
+        ...noStatutory(),
+        pfEmployee: new Decimal(1800),
+        professionalTax: new Decimal(200),
+        tds: new Decimal(3000),
+        totalEmployeeDeductions: new Decimal(5000),
+      });
+      prisma.holiday.findMany.mockResolvedValue([]);
+      prisma.attendanceRecord.findMany.mockResolvedValue(
+        Array.from({ length: 22 }, (_, i) => ({
+          status: 'PRESENT', date: new Date(2026, 0, i + 1),
+          otMinutesApproved: 0, otMinutesCalculated: 0,
+        })),
+      );
+      prisma.leaveRequest.findMany.mockResolvedValue([]);
+
+      const result = await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+      const names = result!.deductions.map((x) => x.name);
+      expect(names).toEqual(expect.arrayContaining(['Provident Fund', 'Professional Tax', 'TDS']));
+      // Existing PF component of 6,000 from the structure, plus the 5,000 statutory
+      expect(Number(result!.totalDeductions)).toBe(11000);
+      expect(Number(result!.netPay)).toBe(Number(result!.grossPay) - 11000);
     });
 
     it('should round a half-cent component up instead of losing it to binary floating point', async () => {

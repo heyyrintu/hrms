@@ -177,6 +177,20 @@ case for any database where this migration has already run: the column is gone
 and the values cannot be recovered from the database itself. Restore from a
 backup taken before the migration if you need them.
 
+### Indian statutory payroll
+Provident fund, state insurance, professional tax, labour welfare fund and TDS
+are configured per tenant and are off until you opt in. Apply the migration,
+then seed the rates and slabs for your state:
+
+```bash
+IMPORT_TENANT_ID=<tenant id> PT_STATE=Karnataka npm run prisma:seed-statutory
+```
+
+See [india-statutory-payroll.md](india-statutory-payroll.md) for what each levy
+does, what employees and salary structures need filled in, and what is
+deliberately not implemented. Verify every seeded rate against the current
+notification before running a real payroll.
+
 ### Sensitive-field encryption
 Aadhaar numbers are encrypted at rest with AES-256-GCM. `FIELD_ENCRYPTION_KEY`
 (32 bytes, hex) is required to create or update an employee with an Aadhaar

@@ -1,12 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Decimal } from '@prisma/client/runtime/library';
+import { StatutoryService, StatutoryResult } from './statutory/statutory.service';
 
 interface SalaryComponent {
   name: string;
   type: 'earning' | 'deduction';
   calcType: 'fixed' | 'percentage';
   value: number;
+  /**
+   * Whether this earning counts toward provident fund wages. PF is computed on
+   * basic plus dearness allowance, not on gross, so allowances such as HRA and
+   * conveyance are excluded unless flagged. Basic pay is always included.
+   */
+  pfApplicable?: boolean;
 }
 
 /**
@@ -29,6 +36,8 @@ export interface PayslipData {
   totalDeductions: Decimal;
   netPay: Decimal;
   otPay: Decimal;
+  /** Indian statutory deductions and employer contributions for the month. */
+  statutory: StatutoryResult;
 }
 
 /** Round to paise, half-up, which is the commercial convention. */
@@ -38,7 +47,10 @@ function money(value: Decimal): Decimal {
 
 @Injectable()
 export class PayrollCalculationService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private statutoryService: StatutoryService,
+  ) {}
 
   async calculateForEmployee(
     tenantId: string,
@@ -65,6 +77,9 @@ export class PayrollCalculationService {
             otMultiplier: true,
             payType: true,
             hourlyRate: true,
+            gender: true,
+            pfOptOut: true,
+            taxRegime: true,
           },
         },
       },
@@ -165,7 +180,41 @@ export class PayrollCalculationService {
       new Decimal(0),
     );
     const grossPay = money(proratedBasePay.add(totalEarnings).add(otPay));
-    const netPay = money(grossPay.sub(totalDeductions));
+
+    // 9. Statutory deductions, which need the gross to be known first.
+    // Provident fund is computed on basic plus any component the structure
+    // marks as forming part of PF wages, not on gross.
+    const pfWages = components
+      .filter((c) => c.type === 'earning' && c.pfApplicable)
+      .reduce((sum, comp) => {
+        const line = earnings.find((e) => e.name === comp.name);
+        return line ? sum.add(line.amount) : sum;
+      }, proratedBasePay);
+
+    const statutory = await this.statutoryService.compute({
+      tenantId,
+      employeeId,
+      month,
+      year,
+      pfWages,
+      grossPay,
+      pfOptOut: salary.employee.pfOptOut,
+      gender: salary.employee.gender,
+      employeeRegime: salary.employee.taxRegime,
+    });
+
+    for (const [name, amount] of [
+      ['Provident Fund', statutory.pfEmployee],
+      ['ESI', statutory.esiEmployee],
+      ['Professional Tax', statutory.professionalTax],
+      ['Labour Welfare Fund', statutory.lwfEmployee],
+      ['TDS', statutory.tds],
+    ] as const) {
+      if (amount.gt(0)) deductions.push({ name, amount });
+    }
+
+    const allDeductions = money(totalDeductions.add(statutory.totalEmployeeDeductions));
+    const netPay = money(grossPay.sub(allDeductions));
 
     return {
       employeeId,
@@ -178,9 +227,10 @@ export class PayrollCalculationService {
       earnings,
       deductions,
       grossPay,
-      totalDeductions,
+      totalDeductions: allDeductions,
       netPay,
       otPay,
+      statutory,
     };
   }
 
