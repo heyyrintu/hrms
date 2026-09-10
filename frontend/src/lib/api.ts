@@ -5,6 +5,7 @@ import {
   UpdateStatutoryConfigPayload,
   UpsertTaxDeclarationPayload,
 } from '@/types/statutory-config';
+import { ReviewProofPayload, SubmitProofPayload } from '@/types/proofs';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
@@ -666,4 +667,66 @@ export const statutoryApi = {
     api.get(`/payroll/statutory/declarations/${employeeId}`, {
       params: financialYear ? { financialYear } : undefined,
     }),
+};
+
+// ============================================
+// INVESTMENT PROOFS
+// ============================================
+/**
+ * Evidence behind a declared deduction, and its review.
+ *
+ * Submitting is two steps: the file goes to the generic uploads endpoint first,
+ * and the proof then references the upload it produced. That keeps one place
+ * responsible for file validation and storage.
+ */
+export const PROOF_MAX_FILE_BYTES = 10 * 1024 * 1024;
+/** What the uploads endpoint accepts. Anything else is refused with a 422. */
+export const PROOF_ACCEPTED_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'application/pdf',
+] as const;
+
+export const proofsApi = {
+  /** Step one: store the file. Returns the `Upload`, whose `id` the proof needs. */
+  uploadFile: (file: File, financialYear: number) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('entityType', 'investment-proof');
+    form.append('entityId', String(financialYear));
+    return api.post('/uploads', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+
+  // The employee's own proofs.
+  submit: (data: SubmitProofPayload) => api.post('/payroll/proofs', data),
+  listMine: (financialYear: number) =>
+    api.get('/payroll/proofs/mine', { params: { financialYear } }),
+  mySummary: (financialYear: number) =>
+    api.get('/payroll/proofs/mine/summary', { params: { financialYear } }),
+  /** Only a proof still pending can be withdrawn; a reviewed one is a record. */
+  withdraw: (id: string) => api.delete(`/payroll/proofs/${id}`),
+
+  // Review, for payroll staff.
+  listForReview: (params?: Record<string, unknown>) =>
+    api.get('/payroll/proofs', { params }),
+  summaryFor: (employeeId: string, financialYear: number) =>
+    api.get(`/payroll/proofs/employees/${employeeId}/summary`, {
+      params: { financialYear },
+    }),
+  approve: (id: string, data: ReviewProofPayload) =>
+    api.post(`/payroll/proofs/${id}/approve`, data),
+  reject: (id: string, data: ReviewProofPayload) =>
+    api.post(`/payroll/proofs/${id}/reject`, data),
+
+  /** Opens the stored document. Both the owner and payroll staff may read it. */
+  download: async (id: string, filename: string) => {
+    const response = await api.get(`/payroll/proofs/${id}/file`, {
+      responseType: 'blob',
+    });
+    downloadBlob(response.data as Blob, filename, 'application/octet-stream');
+  },
 };

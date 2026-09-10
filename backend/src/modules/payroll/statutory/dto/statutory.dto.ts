@@ -98,6 +98,24 @@ export class UpdateStatutoryConfigDto {
   @Min(1)
   encashmentMonthDays?: number;
 
+  // ---- Investment proofs ----
+  @ApiPropertyOptional({
+    description:
+      'Require a verified proof before a declared deduction reduces TDS. Off by default, so an installation that does not opt in keeps taking declarations at face value.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  proofVerificationRequired?: boolean;
+  @ApiPropertyOptional({
+    description:
+      'Calendar month from which verified amounts replace declared ones. January by convention.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  proofCutoffMonth?: number;
+
   @ApiPropertyOptional() @IsOptional() @IsBoolean() tdsEnabled?: boolean;
   @ApiPropertyOptional({ enum: TaxRegime })
   @IsOptional()

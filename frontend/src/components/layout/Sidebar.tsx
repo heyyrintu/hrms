@@ -44,6 +44,8 @@ import {
   HandCoins,
   Scale,
   ReceiptText,
+  FileSearch,
+  FolderCheck,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -90,6 +92,7 @@ const sections: NavSection[] = [
       { name: 'My Payslips', href: '/my-payslips', icon: <Receipt className="h-[18px] w-[18px]" /> },
       { name: 'My Form 16', href: '/my-form16', icon: <FileCheck2 className="h-[18px] w-[18px]" /> },
       { name: 'My Tax Declaration', href: '/my-tax-declaration', icon: <ReceiptText className="h-[18px] w-[18px]" /> },
+      { name: 'My Tax Proofs', href: '/my-tax-proofs', icon: <FolderCheck className="h-[18px] w-[18px]" /> },
       { name: 'Expenses', href: '/expenses', icon: <Wallet className="h-[18px] w-[18px]" /> },
       { name: 'My Letters', href: '/my-letters', icon: <FileText className="h-[18px] w-[18px]" /> },
       { name: 'My Profile', href: '/my-profile', icon: <UserCircle className="h-[18px] w-[18px]" /> },
@@ -120,6 +123,7 @@ const sections: NavSection[] = [
           { name: 'Statutory Returns', href: '/payroll/returns', icon: <Landmark className="h-4 w-4" /> },
           { name: 'Form 16', href: '/payroll/form16', icon: <FileCheck2 className="h-4 w-4" /> },
           { name: 'Tax Declarations', href: '/payroll/declarations', icon: <ReceiptText className="h-4 w-4" /> },
+          { name: 'Proof Review', href: '/payroll/proofs', icon: <FileSearch className="h-4 w-4" /> },
         ],
       },
     ],

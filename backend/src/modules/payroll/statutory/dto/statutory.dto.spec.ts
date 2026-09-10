@@ -73,4 +73,19 @@ describe('UpdateStatutoryConfigDto', () => {
       BadRequestException,
     );
   });
+
+  it('accepts the investment proof settings', async () => {
+    await expect(
+      parse({ proofVerificationRequired: true, proofCutoffMonth: 1 }),
+    ).resolves.toMatchObject({ proofVerificationRequired: true, proofCutoffMonth: 1 });
+  });
+
+  it('refuses a cutoff that is not a month of the year', async () => {
+    await expect(parse({ proofCutoffMonth: 0 })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    await expect(parse({ proofCutoffMonth: 13 })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
 });
