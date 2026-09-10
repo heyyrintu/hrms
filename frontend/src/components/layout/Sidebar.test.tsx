@@ -7,23 +7,22 @@ jest.mock('@/lib/api', () => ({
   api: { get: jest.fn().mockRejectedValue(new Error('mock')) },
 }));
 
-// Mock lucide-react icons
-jest.mock('lucide-react', () => {
-  const icons: Record<string, React.FC<any>> = {};
-  const iconNames = [
-    'LayoutDashboard', 'Clock', 'Users', 'Calendar', 'ClipboardCheck',
-    'Settings', 'X', 'ChevronDown', 'ChevronRight', 'Building2',
-    'CalendarDays', 'Timer', 'UserCircle', 'FileText', 'GitPullRequest',
-    'Bell', 'Megaphone', 'FileSpreadsheet', 'DollarSign', 'Receipt',
-    'Wallet', 'Tags', 'ClipboardList', 'ClipboardEdit', 'Shield', 'Target', 'Star',
-    'CalendarClock', 'CalendarCheck', 'CalendarPlus', 'FileWarning',
-    'Briefcase', 'MapPin', 'Network', 'LogOut',
-  ];
-  iconNames.forEach(name => {
-    icons[name] = (props: any) => <span data-testid={`icon-${name}`} {...props} />;
-  });
-  return icons;
-});
+// Mock lucide-react icons.
+//
+// A Proxy rather than a hand-kept list: the sidebar gains an icon whenever it
+// gains a nav item, and a list would fail these thirteen tests with "element
+// type is invalid" every time somebody adds one.
+jest.mock('lucide-react', () =>
+  new Proxy(
+    {},
+    {
+      get: (_target, prop) => {
+        if (prop === '__esModule') return true;
+        return (props: any) => <span data-testid={`icon-${String(prop)}`} {...props} />;
+      },
+    },
+  ),
+);
 
 // Mock AuthContext
 const mockHasRole = jest.fn().mockReturnValue(true);

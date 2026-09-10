@@ -159,11 +159,44 @@ database, so two approvals racing each other cannot both win. A settlement
 totals pro-rata salary, leave encashment, gratuity and other earnings against
 notice shortfall recovery, other recoveries and TDS.
 
+## The pages
+
+| Page | Who | What it does |
+|---|---|---|
+| Payroll → Statutory Returns | HR admin | Pick a computed run, preview and download the five files |
+| Payroll → Form 16 | HR admin | Any employee's Part B certificate and PDF |
+| My Form 16 | Everyone | Your own Part B certificate and PDF |
+| Settlements | HR admin | Full and final settlements, with the gratuity working |
+
+Two things the pages do deliberately, which are easy to undo by accident.
+
+**A return is previewed before it is downloaded.** The preview shows the
+warnings, which name every employee left out of the file and why, usually a
+missing UAN, ESI number or PAN. An employee missing from a statutory return is a
+filing defect. The warnings are not collapsible, and a file with none says so
+explicitly, so the user knows the check ran rather than assuming silence means
+success.
+
+**Nothing is presented as ready to file or ready to issue.** Each file carries
+the caveat that applies to it, and the Form 16 pages say on every view that Part
+A comes from TRACES and cannot be produced here. A user who downloads and
+uploads without reading is the case these pages are designed against.
+
+Payroll and settlement pages are gated to HR administrators in the browser as
+well as at the API. The gate is not the security boundary, since the API already
+refuses the calls; without it a non-admin who types the URL sees the full shell
+and a wall of failed requests, which reads as a broken app rather than a page
+they should not be on.
+
 ## Not implemented
 
 Known and deliberate, so nobody assumes otherwise:
 
 - **Form 16 Part A.** TRACES issues it. See above.
+- **Statutory configuration UI.** Rates, slabs and the employee tax declaration
+  are set through the API or the seed script; there is no page for them yet.
+  Without a declaration, TDS is computed on salary alone with only the standard
+  deduction.
 - **Investment proof workflow.** Declarations are taken at face value. Nothing
   collects, verifies or approves evidence, and no limit is enforced on a
   declared amount, so section 80C above ₹1,50,000 will be accepted as declared.

@@ -39,6 +39,9 @@ import {
   Network,
   LogOut,
   Cpu,
+  FileCheck2,
+  Landmark,
+  HandCoins,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -83,6 +86,7 @@ const sections: NavSection[] = [
       { name: 'Leave', href: '/leave', icon: <Calendar className="h-[18px] w-[18px]" /> },
       { name: 'Comp-Off', href: '/leave/comp-off', icon: <CalendarPlus className="h-[18px] w-[18px]" /> },
       { name: 'My Payslips', href: '/my-payslips', icon: <Receipt className="h-[18px] w-[18px]" /> },
+      { name: 'My Form 16', href: '/my-form16', icon: <FileCheck2 className="h-[18px] w-[18px]" /> },
       { name: 'Expenses', href: '/expenses', icon: <Wallet className="h-[18px] w-[18px]" /> },
       { name: 'My Letters', href: '/my-letters', icon: <FileText className="h-[18px] w-[18px]" /> },
       { name: 'My Profile', href: '/my-profile', icon: <UserCircle className="h-[18px] w-[18px]" /> },
@@ -97,6 +101,7 @@ const sections: NavSection[] = [
       { name: 'Org Chart', href: '/org-chart', icon: <Network className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
       { name: 'Onboarding', href: '/onboarding', icon: <ClipboardList className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
       { name: 'Exit Management', href: '/exit-management', icon: <LogOut className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
+      { name: 'Settlements', href: '/settlements', icon: <HandCoins className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
     ],
   },
   {
@@ -109,6 +114,8 @@ const sections: NavSection[] = [
         children: [
           { name: 'Payroll Runs', href: '/payroll', icon: <DollarSign className="h-4 w-4" /> },
           { name: 'Employee Payslips', href: '/payroll/payslips', icon: <Receipt className="h-4 w-4" /> },
+          { name: 'Statutory Returns', href: '/payroll/returns', icon: <Landmark className="h-4 w-4" /> },
+          { name: 'Form 16', href: '/payroll/form16', icon: <FileCheck2 className="h-4 w-4" /> },
         ],
       },
     ],
