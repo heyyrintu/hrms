@@ -1,6 +1,7 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import ExpensesPage from './page';
+import { expensesApi } from '@/lib/api';
 
 // Mock lucide-react icons
 jest.mock('lucide-react', () =>
@@ -133,5 +134,52 @@ describe('ExpensesPage', () => {
     await waitFor(() => {
       expect(screen.getByPlaceholderText('Search claims...')).toBeInTheDocument();
     });
+  });
+
+  /**
+   * Claim amounts arrive as decimal strings, because the backend holds
+   * `expense_claims.amount` as a Prisma `Decimal`. Added as floats these
+   * three come to 44967.49999999999, so the card reports a rupee less than
+   * was claimed.
+   */
+  it('totals claims exactly, without adding them as floats', async () => {
+    const claim = (id: string, amount: string, status: string) => ({
+      id,
+      tenantId: 't1',
+      employeeId: 'e1',
+      categoryId: 'c1',
+      category: { id: 'c1', name: 'Travel' },
+      amount,
+      description: `Claim ${id}`,
+      expenseDate: '2026-01-15T00:00:00.000Z',
+      status,
+      createdAt: '2026-01-15T00:00:00.000Z',
+      updatedAt: '2026-01-15T00:00:00.000Z',
+    });
+
+    (expensesApi.getMyClaims as jest.Mock).mockResolvedValueOnce({
+      data: {
+        data: [
+          claim('a', '16801.51', 'APPROVED'),
+          claim('b', '24828.50', 'REIMBURSED'),
+          claim('c', '3337.49', 'APPROVED'),
+        ],
+        meta: { total: 3, page: 1, limit: 20, totalPages: 1 },
+      },
+    });
+
+    render(<ExpensesPage />);
+
+    // The stat cards render before the claims arrive, so wait for a row.
+    await waitFor(() => {
+      expect(screen.getByText('Claim a')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Total Claimed').previousElementSibling).toHaveTextContent(
+      '₹44,968',
+    );
+    expect(
+      screen.getByText('Approved / Reimbursed').previousElementSibling,
+    ).toHaveTextContent('₹44,968');
   });
 });

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { expensesApi } from '@/lib/api';
+import { formatCurrency } from '@/lib/salaryCalculations';
 import { cn } from '@/lib/utils';
 import {
     Plus,
@@ -69,7 +70,7 @@ export default function ExpenseCategoriesPage() {
             name: category.name,
             code: category.code,
             description: category.description || '',
-            maxAmount: category.maxAmount ? String(category.maxAmount) : '',
+            maxAmount: category.maxAmount ?? '',
         });
         setModalOpen(true);
     };
@@ -129,14 +130,6 @@ export default function ExpenseCategoriesPage() {
         } finally {
             setSaving(false);
         }
-    };
-
-    const formatCurrency = (amount: number) => {
-        return new Intl.NumberFormat('en-IN', {
-            style: 'currency',
-            currency: 'INR',
-            maximumFractionDigits: 0,
-        }).format(amount);
     };
 
     const activeCount = categories.filter((c) => c.isActive).length;
@@ -253,7 +246,7 @@ export default function ExpenseCategoriesPage() {
                                                 {category.description || '—'}
                                             </td>
                                             <td className="px-4 py-3 text-sm text-warm-900 text-right whitespace-nowrap">
-                                                {category.maxAmount ? formatCurrency(Number(category.maxAmount)) : 'No limit'}
+                                                {category.maxAmount ? formatCurrency(category.maxAmount) : 'No limit'}
                                             </td>
                                             <td className="px-4 py-3 text-center">
                                                 <button onClick={() => handleToggleActive(category)}>
