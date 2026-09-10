@@ -49,4 +49,33 @@ describe('Input', () => {
     render(<Input className="custom" />);
     expect(screen.getByRole('textbox').className).toContain('custom');
   });
+
+  it('ties the label to the input so clicking it focuses the field', () => {
+    // Without htmlFor the label is decoration: a screen reader announces the
+    // input as unlabelled, and clicking the text does nothing.
+    render(<Input label="Section 80C" />);
+
+    const field = screen.getByLabelText('Section 80C');
+    expect(field.tagName).toBe('INPUT');
+  });
+
+  it('gives two fields sharing a label distinct ids', () => {
+    // A label slug alone would collide, and a duplicate id silently points both
+    // labels at the first field.
+    render(
+      <>
+        <Input label="Amount" />
+        <Input label="Amount" />
+      </>,
+    );
+
+    const [first, second] = screen.getAllByLabelText('Amount');
+    expect(first.id).not.toBe(second.id);
+  });
+
+  it('keeps an id the caller supplied', () => {
+    render(<Input label="TDS" id="tds-field" />);
+
+    expect(screen.getByLabelText('TDS')).toHaveAttribute('id', 'tds-field');
+  });
 });

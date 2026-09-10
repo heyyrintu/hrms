@@ -287,3 +287,7 @@ export interface UpdateSettlementPayload {
   tds?: number;
   remarks?: string;
 }
+
+// Tenant configuration and the employee tax declaration. Re-exported through
+// this module rather than the barrel so the two stay together.
+export * from './statutory-config';
