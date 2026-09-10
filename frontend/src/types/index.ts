@@ -832,6 +832,17 @@ export interface Payslip {
 // Expense Management
 // ==========================================
 
+/**
+ * Money on these types is a `string`, for the same reason it is on the payroll
+ * types above: the backend holds these columns as Prisma `Decimal`, which
+ * serializes to a decimal string. Format them with `formatCurrency` from
+ * `@/lib/salaryCalculations` and add them with `sumMoney`.
+ *
+ * Note the asymmetry with the write path: the create and update DTOs take
+ * `amount` and `maxAmount` as numbers, so a form still sends `parseFloat` of
+ * what the user typed. Reads come back as strings.
+ */
+
 export type ExpenseClaimStatus = 'DRAFT' | 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'REIMBURSED';
 
 export interface ExpenseCategory {
@@ -840,7 +851,8 @@ export interface ExpenseCategory {
   name: string;
   code: string;
   description?: string;
-  maxAmount?: number;
+  /** `expense_categories.maxAmount`, `Decimal(12, 2)`. */
+  maxAmount?: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -851,7 +863,8 @@ export interface ExpenseClaim {
   tenantId: string;
   employeeId: string;
   categoryId: string;
-  amount: number;
+  /** `expense_claims.amount`, `Decimal(12, 2)`. */
+  amount: string;
   description: string;
   expenseDate: string;
   receiptId?: string;
