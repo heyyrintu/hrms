@@ -10,13 +10,20 @@
 import { ALLOWED_UNDER_NEW_REGIME } from '@/types';
 import type { EmployeeTaxDeclaration, UpsertTaxDeclarationPayload } from '@/types';
 
-/** The nine rupee figures a declaration carries. Regime and year are not amounts. */
+/**
+ * The twelve rupee figures a declaration carries. Regime and year are not
+ * amounts, and neither is `childrenCount`: it is a count of children, not
+ * money, and is handled separately below rather than folded in here.
+ */
 export type DeclarationAmountKey =
   | 'section80C'
   | 'section80D'
   | 'section80CCD1B'
   | 'section80CCD2'
   | 'hraExemption'
+  | 'ltaExemption'
+  | 'childrenEducationAllowance'
+  | 'hostelAllowance'
   | 'homeLoanInterest'
   | 'otherDeductions'
   | 'otherIncome'
@@ -47,6 +54,18 @@ export function formatCeiling(ceiling: number): string {
   return inrWhole.format(ceiling);
 }
 
+/**
+ * Section 10(14) monthly ceilings, per child, for at most two children.
+ *
+ * Unlike the flat ceilings above, these cannot sit on a `DeclarationFieldSpec`
+ * as a single number: the annual cap they imply depends on how many children
+ * were declared, which is `childrenCount`, not a constant. The page computes
+ * the effective ceiling for the year from these and shows it the same way.
+ */
+export const CHILDREN_EDUCATION_ALLOWANCE_MONTHLY_CEILING = 100;
+export const HOSTEL_ALLOWANCE_MONTHLY_CEILING = 300;
+export const CHILDREN_ALLOWANCE_MAX_CHILDREN = 2;
+
 export const DECLARATION_FIELDS: readonly DeclarationFieldSpec[] = [
   {
     key: 'section80C',
@@ -74,6 +93,25 @@ export const DECLARATION_FIELDS: readonly DeclarationFieldSpec[] = [
     key: 'hraExemption',
     label: 'HRA exemption',
     hint: 'The exempt part of house rent allowance under section 10(13A), based on the rent you actually pay.',
+  },
+  {
+    key: 'ltaExemption',
+    label: 'LTA exemption',
+    hint: 'Leave travel allowance under section 10(5): what you actually spent travelling, on a claim allowed twice in a block of four years.',
+  },
+  {
+    key: 'childrenEducationAllowance',
+    label: "Children's education allowance",
+    hint: `Section 10(14): tuition-related allowance, capped at ${formatCeiling(
+      CHILDREN_EDUCATION_ALLOWANCE_MONTHLY_CEILING,
+    )} a month per child, for at most ${CHILDREN_ALLOWANCE_MAX_CHILDREN} children. Set how many children below; a figure above the cap is accepted but does not reduce your tax.`,
+  },
+  {
+    key: 'hostelAllowance',
+    label: 'Hostel allowance',
+    hint: `Section 10(14): allowance for a child in a boarding hostel, capped at ${formatCeiling(
+      HOSTEL_ALLOWANCE_MONTHLY_CEILING,
+    )} a month per child, for at most ${CHILDREN_ALLOWANCE_MAX_CHILDREN} children. Set how many children below; a figure above the cap is accepted but does not reduce your tax.`,
   },
   {
     key: 'homeLoanInterest',
@@ -118,4 +156,61 @@ export function storedAmount(
   key: DeclarationAmountKey,
 ): string {
   return declaration[key];
+}
+
+// ---------------------------------------------------------------------------
+// `childrenCount`: a count, not an amount
+// ---------------------------------------------------------------------------
+
+/**
+ * How many children the employee has declared for section 10(14).
+ *
+ * Kept out of `DeclarationAmountKey` and `DECLARATION_FIELDS` deliberately: it
+ * is a whole number of children, not a rupee figure, and formatting it as
+ * money or parsing it as a decimal the way the fields above are would be
+ * wrong on both ends. It drives the ceiling on `childrenEducationAllowance`
+ * and `hostelAllowance` above rather than being a claim in its own right.
+ */
+export const CHILDREN_COUNT_FIELD = {
+  key: 'childrenCount' as const,
+  label: 'Number of children',
+  hint: `Caps the education and hostel allowances above at, at most, ${CHILDREN_ALLOWANCE_MAX_CHILDREN} children — declaring more children than that does not raise the cap.`,
+};
+
+export type ParsedChildrenCount = { ok: true; value: number } | { ok: false; message: string };
+
+/**
+ * Reads a declared children count.
+ *
+ * Blank is nil, exactly as a blank rupee figure is: nothing has been
+ * declared, which is sent as zero. Anything else must be a whole,
+ * non-negative number — half a child or a negative one is refused rather than
+ * silently floored or clamped, the same discipline `parseDeclaredAmount`
+ * applies to the rupee figures.
+ */
+export function parseChildrenCount(raw: string): ParsedChildrenCount {
+  const trimmed = (raw ?? '').trim();
+  if (trimmed === '') return { ok: true, value: 0 };
+  if (!/^\d+$/.test(trimmed)) {
+    return {
+      ok: false,
+      message: `${CHILDREN_COUNT_FIELD.label} must be a whole number. "${trimmed}" is not one, so nothing was sent.`,
+    };
+  }
+  return { ok: true, value: Number(trimmed) };
+}
+
+/**
+ * The annual ceiling for a section 10(14) children's allowance, given how
+ * many children were declared.
+ *
+ * Capped at `CHILDREN_ALLOWANCE_MAX_CHILDREN` even when more are declared, and
+ * annualised over twelve months because the declaration itself is an annual
+ * figure. Nothing enforces this ceiling — like the flat ones above, it exists
+ * so the form can warn at the point of entry, not to block the entry.
+ */
+export function childrenAllowanceCeiling(monthlyLimit: number, childrenCount: number): number {
+  const wholeChildren = Number.isFinite(childrenCount) ? Math.max(0, Math.floor(childrenCount)) : 0;
+  const countedChildren = Math.min(wholeChildren, CHILDREN_ALLOWANCE_MAX_CHILDREN);
+  return monthlyLimit * 12 * countedChildren;
 }

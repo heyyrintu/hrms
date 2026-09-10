@@ -296,6 +296,30 @@ export interface IncomeTaxConfigInput {
    * differently can still be seeded.
    */
   marginalReliefEnabled?: boolean;
+  /**
+   * The year's section 10(14) ceilings. Absent falls back to the statutory
+   * figures below, which are also the schema's defaults, for the same reason
+   * `limits` does: capping is the correct behaviour, so a caller that has not
+   * been updated to pass the year's row still gets it.
+   */
+  section10Limits?: Section10AllowanceLimits;
+}
+
+/**
+ * The section 10(14) ceilings for the year.
+ *
+ * Both allowances are set per child, per month, for a limited number of
+ * children, so all three numbers are needed to work out a year's ceiling and
+ * none of them belongs in the code: the Finance Act moves them and the schema
+ * holds them per year.
+ */
+export interface Section10AllowanceLimits {
+  /** Children's education allowance, per child per month. The rule says ₹100. */
+  childrenEducationMonthlyLimit: Decimal;
+  /** Hostel allowance, per child per month. The rule says ₹300. */
+  hostelAllowanceMonthlyLimit: Decimal;
+  /** The most children either allowance may be claimed for. The rule says two. */
+  maxChildren: number;
 }
 
 /** Used when a caller has not supplied the year's row. See `limits` above. */
@@ -305,6 +329,15 @@ const STATUTORY_DEDUCTION_LIMITS: DeductionLimits = {
   section80CCD1B: new Decimal(50000),
 };
 
+/** Used when a caller has not supplied the year's row. See `section10Limits`. */
+const STATUTORY_SECTION_10_LIMITS: Section10AllowanceLimits = {
+  childrenEducationMonthlyLimit: new Decimal(100),
+  hostelAllowanceMonthlyLimit: new Decimal(300),
+  maxChildren: 2,
+};
+
+const MONTHS_IN_YEAR = new Decimal(12);
+
 export interface TaxDeclarationInput {
   section80C: Decimal;
   section80D: Decimal;
@@ -312,6 +345,28 @@ export interface TaxDeclarationInput {
   /** Employer NPS contribution, allowed under both regimes. */
   section80CCD2: Decimal;
   hraExemption: Decimal;
+  /**
+   * Section 10(5): leave travel concession.
+   *
+   * The section limits the exemption to what was actually spent on travel, and
+   * that figure is what the employee declares and what a proof settles. There
+   * is no monetary ceiling in the Act to apply here, so this is taken as
+   * supplied — as home loan interest is.
+   *
+   * Optional so that a caller written before the three section 10 heads
+   * existed still type-checks and still computes exactly what it did.
+   */
+  ltaExemption?: Decimal;
+  /** Section 10(14): children's education allowance, before the per-child cap. */
+  childrenEducationAllowance?: Decimal;
+  /** Section 10(14): hostel allowance, before the per-child cap. */
+  hostelAllowance?: Decimal;
+  /**
+   * How many children the two section 10(14) allowances are claimed for.
+   * Capped at the year's maximum by the calculation, so a declaration of six
+   * children does not widen the ceiling.
+   */
+  childrenCount?: number;
   homeLoanInterest: Decimal;
   otherDeductions: Decimal;
   otherIncome: Decimal;
@@ -334,6 +389,31 @@ export interface DeductionCapEntry {
   /** The lesser of the two: what actually came off the income. */
   allowed: Decimal;
   /** The remainder, which reduces no tax. Zero when the claim was within the limit. */
+  disallowed: Decimal;
+}
+
+/**
+ * One section 10 exemption head, as declared and as allowed.
+ *
+ * The same pair as `DeductionCapEntry`, and for the same reason: an employee
+ * whose ₹5,000 of school fees exempted ₹1,200 is owed the arithmetic, and
+ * "₹100 a month, one child, twelve months" is the arithmetic. A capped figure
+ * that arrives on its own looks like a mistake.
+ */
+export interface Section10ExemptionEntry {
+  head: 'HRA' | 'LTA' | 'CHILDREN_EDUCATION' | 'HOSTEL_ALLOWANCE';
+  /** What arrived, whether declared by the employee or proved and approved. */
+  declared: Decimal;
+  /**
+   * The year's ceiling for this head, or null where the section sets no
+   * monetary ceiling of its own. House rent is worked out from rent and salary
+   * before it reaches here, and leave travel is limited to what was spent, so
+   * both are null rather than nought.
+   */
+  limit: Decimal | null;
+  /** What actually came off the salary. */
+  allowed: Decimal;
+  /** The remainder, which exempts nothing. Zero when the claim was within the ceiling. */
   disallowed: Decimal;
 }
 
@@ -361,6 +441,16 @@ export interface IncomeTaxResult {
    * allowed. Empty under the new regime, where none of them is available.
    */
   chapterVIACaps: DeductionCapEntry[];
+  /**
+   * The section 10 exemptions, declared against allowed. Empty under the new
+   * regime, which withdraws all of them.
+   *
+   * These reduce salary rather than total income, so they belong on Form 16's
+   * line 2 and not among the chapter VI-A deductions on line 8.
+   */
+  section10Exemptions: Section10ExemptionEntry[];
+  /** The sum of what those exemptions allowed: Form 16's line 2. */
+  totalSection10Exemption: Decimal;
 }
 
 /** Tax on an amount, walking the slabs and taxing only the band in each. */
@@ -522,6 +612,71 @@ function capDeduction(
 }
 
 /**
+ * The section 10 exemptions available under the old regime, declared against
+ * allowed.
+ *
+ * Exported because Form 16's line 2 is these four heads and nothing else, and
+ * the certificate must not add them up its own way. One place computes them.
+ *
+ * The two section 10(14) allowances are ceilinged per child, per month, for a
+ * limited number of children, so the year's ceiling is
+ * `monthly x 12 x min(children, maximum)`. The cap is applied here, in the
+ * calculation, and not wherever the figure was collected — for the same reason
+ * the chapter VI-A ceilings are: a reviewer who accepts a school fee receipt
+ * for ₹5,000 has confirmed the fee, not raised the statutory limit.
+ *
+ * Nothing here is available under the new regime. Section 115BAC withdraws all
+ * four, so the list is empty and an old-regime declaration reduces no tax at
+ * all — exactly as `hraExemption` has always behaved.
+ */
+export function calculateSection10Exemptions(
+  declarations: TaxDeclarationInput,
+  isOldRegime: boolean,
+  limits: Section10AllowanceLimits = STATUTORY_SECTION_10_LIMITS,
+): Section10ExemptionEntry[] {
+  if (!isOldRegime) return [];
+
+  const zero = new Decimal(0);
+
+  // A child declared beyond the maximum widens nothing. Nor does a negative
+  // count, which the schema cannot hold but a caller could still pass.
+  const eligibleChildren = new Decimal(
+    Math.max(0, Math.min(declarations.childrenCount ?? 0, limits.maxChildren)),
+  );
+
+  const perChildYearlyLimit = (monthly: Decimal): Decimal =>
+    monthly.mul(MONTHS_IN_YEAR).mul(eligibleChildren);
+
+  const entry = (
+    head: Section10ExemptionEntry['head'],
+    declared: Decimal,
+    limit: Decimal | null,
+  ): Section10ExemptionEntry => {
+    const allowed = limit === null ? declared : Decimal.min(declared, limit);
+    return { head, declared, limit, allowed, disallowed: declared.sub(allowed) };
+  };
+
+  return [
+    // House rent already arrives worked out against rent paid and salary, so
+    // there is no further ceiling to apply to it here.
+    entry('HRA', declarations.hraExemption, null),
+    // Section 10(5) is limited to what was actually spent on travel, which is
+    // the declared figure itself. The Act sets no rupee maximum.
+    entry('LTA', declarations.ltaExemption ?? zero, null),
+    entry(
+      'CHILDREN_EDUCATION',
+      declarations.childrenEducationAllowance ?? zero,
+      perChildYearlyLimit(limits.childrenEducationMonthlyLimit),
+    ),
+    entry(
+      'HOSTEL_ALLOWANCE',
+      declarations.hostelAllowance ?? zero,
+      perChildYearlyLimit(limits.hostelAllowanceMonthlyLimit),
+    ),
+  ];
+}
+
+/**
  * Annual income tax liability for one employee.
  *
  * The two regimes differ in what may be deducted. Under the new regime only
@@ -539,8 +694,15 @@ function capDeduction(
  * picks by band. Nothing here assumes a band; `config.ageBand` is carried into
  * the result so the working says which one was applied.
  *
+ * The section 10 exemptions — house rent, leave travel, and the two 10(14)
+ * allowances for children — reduce salary rather than total income, so they
+ * come off before the chapter VI-A heads and belong on Form 16's line 2. The
+ * two 10(14) allowances are ceilinged per child, per month, for at most the
+ * year's maximum number of children; see `calculateSection10Exemptions`.
+ *
  * Not implemented, and material for some employees:
- *  - section 10 exemptions other than HRA;
+ *  - section 10 exemptions beyond those four, such as the gratuity and leave
+ *    encashment exemptions, which are settled on exit rather than in payroll;
  *  - deductions under heads with no ceiling of their own held here, such as
  *    home loan interest, which is taken as supplied.
  */
@@ -561,6 +723,17 @@ export function calculateIncomeTax(
   // Empty under the new regime, where none of these heads is available at all.
   const chapterVIACaps: DeductionCapEntry[] = [];
 
+  // Likewise empty under the new regime: section 115BAC withdraws all four.
+  const section10Exemptions = calculateSection10Exemptions(
+    declarations,
+    isOldRegime,
+    config.section10Limits ?? STATUTORY_SECTION_10_LIMITS,
+  );
+  const totalSection10Exemption = section10Exemptions.reduce(
+    (sum, e) => sum.add(e.allowed),
+    new Decimal(0),
+  );
+
   if (isOldRegime) {
     chapterVIACaps.push(
       capDeduction('80C', declarations.section80C, limits.section80C),
@@ -573,7 +746,9 @@ export function calculateIncomeTax(
     }
 
     deductions = deductions
-      .add(declarations.hraExemption)
+      // House rent, leave travel and the two capped allowances for children,
+      // at what the section allows rather than at what was claimed.
+      .add(totalSection10Exemption)
       .add(declarations.homeLoanInterest)
       .add(declarations.otherDeductions)
       // Section 16(iii): professional tax actually paid. Not available under
@@ -608,6 +783,8 @@ export function calculateIncomeTax(
     totalTax,
     ageBand: config.ageBand ?? TaxAgeBand.GENERAL,
     chapterVIACaps,
+    section10Exemptions,
+    totalSection10Exemption,
   };
 }
 

@@ -1,5 +1,5 @@
 import { ValidationPipe, BadRequestException } from '@nestjs/common';
-import { UpdateStatutoryConfigDto } from './statutory.dto';
+import { UpdateStatutoryConfigDto, UpsertTaxDeclarationDto } from './statutory.dto';
 
 /**
  * The DTO is the whole story for what a tenant can configure.
@@ -111,5 +111,45 @@ describe('UpdateStatutoryConfigDto', () => {
         encashmentGovernmentEmployer: false,
       }),
     ).resolves.toMatchObject({ encashmentExemptionCap: 2500000 });
+  });
+});
+
+/**
+ * What an employee may declare.
+ *
+ * Same reasoning as the configuration DTO above: the pipe runs with
+ * `forbidNonWhitelisted`, so a field absent here is one nobody can declare.
+ */
+describe('UpsertTaxDeclarationDto', () => {
+  const pipe = new ValidationPipe({
+    whitelist: true,
+    forbidNonWhitelisted: true,
+    transform: true,
+  });
+
+  const parse = (body: Record<string, unknown>) =>
+    pipe.transform(body, { type: 'body', metatype: UpsertTaxDeclarationDto });
+
+  it('accepts the section 10 exemptions beyond house rent', async () => {
+    await expect(
+      parse({
+        ltaExemption: 40000,
+        childrenEducationAllowance: 2400,
+        hostelAllowance: 7200,
+        childrenCount: 2,
+      }),
+    ).resolves.toMatchObject({ ltaExemption: 40000, childrenCount: 2 });
+  });
+
+  it('refuses a negative section 10 figure', async () => {
+    await expect(parse({ ltaExemption: -1 })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
+
+  it('still accepts what it always did', async () => {
+    await expect(parse({ section80C: 150000, regime: 'OLD' })).resolves.toMatchObject({
+      section80C: 150000,
+    });
   });
 });

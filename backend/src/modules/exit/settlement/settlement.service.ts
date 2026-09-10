@@ -1,10 +1,11 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { Prisma, SettlementStatus } from '@prisma/client';
+import { Prisma, SettlementStatus, TaxRegime } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { PrismaService } from '../../../prisma/prisma.service';
 import {
@@ -18,6 +19,19 @@ import type {
   EncashmentExemptionConfig,
   EncashmentExemptionResult,
 } from '../../payroll/statutory/tax-correctness.types';
+import { ageBandOn31March } from '../../payroll/statutory/tax-correctness.types';
+import {
+  financialYearOf,
+  resolveIncomeTaxConfig,
+} from '../../payroll/statutory/statutory.service';
+import {
+  computeSettlementTax,
+  toIncomeTaxConfigInput,
+  toTaxDeclarationInput,
+  TDS_DISABLED,
+  SettlementTaxableParts,
+  SettlementTaxWorking,
+} from './settlement-tax';
 import { ComputeSettlementDto, UpdateSettlementDto } from './dto/settlement.dto';
 
 /**
@@ -32,22 +46,19 @@ import { ComputeSettlementDto, UpdateSettlementDto } from './dto/settlement.dto'
  * where they become a stored figure, so a division does not leak its error into
  * everything downstream.
  *
+ * TDS is computed, not guessed: the leaver's position for the financial year is
+ * assembled from their payslips and their declaration, the settlement's own
+ * taxable parts are added, and the balance of the year's tax is what comes off.
+ * See `settlement-tax.ts` for the working and for what it does not model. The
+ * figure is a default: whoever processes the exit can override it, and the
+ * override is recorded as one and survives a recompute.
+ *
  * What this deliberately does NOT do:
  *
- * - **TDS is taken as supplied, not computed.** Tax on a settlement depends on
- *   the leaver's full-year income, declarations and chosen regime; the figure
- *   here is whatever the person processing the exit enters. Nothing validates
- *   it against the year's tax computation.
  * - **Notice recovery uses a simple daily rate**, monthly gross divided by the
  *   calendar days in the month of the last working day. Many contracts recover
  *   on basic alone, on working days rather than calendar days, or at a rate
  *   fixed in the appointment letter. None of those variants are supported.
- * - **The section 10(10AA) exemption on leave encashment is worked out, but
- *   only recorded in the breakdown.** The whole encashment is payable and is
- *   carried into gross pay as before; what the exemption says is how much of it
- *   escapes tax. There is no column on the settlement to hold that figure the
- *   way `gratuityExempt` holds gratuity's, so it lives in the breakdown JSON,
- *   and nothing downstream reads it into the year's tax computation yet.
  * - **The exemption is measured against last drawn basic plus DA**, not against
  *   the average of the last ten months' salary the section asks for, because
  *   the settlement holds only the current salary assignment. Anyone whose pay
@@ -140,8 +151,28 @@ function completedYearsOfService(joinDate: Date, lastWorkingDate: Date): number 
   return totalMonths <= 0 ? 0 : Math.floor(totalMonths / 12);
 }
 
+/**
+ * A tax figure a person entered in place of the computed one.
+ *
+ * Held inside the breakdown rather than in a column of its own, because the
+ * schema has one `tds` column and adding another is not this change's to make.
+ * The stored `tds` is always either the computed figure or `amount` below;
+ * which of the two it is, is exactly what `applied` records.
+ */
+interface TdsOverride {
+  applied: true;
+  amount: string;
+  reason: string | null;
+  at: string;
+}
+
+/** The taxComputation block as it is stored: the working plus any override. */
+type StoredTaxComputation = SettlementTaxWorking & { override: TdsOverride | null };
+
 @Injectable()
 export class SettlementService {
+  private readonly logger = new Logger(SettlementService.name);
+
   constructor(private prisma: PrismaService) {}
 
   /**
@@ -199,6 +230,9 @@ export class SettlementService {
             designation: true,
             department: { select: { name: true } },
             joinDate: true,
+            // Read for the age-banded basic exemption under the old regime.
+            // Absent reads as GENERAL, which is the safe direction.
+            dateOfBirth: true,
           },
         },
       },
@@ -239,7 +273,9 @@ export class SettlementService {
     // Refuse before doing any work if the settlement is already locked.
     const existing = await this.prisma.settlement.findFirst({
       where: { separationId, tenantId },
-      select: { id: true, status: true },
+      // The breakdown is read as well as the status because it carries any TDS
+      // override, which a recompute must not throw away.
+      select: { id: true, status: true, breakdown: true },
     });
     if (existing && existing.status !== SettlementStatus.DRAFT) {
       throw new ConflictException(
@@ -335,6 +371,30 @@ export class SettlementService {
     // A recompute discards any manual figures the processor had entered,
     // because they were entered against a different set of numbers.
     const zero = new Decimal(0);
+
+    // Tax is the exception to that. It is computed rather than entered, so a
+    // recompute recomputes it — but a figure a person deliberately put in place
+    // of the computed one is a decision about facts this cannot see, and
+    // discarding it because a leave balance moved would be indefensible.
+    const override = this.readTdsOverride(existing?.breakdown);
+    const tax = await this.computeTax({
+      tenantId,
+      employee: separation.employee,
+      statutory: config,
+      lastWorkingDate,
+      parts: {
+        proRataSalary: proRata.amount,
+        gratuityTaxable: money(gratuity.amount.sub(gratuity.exemptAmount)),
+        leaveEncashmentTaxable: money(
+          encashment.amount.sub(encashmentExemption.exempt),
+        ),
+        // Reset to zero along with the column it mirrors, so the tax is
+        // computed on exactly what this settlement now pays.
+        otherEarnings: zero,
+      },
+      override,
+    });
+
     const totals = this.computeTotals({
       proRataSalary: proRata.amount,
       leaveEncashment: encashment.amount,
@@ -342,7 +402,7 @@ export class SettlementService {
       otherEarnings: zero,
       noticeRecovery: notice.amount,
       otherRecoveries: zero,
-      tds: zero,
+      tds: tax.tds,
     });
 
     const breakdown = {
@@ -405,6 +465,9 @@ export class SettlementService {
         amount: notice.amount.toFixed(2),
         note: 'Simple daily rate: monthly gross / calendar days in the final month',
       },
+      // Named as the payslip names its own, and holding the same kind of thing:
+      // everything needed to answer "why was this much deducted".
+      taxComputation: tax.working,
       totals: this.breakdownTotals(totals),
     };
 
@@ -423,7 +486,7 @@ export class SettlementService {
       noticeShortfallDays: notice.shortfallDays,
       noticeRecovery: notice.amount,
       otherRecoveries: zero,
-      tds: zero,
+      tds: tax.tds,
       grossPayable: totals.grossPayable,
       totalRecoveries: totals.totalRecoveries,
       netPayable: totals.netPayable,
@@ -485,17 +548,33 @@ export class SettlementService {
   // -------------------------------------------------------------------------
 
   /**
-   * Set the figures the service cannot derive, and re-derive the totals.
+   * Set the figures the service cannot derive, override the one it can, and
+   * re-derive the totals.
    *
    * Only a draft is editable. The totals are recomputed here rather than
    * trusting the caller, so `netPayable` can never disagree with the parts it
    * is made of.
+   *
+   * A `tds` sent here is an override of the computed figure, not a replacement
+   * for it: the computation stays in the breakdown and the override is recorded
+   * beside it with its reason and the moment it was made. `clearTdsOverride`
+   * undoes that and puts the computed figure back.
+   *
+   * The tax is not recomputed here, even when `otherEarnings` moves. Recompute
+   * is where tax is worked out, and quietly changing a deduction under an
+   * unrelated edit would be worse than leaving it to an explicit action.
    */
   async update(tenantId: string, id: string, dto: UpdateSettlementDto) {
     for (const [field, value] of Object.entries(dto)) {
       if (typeof value === 'number' && value < 0) {
         throw new BadRequestException(`${field} cannot be negative`);
       }
+    }
+
+    if (dto.tds !== undefined && dto.clearTdsOverride) {
+      throw new BadRequestException(
+        'Send either a tds override or clearTdsOverride, not both',
+      );
     }
 
     const settlement = await this.prisma.settlement.findFirst({
@@ -516,8 +595,27 @@ export class SettlementService {
       dto.otherRecoveries === undefined
         ? new Decimal(settlement.otherRecoveries)
         : money(new Decimal(dto.otherRecoveries));
-    const tds =
-      dto.tds === undefined ? new Decimal(settlement.tds) : money(new Decimal(dto.tds));
+    const storedTax = (settlement.breakdown as { taxComputation?: unknown } | null)
+      ?.taxComputation as Partial<StoredTaxComputation> | undefined;
+
+    let override = this.readTdsOverride(settlement.breakdown);
+    let tds = new Decimal(settlement.tds);
+
+    if (dto.tds !== undefined) {
+      tds = money(new Decimal(dto.tds));
+      override = {
+        applied: true,
+        amount: tds.toFixed(2),
+        reason: dto.tdsOverrideReason ?? null,
+        at: new Date().toISOString(),
+      };
+    } else if (dto.clearTdsOverride) {
+      override = null;
+      // Back to whatever the last computation produced. A breakdown with no
+      // computed figure in it predates this block, and zero is the figure the
+      // settlement was carrying before an override could exist.
+      tds = money(new Decimal(storedTax?.computedTds ?? 0));
+    }
 
     const totals = this.computeTotals({
       proRataSalary: new Decimal(settlement.proRataSalary),
@@ -530,9 +628,16 @@ export class SettlementService {
     });
 
     // The breakdown's totals section is refreshed so the working shown to the
-    // leaver keeps agreeing with the stored figures.
+    // leaver keeps agreeing with the stored figures, and the tax block records
+    // whether the figure now stored is the computed one or a person's.
+    // A settlement computed before tax was has no block to update; an override
+    // entered on one still has to be recorded, or the next recompute would
+    // replace a figure a person chose without ever knowing they had chosen it.
+    const nextTax = storedTax || override ? { ...(storedTax ?? {}), override } : null;
+
     const breakdown = {
       ...((settlement.breakdown as Record<string, unknown>) ?? {}),
+      ...(nextTax ? { taxComputation: nextTax } : {}),
       totals: this.breakdownTotals(totals),
     };
 
@@ -759,6 +864,174 @@ export class SettlementService {
     }
 
     return { totalDays: days(totalDays), amount: money(amount), perDayRate, leaveTypes, enabled: true };
+  }
+
+  // -------------------------------------------------------------------------
+  // Tax
+  // -------------------------------------------------------------------------
+
+  /**
+   * The tax to deduct from the settlement, and the working behind it.
+   *
+   * Everything the calculation needs is loaded here and the arithmetic itself
+   * lives in `settlement-tax.ts`, which is pure and separately tested. The
+   * income tax configuration is resolved through the same
+   * `resolveIncomeTaxConfig` the monthly payroll and Form 16 use, so a leaver
+   * cannot be taxed on a different year's slabs from the ones their payslips
+   * were computed against.
+   *
+   * The financial year is the one the last working day falls in, read in UTC,
+   * as the gratuity and encashment calculations read their dates.
+   */
+  private async computeTax(args: {
+    tenantId: string;
+    employee: { id: string; dateOfBirth?: Date | null };
+    statutory: { tdsEnabled: boolean; defaultTaxRegime: TaxRegime };
+    lastWorkingDate: Date;
+    parts: SettlementTaxableParts;
+    override: TdsOverride | null;
+  }): Promise<{ tds: Decimal; working: StoredTaxComputation }> {
+    const { tenantId, employee, statutory, lastWorkingDate, parts, override } = args;
+
+    const financialYear = financialYearOf(
+      lastWorkingDate.getUTCMonth() + 1,
+      lastWorkingDate.getUTCFullYear(),
+    );
+
+    const [declarationRow, payslips] = await Promise.all([
+      this.prisma.employeeTaxDeclaration.findUnique({
+        where: {
+          tenantId_employeeId_financialYear: {
+            tenantId,
+            employeeId: employee.id,
+            financialYear,
+          },
+        },
+      }),
+      this.prisma.payslip.findMany({
+        where: {
+          tenantId,
+          employeeId: employee.id,
+          payrollRun: {
+            OR: [
+              { year: financialYear, month: { gte: 4 } },
+              { year: financialYear + 1, month: { lte: 3 } },
+            ],
+          },
+        },
+        select: { grossPay: true, professionalTax: true, tds: true },
+      }),
+    ]);
+
+    const rows = payslips ?? [];
+    const zero = new Decimal(0);
+    const yearToDate = rows.reduce(
+      (acc, p) => ({
+        grossPaid: acc.grossPaid.add(new Decimal(p.grossPay)),
+        professionalTaxPaid: acc.professionalTaxPaid.add(new Decimal(p.professionalTax)),
+        tdsDeducted: acc.tdsDeducted.add(new Decimal(p.tds)),
+        payslips: acc.payslips + 1,
+      }),
+      {
+        grossPaid: zero,
+        professionalTaxPaid: zero,
+        tdsDeducted: zero,
+        payslips: 0,
+      },
+    );
+
+    const regime: TaxRegime = declarationRow?.regime ?? statutory.defaultTaxRegime;
+    // Age as at 31 March of the financial year, not the exit date; a leaver who
+    // turns 60 in February is a senior citizen for the whole of that year.
+    const ageBandRequested = ageBandOn31March(employee.dateOfBirth, financialYear);
+
+    // A tenant that has switched TDS off is not one whose settlements should
+    // quietly acquire a deduction because this feature landed.
+    const resolved = statutory.tdsEnabled
+      ? await resolveIncomeTaxConfig(
+          this.prisma,
+          tenantId,
+          financialYear,
+          regime,
+          ageBandRequested,
+          (band) =>
+            this.logger.warn(
+              `No ${band} income tax configuration for tenant ${tenantId}, FY ` +
+                `${financialYear}, ${regime} regime; settling on the GENERAL slabs ` +
+                'so the leaver is not silently untaxed.',
+            ),
+        )
+      : null;
+
+    if (statutory.tdsEnabled && !resolved) {
+      this.logger.warn(
+        `No income tax configuration for tenant ${tenantId}, FY ${financialYear}, ` +
+          `${regime} regime; settling with no TDS and recording why.`,
+      );
+    }
+
+    const computation = computeSettlementTax({
+      financialYear,
+      regime,
+      config: resolved
+        ? toIncomeTaxConfigInput(resolved.taxConfig, regime, resolved.ageBandUsed)
+        : null,
+      declaration: toTaxDeclarationInput(declarationRow),
+      declarationFound: Boolean(declarationRow),
+      ageBandUsed: resolved?.ageBandUsed ?? ageBandRequested,
+      ageBandRequested,
+      ageBandFallback: resolved?.ageBandFallback ?? false,
+      parts,
+      yearToDate,
+      ...(statutory.tdsEnabled
+        ? {}
+        : {
+            unavailable: {
+              reason: TDS_DISABLED,
+              note:
+                'Tax deducted at source is switched off for this tenant, so no ' +
+                'tax has been deducted from this settlement. Nothing was computed ' +
+                'and this is not a finding that no tax is due.',
+            },
+          }),
+    });
+
+    return {
+      // The override, where there is one, is what is actually deducted; the
+      // computed figure stays in the working beside it.
+      tds: override ? money(new Decimal(override.amount)) : computation.tds,
+      working: { ...computation.working, override },
+    };
+  }
+
+  /**
+   * Any TDS override carried by a stored breakdown.
+   *
+   * Read defensively: the column is JSON, older rows predate this block
+   * entirely, and a shape that is not recognisably an override is treated as
+   * none rather than trusted into a money figure.
+   */
+  private readTdsOverride(breakdown: unknown): TdsOverride | null {
+    const stored = (breakdown as { taxComputation?: { override?: unknown } } | null)
+      ?.taxComputation?.override as Partial<TdsOverride> | null | undefined;
+
+    if (!stored || stored.applied !== true || typeof stored.amount !== 'string') {
+      return null;
+    }
+    // A stored amount that is not a number is not one to deduct against.
+    let amount: Decimal;
+    try {
+      amount = new Decimal(stored.amount);
+    } catch {
+      return null;
+    }
+
+    return {
+      applied: true,
+      amount: money(amount).toFixed(2),
+      reason: typeof stored.reason === 'string' ? stored.reason : null,
+      at: typeof stored.at === 'string' ? stored.at : new Date().toISOString(),
+    };
   }
 
   /**

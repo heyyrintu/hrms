@@ -309,6 +309,196 @@ describe('PayrollService', () => {
   });
 
   // ============================================
+  // recomputeRun
+  // ============================================
+
+  describe('recomputeRun', () => {
+    const runId = 'run-1';
+    const computedRun = {
+      id: runId,
+      tenantId,
+      month: 1,
+      year: 2026,
+      status: PayrollRunStatus.COMPUTED,
+      totalGross: new Decimal(60000),
+      totalDeductions: new Decimal(5000),
+      totalNet: new Decimal(55000),
+      processedCount: 1,
+    };
+
+    const calcResult = {
+      employeeId: 'emp-1',
+      workingDays: 22,
+      presentDays: 20,
+      leaveDays: 2,
+      lopDays: 0,
+      otHours: 5,
+      basePay: 50000,
+      earnings: [{ name: 'HRA', amount: new Decimal(12000) }],
+      deductions: [{ name: 'PF', amount: new Decimal(5500) }],
+      grossPay: 62000,
+      totalDeductions: 5500,
+      netPay: 56500,
+      otPay: 1000,
+      statutory: {
+        pfWages: new Decimal(0), pfEmployee: new Decimal(0), pfEmployer: new Decimal(0),
+        epsEmployer: new Decimal(0), edliEmployer: new Decimal(0),
+        pfAdminEmployer: new Decimal(0), esiWages: new Decimal(0),
+        esiEmployee: new Decimal(0), esiEmployer: new Decimal(0),
+        professionalTax: new Decimal(0), lwfEmployee: new Decimal(0),
+        lwfEmployer: new Decimal(0), tds: new Decimal(0),
+        taxComputation: null, totalEmployeeDeductions: new Decimal(0),
+      },
+    };
+
+    it('should recompute a COMPUTED run, discarding the old payslips and regenerating them', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(computedRun);
+      prisma.employee.findMany.mockResolvedValue([{ id: 'emp-1' }]);
+      calculationService.calculateForEmployee.mockResolvedValue(calcResult);
+      prisma.payslip.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.payslip.createMany.mockResolvedValue({ count: 1 });
+
+      const recomputedRun = {
+        id: runId,
+        status: PayrollRunStatus.COMPUTED,
+        totalGross: new Decimal(62000),
+        totalDeductions: new Decimal(5500),
+        totalNet: new Decimal(56500),
+        processedCount: 1,
+      };
+      prisma.payrollRun.update
+        .mockResolvedValueOnce({}) // claim: COMPUTED -> PROCESSING
+        .mockResolvedValueOnce(recomputedRun); // publish: PROCESSING -> COMPUTED
+
+      const result = await service.recomputeRun(tenantId, runId);
+
+      // Claims the run atomically off COMPUTED, not DRAFT.
+      expect(prisma.payrollRun.update).toHaveBeenNthCalledWith(1, {
+        where: { id: runId, status: PayrollRunStatus.COMPUTED },
+        data: { status: PayrollRunStatus.PROCESSING },
+      });
+      // Old payslips are gone before the new ones are written.
+      expect(prisma.payslip.deleteMany).toHaveBeenCalledWith({
+        where: { payrollRunId: runId },
+      });
+      expect(prisma.payslip.createMany).toHaveBeenCalledTimes(1);
+      expect(result.status).toBe(PayrollRunStatus.COMPUTED);
+      expect(result.totalGross.toString()).toBe('62000');
+      // Tells the caller something actually changed.
+      expect(result.previousTotals).toBeDefined();
+      expect(result.previousTotals.totalGross.toString()).toBe('60000');
+      expect(result.changed).toBeDefined();
+      expect(result.changed.totalGross.toString()).toBe('2000');
+    });
+
+    it('should throw NotFoundException when run not found', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(null);
+
+      await expect(service.recomputeRun(tenantId, 'nonexistent')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('should refuse to recompute an APPROVED run and explain why', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        ...computedRun,
+        status: PayrollRunStatus.APPROVED,
+      });
+
+      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow(
+        /approv|sign|adjustment/i,
+      );
+      expect(prisma.payslip.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.payrollRun.update).not.toHaveBeenCalled();
+    });
+
+    it('should refuse to recompute a PAID run and explain why', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        ...computedRun,
+        status: PayrollRunStatus.PAID,
+      });
+
+      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow(
+        /paid|adjustment/i,
+      );
+      expect(prisma.payslip.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.payrollRun.update).not.toHaveBeenCalled();
+    });
+
+    it('should refuse to recompute a DRAFT run', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        ...computedRun,
+        status: PayrollRunStatus.DRAFT,
+      });
+
+      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.payslip.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.payrollRun.update).not.toHaveBeenCalled();
+    });
+
+    it('should throw ConflictException and not touch payslips when a concurrent recompute claimed the run first', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(computedRun);
+      prisma.payrollRun.update.mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('Record to update not found.', {
+          code: 'P2025',
+          clientVersion: 'test',
+        }),
+      );
+
+      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow(
+        ConflictException,
+      );
+
+      expect(prisma.payslip.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.payslip.createMany).not.toHaveBeenCalled();
+      expect(prisma.payrollRun.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('should revert to COMPUTED status (not DRAFT) on processing error, since that is where it started', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(computedRun);
+      prisma.payrollRun.update.mockResolvedValueOnce({}); // claim succeeds
+      prisma.employee.findMany.mockRejectedValue(new Error('DB error'));
+
+      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow('DB error');
+
+      // First call = claim to PROCESSING, second call = revert to COMPUTED
+      expect(prisma.payrollRun.update).toHaveBeenCalledTimes(2);
+      expect(prisma.payrollRun.update).toHaveBeenLastCalledWith({
+        where: { id: runId },
+        data: { status: PayrollRunStatus.COMPUTED },
+      });
+    });
+
+    it('is one atomic unit of work: payslips are deleted and recreated inside the same transaction as the run update', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(computedRun);
+      prisma.employee.findMany.mockResolvedValue([{ id: 'emp-1' }]);
+      calculationService.calculateForEmployee.mockResolvedValue(calcResult);
+      prisma.payslip.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.payslip.createMany.mockResolvedValue({ count: 1 });
+      prisma.payrollRun.update.mockResolvedValueOnce({}).mockResolvedValueOnce({
+        id: runId,
+        status: PayrollRunStatus.COMPUTED,
+        totalGross: new Decimal(62000),
+        totalDeductions: new Decimal(5500),
+        totalNet: new Decimal(56500),
+        processedCount: 1,
+      });
+
+      await service.recomputeRun(tenantId, runId);
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ============================================
   // resetRun
   // ============================================
 

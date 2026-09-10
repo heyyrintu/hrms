@@ -16,6 +16,9 @@ import { InvestmentProofSection } from '@prisma/client';
  * prove it would be theatre. `otherIncome` is absent because declaring income
  * increases tax rather than reducing it, and nobody needs evidence to be taxed
  * more.
+ *
+ * The three section 10 heads are here because they are exactly the kind of
+ * claim evidence settles: travel tickets, school fees, hostel bills.
  */
 export const PROOF_SECTION_TO_DECLARATION_FIELD: Readonly<
   Record<InvestmentProofSection, ProofBackedField>
@@ -27,6 +30,9 @@ export const PROOF_SECTION_TO_DECLARATION_FIELD: Readonly<
   HOME_LOAN_INTEREST: 'homeLoanInterest',
   OTHER_DEDUCTIONS: 'otherDeductions',
   PREVIOUS_EMPLOYER_TDS: 'previousEmployerTds',
+  LTA: 'ltaExemption',
+  CHILDREN_EDUCATION: 'childrenEducationAllowance',
+  HOSTEL_ALLOWANCE: 'hostelAllowance',
 };
 
 /** A declaration field a proof can support. */
@@ -37,7 +43,10 @@ export type ProofBackedField =
   | 'hraExemption'
   | 'homeLoanInterest'
   | 'otherDeductions'
-  | 'previousEmployerTds';
+  | 'previousEmployerTds'
+  | 'ltaExemption'
+  | 'childrenEducationAllowance'
+  | 'hostelAllowance';
 
 /**
  * The sum of approved proofs per declaration field, for one employee and year.

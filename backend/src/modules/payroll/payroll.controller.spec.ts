@@ -22,6 +22,7 @@ const mockPayrollService = {
   getRun: jest.fn(),
   createRun: jest.fn(),
   processRun: jest.fn(),
+  recomputeRun: jest.fn(),
   approveRun: jest.fn(),
   markAsPaid: jest.fn(),
   deleteRun: jest.fn(),
@@ -245,6 +246,21 @@ describe('PayrollController', () => {
       const result = await controller.processRun(adminUser, 'pr-1');
 
       expect(payrollService.processRun).toHaveBeenCalledWith(
+        'tenant-1',
+        'pr-1',
+      );
+      expect(result).toEqual(mockResult);
+    });
+  });
+
+  describe('recomputeRun', () => {
+    it('should call payrollService.recomputeRun with tenantId and id', async () => {
+      const mockResult = { id: 'pr-1', status: 'COMPUTED' };
+      payrollService.recomputeRun.mockResolvedValue(mockResult);
+
+      const result = await controller.recomputeRun(adminUser, 'pr-1');
+
+      expect(payrollService.recomputeRun).toHaveBeenCalledWith(
         'tenant-1',
         'pr-1',
       );

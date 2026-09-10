@@ -17,11 +17,20 @@ export class ComputeSettlementDto {
 }
 
 /**
- * The figures a settlement cannot derive on its own.
+ * The figures a settlement cannot derive on its own, and the override on the
+ * one it can.
  *
- * Everything else on a settlement is recomputed from the employee's salary,
- * leave balances and dates; these four are entered by whoever is processing the
- * exit and are preserved across a recompute only if they re-enter them.
+ * `otherEarnings` and `otherRecoveries` are recomputed from nothing: they are
+ * entered by whoever is processing the exit and are preserved across a
+ * recompute only if they re-enter them.
+ *
+ * `tds` is different. It is now worked out from the leaver's position for the
+ * financial year, and entering it here is an **override** of that figure — the
+ * computed default stays recorded beside it, and the settlement's working shows
+ * that a person, not the system, decided the number. The override survives a
+ * recompute, because a recompute is not a reason to discard a decision somebody
+ * made about facts the system cannot see: relief under section 89, income never
+ * declared, an assessment already in hand.
  */
 export class UpdateSettlementDto {
   @ApiPropertyOptional({ description: 'Bonus, reimbursement, ex gratia' })
@@ -37,12 +46,31 @@ export class UpdateSettlementDto {
   otherRecoveries?: number;
 
   @ApiPropertyOptional({
-    description: 'Tax deducted at source on the settlement. Supplied, not computed.',
+    description:
+      'Override the computed tax deducted at source. The computed figure is ' +
+      'kept in the breakdown alongside it, and the override survives a recompute ' +
+      'until it is cleared.',
   })
   @IsOptional()
   @IsNumber()
   @Min(0)
   tds?: number;
+
+  @ApiPropertyOptional({
+    description: 'Why the computed tax was overridden. Recorded in the working.',
+  })
+  @IsOptional()
+  @IsString()
+  tdsOverrideReason?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Drop a previous override and go back to the computed figure. Cannot be ' +
+      'sent together with tds.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  clearTdsOverride?: boolean;
 
   @ApiPropertyOptional()
   @IsOptional()

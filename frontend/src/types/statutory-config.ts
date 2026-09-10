@@ -208,6 +208,10 @@ export interface IncomeTaxConfig {
   section80CLimit: string;
   section80DLimit: string;
   section80CCD1BLimit: string;
+  /** Section 10(14) monthly ceilings, per child, for at most two children. */
+  childrenEducationMonthlyLimit: string;
+  hostelAllowanceMonthlyLimit: string;
+  childrenAllowanceMaxChildren: number;
   marginalReliefEnabled: boolean;
   surchargeSlabs: unknown;
   slabs: IncomeTaxSlab[];
@@ -238,6 +242,16 @@ export interface EmployeeTaxDeclaration {
   /** The employer's NPS contribution, allowed under both regimes. */
   section80CCD2: string;
   hraExemption: string;
+  /** Section 10(5): leave travel actually spent on travel. */
+  ltaExemption: string;
+  /**
+   * Section 10(14). Both are capped per child for at most two children, and the
+   * cap is applied in the calculation rather than trusted from the form, so a
+   * figure above it is accepted here and simply does not reduce tax.
+   */
+  childrenEducationAllowance: string;
+  hostelAllowance: string;
+  childrenCount: number;
   homeLoanInterest: string;
   otherDeductions: string;
   otherIncome: string;
@@ -257,6 +271,10 @@ export interface UpsertTaxDeclarationPayload {
   section80CCD1B?: number;
   section80CCD2?: number;
   hraExemption?: number;
+  ltaExemption?: number;
+  childrenEducationAllowance?: number;
+  hostelAllowance?: number;
+  childrenCount?: number;
   homeLoanInterest?: number;
   otherDeductions?: number;
   otherIncome?: number;
@@ -272,6 +290,51 @@ export interface UpsertTaxDeclarationPayload {
  * section 16(iii) do not. Entering them is not an error, but they will not
  * reduce the tax, and a form that accepts them silently misleads.
  */
+/**
+ * Payloads for editing the slab tables.
+ *
+ * Slabs used to be seed-only. They are statutory figures, so editing one is a
+ * consequential act: a wrong slab mis-deducts tax from every employee it
+ * touches, and a wrong professional tax row does the same for a whole state.
+ */
+export interface ProfessionalTaxSlabPayload {
+  state: string;
+  fromAmount: number;
+  /** Null on the top slab, which has no upper bound. */
+  toAmount?: number | null;
+  amount: number;
+  /** Maharashtra charges a different figure in February. */
+  februaryAmount?: number | null;
+  /** Set only where a state's threshold differs by gender. */
+  gender?: string | null;
+}
+
+export interface IncomeTaxSlabPayload {
+  fromAmount: number;
+  toAmount?: number | null;
+  /** Percent. */
+  rate: number;
+}
+
+export interface IncomeTaxConfigPayload {
+  financialYear: number;
+  regime: TaxRegimeName;
+  ageBand: 'GENERAL' | 'SENIOR' | 'SUPER_SENIOR';
+  standardDeduction?: number;
+  rebateIncomeLimit?: number;
+  rebateMaxAmount?: number;
+  cessRate?: number;
+  section80CLimit?: number;
+  section80DLimit?: number;
+  section80CCD1BLimit?: number;
+  childrenEducationMonthlyLimit?: number;
+  hostelAllowanceMonthlyLimit?: number;
+  childrenAllowanceMaxChildren?: number;
+  marginalReliefEnabled?: boolean;
+  /** Replaces the whole ladder: slabs only make sense as a complete set. */
+  slabs: IncomeTaxSlabPayload[];
+}
+
 export const ALLOWED_UNDER_NEW_REGIME: readonly (keyof UpsertTaxDeclarationPayload)[] = [
   'section80CCD2',
   'otherIncome',

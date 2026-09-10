@@ -228,6 +228,192 @@ export class PayrollService {
   }
 
   /**
+   * Recompute a run that has already been COMPUTED — e.g. a rate was fixed
+   * after the first compute and the payslips need to be regenerated from
+   * the corrected configuration. Discards the existing payslips and
+   * regenerates them, the same way processRun does for a fresh DRAFT run.
+   *
+   * APPROVED and PAID runs are refused. Their figures have been signed off
+   * or paid out: rewriting them would silently change what someone was
+   * told they were paid, and would desynchronise the run from any return
+   * already filed from it. The correct fix for an error found after
+   * approval is an adjustment in a later run, not editing this one's
+   * history. A DRAFT run has nothing computed yet to recompute — it is
+   * processed via processRun instead.
+   */
+  async recomputeRun(tenantId: string, id: string) {
+    const run = await this.prisma.payrollRun.findFirst({
+      where: { id, tenantId },
+    });
+    if (!run) throw new NotFoundException('Payroll run not found');
+
+    if (
+      run.status === PayrollRunStatus.APPROVED ||
+      run.status === PayrollRunStatus.PAID
+    ) {
+      const verb =
+        run.status === PayrollRunStatus.PAID ? 'paid out' : 'approved';
+      throw new BadRequestException(
+        `Cannot recompute a ${run.status} payroll run: it has already been ${verb}, and its figures are the record of what employees were told they would receive. Rewriting them now would silently change that record and could desynchronise it from any statutory return already filed from it. If a rate was wrong, correct it with an adjustment in a later payroll run instead of editing this one.`,
+      );
+    }
+    if (run.status !== PayrollRunStatus.COMPUTED) {
+      throw new BadRequestException(
+        `Cannot recompute run in ${run.status} status. Only a COMPUTED run can be recomputed; a DRAFT run has nothing to recompute yet — process it instead.`,
+      );
+    }
+
+    const previousTotals = {
+      totalGross: run.totalGross,
+      totalDeductions: run.totalDeductions,
+      totalNet: run.totalNet,
+      processedCount: run.processedCount,
+    };
+
+    // Claim the run atomically: only one caller can move COMPUTED ->
+    // PROCESSING. A second concurrent recompute finds no COMPUTED row to
+    // update and gets a 409 instead of interleaving with the first and
+    // producing a run with duplicated or missing payslips.
+    try {
+      await this.prisma.payrollRun.update({
+        where: { id, status: PayrollRunStatus.COMPUTED },
+        data: { status: PayrollRunStatus.PROCESSING },
+      });
+    } catch (err) {
+      if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
+        throw new ConflictException('Payroll run is already being processed');
+      }
+      throw err;
+    }
+
+    try {
+      // Get all active employees with salary assignments
+      const employees = await this.prisma.employee.findMany({
+        where: { tenantId, status: 'ACTIVE' },
+        select: { id: true },
+      });
+
+      // Compute every payslip first (reads only), so the write transaction
+      // below stays short and cannot time out mid-run on a large tenant.
+      const results: PayslipData[] = [];
+      for (const emp of employees) {
+        const result = await this.calculationService.calculateForEmployee(
+          tenantId,
+          emp.id,
+          run.month,
+          run.year,
+        );
+        if (result) results.push(result); // No salary assigned, skip
+      }
+
+      const totalGross = results.reduce(
+        (sum, r) => sum.add(r.grossPay),
+        new Decimal(0),
+      );
+      const totalDeductions = results.reduce(
+        (sum, r) => sum.add(r.totalDeductions),
+        new Decimal(0),
+      );
+      const totalNet = results.reduce(
+        (sum, r) => sum.add(r.netPay),
+        new Decimal(0),
+      );
+
+      // Replace the payslips and publish the totals atomically: a failure
+      // part way through must not leave the run with some old payslips and
+      // some new.
+      const updatedRun = await this.prisma.$transaction(async (tx) => {
+        await tx.payslip.deleteMany({ where: { payrollRunId: id } });
+
+        if (results.length > 0) {
+          await tx.payslip.createMany({
+            data: results.map((result) => ({
+              tenantId,
+              payrollRunId: id,
+              employeeId: result.employeeId,
+              workingDays: result.workingDays,
+              presentDays: result.presentDays,
+              leaveDays: result.leaveDays,
+              lopDays: result.lopDays,
+              otHours: result.otHours,
+              basePay: result.basePay,
+              earnings: result.earnings.map((e) => ({
+                name: e.name,
+                amount: e.amount.toNumber(),
+              })) as any,
+              deductions: result.deductions.map((d) => ({
+                name: d.name,
+                amount: d.amount.toNumber(),
+              })) as any,
+              grossPay: result.grossPay,
+              totalDeductions: result.totalDeductions,
+              netPay: result.netPay,
+              otPay: result.otPay,
+              pfWages: result.statutory.pfWages,
+              pfEmployee: result.statutory.pfEmployee,
+              pfEmployer: result.statutory.pfEmployer,
+              epsEmployer: result.statutory.epsEmployer,
+              edliEmployer: result.statutory.edliEmployer,
+              pfAdminEmployer: result.statutory.pfAdminEmployer,
+              esiWages: result.statutory.esiWages,
+              esiEmployee: result.statutory.esiEmployee,
+              esiEmployer: result.statutory.esiEmployer,
+              professionalTax: result.statutory.professionalTax,
+              lwfEmployee: result.statutory.lwfEmployee,
+              lwfEmployer: result.statutory.lwfEmployer,
+              tds: result.statutory.tds,
+              taxComputation: (result.statutory.taxComputation ?? undefined) as any,
+            })),
+          });
+        }
+
+        return tx.payrollRun.update({
+          where: { id },
+          data: {
+            status: PayrollRunStatus.COMPUTED,
+            totalGross,
+            totalDeductions,
+            totalNet,
+            processedCount: results.length,
+            processedAt: new Date(),
+          },
+          include: {
+            _count: { select: { payslips: true } },
+          },
+        });
+      });
+
+      // Tell the caller what actually changed, not just that it succeeded.
+      return {
+        ...updatedRun,
+        previousTotals,
+        changed: {
+          totalGross: new Decimal(updatedRun.totalGross).sub(
+            new Decimal(previousTotals.totalGross),
+          ),
+          totalDeductions: new Decimal(updatedRun.totalDeductions).sub(
+            new Decimal(previousTotals.totalDeductions),
+          ),
+          totalNet: new Decimal(updatedRun.totalNet).sub(
+            new Decimal(previousTotals.totalNet),
+          ),
+          processedCount:
+            updatedRun.processedCount - previousTotals.processedCount,
+        },
+      };
+    } catch (error) {
+      // Revert to COMPUTED — the status this run was in before the claim —
+      // not DRAFT. A failed recompute must not leave the run looking like
+      // it was never computed at all.
+      await this.prisma.payrollRun.update({
+        where: { id },
+        data: { status: PayrollRunStatus.COMPUTED },
+      });
+      throw error;
+    }
+  }
+
+  /**
    * Release a run that is stuck in PROCESSING.
    *
    * The claim that moves DRAFT -> PROCESSING is deliberately outside the write

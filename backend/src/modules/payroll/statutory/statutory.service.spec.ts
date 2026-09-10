@@ -774,3 +774,275 @@ describe('StatutoryService.compute — professional tax collection months', () =
     expect(r.professionalTax.toString()).toBe('200');
   });
 });
+
+describe('StatutoryService.compute — section 10 exemptions beyond house rent', () => {
+  let service: StatutoryService;
+  let prisma: any;
+
+  /** April 2026: month 1 of FY 2026-27, twelve months left to collect in. */
+  const april = {
+    tenantId: 'tenant-1',
+    employeeId: 'emp-1',
+    month: 4,
+    year: 2026,
+    pfWages: new Decimal(0),
+    grossPay: new Decimal(100000),
+    pfOptOut: true,
+    gender: null,
+    employeeRegime: 'OLD' as const,
+  };
+
+  function statutoryConfig(overrides: Record<string, unknown> = {}) {
+    return {
+      pfEnabled: false,
+      pfEmployeeRate: new Decimal(12), pfEmployerRate: new Decimal(12),
+      epsRate: new Decimal(8.33), pfWageCeiling: new Decimal(15000),
+      applyPfCeiling: true, edliRate: new Decimal(0.5), pfAdminRate: new Decimal(0.5),
+      esiEnabled: false, esiEmployeeRate: new Decimal(0.75),
+      esiEmployerRate: new Decimal(3.25), esiWageLimit: new Decimal(21000),
+      ptEnabled: false, ptState: null, ptMonths: [],
+      lwfEnabled: false, lwfEmployeeAmount: new Decimal(0),
+      lwfEmployerAmount: new Decimal(0), lwfMonths: [],
+      tdsEnabled: true,
+      defaultTaxRegime: 'OLD',
+      proofVerificationRequired: false,
+      proofCutoffMonth: 1,
+      ...overrides,
+    };
+  }
+
+  const taxConfig = {
+    standardDeduction: new Decimal(50000),
+    rebateIncomeLimit: new Decimal(500000),
+    rebateMaxAmount: new Decimal(12500),
+    cessRate: new Decimal(4),
+    surchargeSlabs: [],
+    section80CLimit: new Decimal(150000),
+    section80DLimit: new Decimal(25000),
+    section80CCD1BLimit: new Decimal(50000),
+    childrenEducationMonthlyLimit: new Decimal(100),
+    hostelAllowanceMonthlyLimit: new Decimal(300),
+    childrenAllowanceMaxChildren: 2,
+    marginalReliefEnabled: true,
+    slabs: [
+      { fromAmount: new Decimal(0), toAmount: new Decimal(250000), rate: new Decimal(0) },
+      { fromAmount: new Decimal(250000), toAmount: new Decimal(500000), rate: new Decimal(5) },
+      { fromAmount: new Decimal(500000), toAmount: new Decimal(1000000), rate: new Decimal(20) },
+      { fromAmount: new Decimal(1000000), toAmount: null, rate: new Decimal(30) },
+    ],
+  };
+
+  /** A nil declaration, so each test states only the head it is about. */
+  function declaration(overrides: Record<string, unknown> = {}) {
+    return {
+      regime: 'OLD',
+      section80C: new Decimal(0),
+      section80D: new Decimal(0),
+      section80CCD1B: new Decimal(0),
+      section80CCD2: new Decimal(0),
+      hraExemption: new Decimal(0),
+      ltaExemption: new Decimal(0),
+      childrenEducationAllowance: new Decimal(0),
+      hostelAllowance: new Decimal(0),
+      childrenCount: 0,
+      homeLoanInterest: new Decimal(0),
+      otherDeductions: new Decimal(0),
+      otherIncome: new Decimal(0),
+      previousEmployerTds: new Decimal(0),
+      ...overrides,
+    };
+  }
+
+  // With nothing declared: 12,00,000 gross - 50,000 standard = 11,50,000
+  // taxable; tax 1,57,500 + 4% cess 6,300 = 1,63,800, over 12 months 13,650.
+  const NOTHING_DECLARED_TDS = '13650';
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        StatutoryService,
+        { provide: PrismaService, useValue: createMockPrismaService() },
+      ],
+    }).compile();
+
+    service = module.get(StatutoryService);
+    prisma = module.get(PrismaService);
+
+    prisma.payslip.findFirst.mockResolvedValue(null);
+    prisma.payslip.findMany.mockResolvedValue([]);
+    prisma.investmentProof.findMany.mockResolvedValue([]);
+    prisma.statutoryConfig.findUnique.mockResolvedValue(statutoryConfig());
+    prisma.incomeTaxConfig.findUnique.mockResolvedValue(taxConfig);
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(declaration());
+  });
+
+  it('caps the education allowance per child and shows the capping in the working', async () => {
+    // One child, 5,000 declared. The ceiling is 100 a month per child:
+    // 100 x 12 x 1 = 1,200, so 3,800 exempts nothing.
+    //
+    // 12,00,000 gross - 50,000 standard - 1,200 = 11,48,800 taxable.
+    // 12,500 + 1,00,000 + 30% of 1,48,800 (44,640) = 1,57,140 of tax, cess
+    // 6,285.60 -> 6,286, total 1,63,426. Over 12 months: 13,618.83 -> 13,619.
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(
+      declaration({ childrenEducationAllowance: new Decimal(5000), childrenCount: 1 }),
+    );
+
+    const r = await service.compute(april);
+
+    expect(r.tds.toString()).toBe('13619');
+
+    const working = r.taxComputation as any;
+    expect(working.section10Exemptions.CHILDREN_EDUCATION.declared).toBe('5000.00');
+    expect(working.section10Exemptions.CHILDREN_EDUCATION.limit).toBe('1200.00');
+    expect(working.section10Exemptions.CHILDREN_EDUCATION.allowed).toBe('1200.00');
+    expect(working.section10Exemptions.CHILDREN_EDUCATION.disallowed).toBe('3800.00');
+    expect(working.totalSection10Exemption).toBe('1200.00');
+  });
+
+  it('records the section 10(14) ceilings it applied, taken from the year configuration', async () => {
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(
+      declaration({ hostelAllowance: new Decimal(20000), childrenCount: 3 }),
+    );
+
+    const spy = jest.spyOn(calculators, 'calculateIncomeTax');
+
+    const r = await service.compute(april);
+
+    // The service reads the ceilings off the row and hands them over; it does
+    // not cap anything itself, so there is one place the rule lives.
+    const passed = (spy.mock.calls[0][1] as any).section10Limits;
+    expect(passed.childrenEducationMonthlyLimit.toString()).toBe('100');
+    expect(passed.hostelAllowanceMonthlyLimit.toString()).toBe('300');
+    expect(passed.maxChildren).toBe(2);
+
+    const working = r.taxComputation as any;
+    expect(working.section10Limits.childrenEducationMonthlyLimit).toBe('100.00');
+    expect(working.section10Limits.hostelAllowanceMonthlyLimit).toBe('300.00');
+    expect(working.section10Limits.maxChildren).toBe(2);
+    // Three children declared, two allowed: 300 x 12 x 2 = 7,200 of 20,000.
+    expect(working.section10Exemptions.HOSTEL_ALLOWANCE.limit).toBe('7200.00');
+    expect(working.section10Exemptions.HOSTEL_ALLOWANCE.allowed).toBe('7200.00');
+
+    spy.mockRestore();
+  });
+
+  it('exempts leave travel at the declared figure, with no ceiling invented for it', async () => {
+    // 12,00,000 - 50,000 standard - 45,000 leave travel = 11,05,000 taxable.
+    // 12,500 + 1,00,000 + 30% of 1,05,000 (31,500) = 1,44,000, cess 5,760,
+    // total 1,49,760. Over 12 months: 12,480.
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(
+      declaration({ ltaExemption: new Decimal(45000) }),
+    );
+
+    const r = await service.compute(april);
+
+    expect(r.tds.toString()).toBe('12480');
+
+    const working = r.taxComputation as any;
+    expect(working.section10Exemptions.LTA.allowed).toBe('45000.00');
+    expect(working.section10Exemptions.LTA.limit).toBeNull();
+    expect(working.section10Exemptions.LTA.disallowed).toBe('0.00');
+  });
+
+  it('exempts none of the three under the new regime', async () => {
+    // Section 115BAC withdraws them, as it withdraws house rent. The TDS is
+    // the same as for an employee who declared nothing at all.
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(
+      declaration({
+        regime: 'NEW',
+        hraExemption: new Decimal(120000),
+        ltaExemption: new Decimal(45000),
+        childrenEducationAllowance: new Decimal(5000),
+        hostelAllowance: new Decimal(9000),
+        childrenCount: 2,
+      }),
+    );
+
+    const r = await service.compute({ ...april, employeeRegime: 'NEW' as const });
+
+    expect(r.tds.toString()).toBe(NOTHING_DECLARED_TDS);
+
+    const working = r.taxComputation as any;
+    expect(working.section10Exemptions).toEqual({});
+    expect(working.totalSection10Exemption).toBe('0.00');
+  });
+
+  it('deducts exactly what it did before for an employee who declares none of them', async () => {
+    // The regression that matters: no employee's TDS may move because three
+    // new heads exist on the declaration.
+    const r = await service.compute(april);
+
+    expect(r.tds.toString()).toBe(NOTHING_DECLARED_TDS);
+    expect((r.taxComputation as any).totalSection10Exemption).toBe('0.00');
+  });
+
+  it('falls back to the statutory ceilings for a config row that predates the columns', async () => {
+    const {
+      childrenEducationMonthlyLimit,
+      hostelAllowanceMonthlyLimit,
+      childrenAllowanceMaxChildren,
+      ...bareConfig
+    } = taxConfig;
+    prisma.incomeTaxConfig.findUnique.mockResolvedValue(bareConfig);
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(
+      declaration({ childrenEducationAllowance: new Decimal(5000), childrenCount: 1 }),
+    );
+
+    const r = await service.compute(april);
+
+    // Same 1,200 ceiling, so the same 13,619 as with the column present.
+    expect(r.tds.toString()).toBe('13619');
+    expect((r.taxComputation as any).section10Limits.childrenEducationMonthlyLimit).toBe('100.00');
+  });
+
+  it('caps an approved proof exactly as it caps a declaration', async () => {
+    // A reviewer who accepted a school fee receipt for 5,000 confirmed the
+    // fee. They did not raise the section 10(14) ceiling, so the exemption is
+    // still 1,200 and the TDS is the same 13,619.
+    //
+    // The child count is not a proof-backed field — a receipt says what was
+    // paid, not how many children there are — so it still comes from the
+    // declaration.
+    prisma.statutoryConfig.findUnique.mockResolvedValue(
+      statutoryConfig({ proofVerificationRequired: true, proofCutoffMonth: 4 }),
+    );
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(
+      declaration({ childrenEducationAllowance: new Decimal(9000), childrenCount: 1 }),
+    );
+    prisma.investmentProof.findMany.mockResolvedValue([
+      { section: 'CHILDREN_EDUCATION', verifiedAmount: new Decimal(5000) },
+    ]);
+
+    const r = await service.compute(april);
+
+    expect(r.tds.toString()).toBe('13619');
+
+    const working = r.taxComputation as any;
+    expect(working.verifiedAmountsUsed).toBe(true);
+    expect(working.verifiedDeductions.childrenEducationAllowance).toBe('5000.00');
+    expect(working.declaredDeductions.childrenEducationAllowance).toBe('9000.00');
+    expect(working.section10Exemptions.CHILDREN_EDUCATION.declared).toBe('5000.00');
+    expect(working.section10Exemptions.CHILDREN_EDUCATION.allowed).toBe('1200.00');
+  });
+
+  it('takes an approved leave travel proof over the declared figure', async () => {
+    // Declared 45,000, proved 30,000. Once verification is in force the proof
+    // is what counts: 12,00,000 - 50,000 - 30,000 = 11,20,000 taxable,
+    // 12,500 + 1,00,000 + 30% of 1,20,000 (36,000) = 1,48,500, cess 5,940,
+    // total 1,54,440. Over 12 months: 12,870.
+    prisma.statutoryConfig.findUnique.mockResolvedValue(
+      statutoryConfig({ proofVerificationRequired: true, proofCutoffMonth: 4 }),
+    );
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(
+      declaration({ ltaExemption: new Decimal(45000) }),
+    );
+    prisma.investmentProof.findMany.mockResolvedValue([
+      { section: 'LTA', verifiedAmount: new Decimal(30000) },
+    ]);
+
+    const r = await service.compute(april);
+
+    expect(r.tds.toString()).toBe('12870');
+    expect((r.taxComputation as any).verifiedDeductions.ltaExemption).toBe('30000.00');
+  });
+});
