@@ -1,6 +1,7 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import LeavePage from './page';
+import { leaveApi } from '@/lib/api';
 
 // Mock lucide-react icons
 jest.mock('lucide-react', () =>
@@ -104,5 +105,40 @@ describe('LeavePage', () => {
     await waitFor(() => {
       expect(screen.getByText('My Requests')).toBeInTheDocument();
     });
+  });
+
+  /**
+   * Day counts arrive as decimal strings: LeaveBalance holds them as Prisma
+   * `Decimal(5, 2)`, and neither getBalances nor getAllBalances converts them.
+   *
+   * `totalDays + carriedOver` on two strings concatenates rather than adds
+   * ("12.00" + "3.00" is "12.003.00"), so the available figure comes out as
+   * NaN and the card shows an employee NaN days of leave.
+   */
+  it('shows the available balance as a number, not NaN', async () => {
+    (leaveApi.getMyBalances as jest.Mock).mockResolvedValueOnce({
+      data: [
+        {
+          id: 'b1',
+          leaveTypeId: 'lt1',
+          leaveType: { id: 'lt1', name: 'Casual Leave', code: 'CL' },
+          year: 2026,
+          totalDays: '12.00',
+          carriedOver: '3.00',
+          usedDays: '2.00',
+          pendingDays: '1.50',
+        },
+      ],
+    });
+
+    render(<LeavePage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Casual Leave')).toBeInTheDocument();
+    });
+
+    // 12.00 + 3.00 - 2.00 - 1.50
+    expect(screen.getByText('available').previousElementSibling).toHaveTextContent('11.5');
+    expect(screen.queryByText('NaN')).not.toBeInTheDocument();
   });
 });

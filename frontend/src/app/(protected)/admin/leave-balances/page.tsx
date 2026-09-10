@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { leaveApi, employeesApi } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { availableDays, entitledDays, formatDays, hasDays } from '@/lib/leaveDays';
 import {
     RefreshCw,
     Users,
@@ -21,10 +22,11 @@ import {
 interface LeaveBalance {
     id: string;
     year: number;
-    totalDays: number;
-    usedDays: number;
-    pendingDays: number;
-    carriedOver: number;
+    // Decimal strings, not numbers: see @/lib/leaveDays.
+    totalDays: string;
+    usedDays: string;
+    pendingDays: string;
+    carriedOver: string;
     leaveType: { id: string; name: string; code: string };
     employee: {
         id: string;
@@ -101,11 +103,12 @@ export default function LeaveBalancesAdminPage() {
 
     const openEditModal = (balance: LeaveBalance) => {
         setEditingBalance(balance);
+        // The form edits numbers because that is what the update DTO takes.
         setEditFormData({
-            totalDays: balance.totalDays,
-            usedDays: balance.usedDays,
-            pendingDays: balance.pendingDays,
-            carriedOver: balance.carriedOver,
+            totalDays: Number(balance.totalDays),
+            usedDays: Number(balance.usedDays),
+            pendingDays: Number(balance.pendingDays),
+            carriedOver: Number(balance.carriedOver),
         });
         setEditModalOpen(true);
     };
@@ -315,19 +318,19 @@ export default function LeaveBalancesAdminPage() {
                                                         </td>
                                                     );
                                                 }
-                                                const available = balance.totalDays + balance.carriedOver - balance.usedDays - balance.pendingDays;
+                                                const available = availableDays(balance);
                                                 return (
                                                     <td key={type.id} className="px-4 py-4">
                                                         <div className="flex items-center justify-center gap-2">
                                                             <div className="text-center">
                                                                 <div className={cn(
                                                                     'text-lg font-bold',
-                                                                    available > 0 ? 'text-emerald-600' : 'text-red-600'
+                                                                    hasDays(available) ? 'text-emerald-600' : 'text-red-600'
                                                                 )}>
-                                                                    {available}
+                                                                    {formatDays(available)}
                                                                 </div>
                                                                 <div className="text-xs text-warm-500">
-                                                                    of {balance.totalDays + balance.carriedOver}
+                                                                    of {formatDays(entitledDays(balance))}
                                                                 </div>
                                                             </div>
                                                             <button
@@ -470,7 +473,7 @@ export default function LeaveBalancesAdminPage() {
                             <div className="flex justify-between">
                                 <span className="text-blue-700">Available:</span>
                                 <span className="font-medium text-blue-900">
-                                    {(editFormData.totalDays + editFormData.carriedOver - editFormData.usedDays - editFormData.pendingDays).toFixed(1)} days
+                                    {formatDays(availableDays(editFormData))} days
                                 </span>
                             </div>
                         </div>

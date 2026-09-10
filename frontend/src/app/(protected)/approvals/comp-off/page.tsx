@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { formatDays } from '@/lib/leaveDays';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge, getStatusBadgeVariant } from '@/components/ui/Badge';
@@ -194,7 +195,7 @@ export default function CompOffApprovalsPage() {
                         {request.reason}
                       </td>
                       <td className="px-4 py-3 text-sm font-semibold text-warm-900">
-                        {Number(request.earnedDays)}
+                        {formatDays(request.earnedDays)}
                       </td>
                       <td className="px-4 py-3">
                         <Badge variant={getStatusBadgeVariant(request.status)}>
@@ -256,7 +257,7 @@ export default function CompOffApprovalsPage() {
               <div className="flex justify-between">
                 <span className="text-sm text-warm-500">Days Earned</span>
                 <span className="text-sm font-bold">
-                  {Number(reviewingRequest.earnedDays)}
+                  {formatDays(reviewingRequest.earnedDays)}
                 </span>
               </div>
               <div className="pt-2 border-t">

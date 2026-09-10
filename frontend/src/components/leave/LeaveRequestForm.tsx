@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { leaveApi } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { availableDays, formatDays, hasDays } from '@/lib/leaveDays';
 import { Calendar, Clock, FileText, AlertCircle, CheckCircle } from 'lucide-react';
 
 interface LeaveType {
@@ -19,10 +20,11 @@ interface LeaveType {
 interface LeaveBalance {
     id: string;
     leaveType: { id: string; name: string; code: string };
-    totalDays: number;
-    usedDays: number;
-    pendingDays: number;
-    carriedOver: number;
+    // Decimal strings, not numbers: see @/lib/leaveDays.
+    totalDays: string;
+    usedDays: string;
+    pendingDays: string;
+    carriedOver: string;
 }
 
 interface LeaveRequestFormProps {
@@ -48,7 +50,7 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
 
     // Calculated values
     const [leaveDays, setLeaveDays] = useState(0);
-    const [availableBalance, setAvailableBalance] = useState<number | null>(null);
+    const [availableBalance, setAvailableBalance] = useState<string | null>(null);
     const [isInsufficientBalance, setIsInsufficientBalance] = useState(false);
 
     useEffect(() => {
@@ -70,11 +72,14 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
         if (selectedTypeId && balances.length > 0) {
             const balance = balances.find(b => b.leaveType.id === selectedTypeId);
             if (balance) {
-                const available = balance.totalDays + balance.carriedOver - balance.usedDays - balance.pendingDays;
+                const available = availableDays(balance);
                 setAvailableBalance(available);
-                setIsInsufficientBalance(leaveDays > available);
+                // Compared as numbers: `available` is already exact, and the
+                // only case a float could get wrong is the two being equal,
+                // where `>` is false either way.
+                setIsInsufficientBalance(leaveDays > Number(available));
             } else {
-                setAvailableBalance(0);
+                setAvailableBalance('0.00');
                 setIsInsufficientBalance(leaveDays > 0);
             }
         } else {
@@ -188,9 +193,7 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
                             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                                 {leaveTypes.map((type) => {
                                     const balance = balances.find(b => b.leaveType.id === type.id);
-                                    const available = balance
-                                        ? balance.totalDays + balance.carriedOver - balance.usedDays - balance.pendingDays
-                                        : 0;
+                                    const available = balance ? availableDays(balance) : '0.00';
 
                                     return (
                                         <button
@@ -208,9 +211,9 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
                                             <div className="text-xs text-warm-500 mt-1">{type.code}</div>
                                             <div className={cn(
                                                 'text-sm mt-2 font-semibold',
-                                                available > 0 ? 'text-emerald-600' : 'text-red-600'
+                                                hasDays(available) ? 'text-emerald-600' : 'text-red-600'
                                             )}>
-                                                {available} days available
+                                                {formatDays(available)} days available
                                             </div>
                                         </button>
                                     );
@@ -363,8 +366,8 @@ export function LeaveRequestForm({ onSuccess, onCancel }: LeaveRequestFormProps)
                                             isInsufficientBalance ? 'text-red-700' : 'text-blue-700'
                                         )}>
                                             {isInsufficientBalance
-                                                ? `Insufficient balance! Only ${availableBalance} days available.`
-                                                : `You have ${availableBalance} days available for ${getSelectedLeaveType()?.name || 'this leave type'}.`
+                                                ? `Insufficient balance! Only ${formatDays(availableBalance)} days available.`
+                                                : `You have ${formatDays(availableBalance)} days available for ${getSelectedLeaveType()?.name || 'this leave type'}.`
                                             }
                                         </div>
                                     </div>

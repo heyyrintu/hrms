@@ -12,7 +12,8 @@ interface LeaveRequest {
     leaveType: { name: string; code: string };
     startDate: string;
     endDate: string;
-    totalDays: number;
+    // A decimal string, not a number: see @/lib/leaveDays.
+    totalDays: string;
     status: string;
 }
 
