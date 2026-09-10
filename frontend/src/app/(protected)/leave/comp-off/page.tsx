@@ -1,5 +1,6 @@
 'use client';
 import { todayLocalIso } from '@/lib/date';
+import { formatDays } from '@/lib/leaveDays';
 
 import { useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -213,7 +214,7 @@ export default function CompOffPage() {
                           Worked on {formatDate(request.workedDate)}
                         </div>
                         <div className="text-sm text-warm-500">
-                          {Number(request.earnedDays)} day(s) earned
+                          {formatDays(request.earnedDays)} day(s) earned
                           {request.expiryDate && (
                             <span className="ml-2 text-warm-400">
                               Expires: {formatDate(request.expiryDate)}

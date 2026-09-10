@@ -346,10 +346,16 @@ export interface LeaveBalance {
   leaveTypeId: string;
   leaveType: LeaveType;
   year: number;
-  totalDays: number;
-  usedDays: number;
-  pendingDays: number;
-  carriedOver: number;
+  /**
+   * Day counts, as decimal strings. `leave_balances` holds them as Prisma
+   * `Decimal(5, 2)` and the read paths do not convert, so `totalDays +
+   * carriedOver` on these concatenates rather than adds. Work them out with
+   * `availableDays` / `entitledDays` from `@/lib/leaveDays`.
+   */
+  totalDays: string;
+  usedDays: string;
+  pendingDays: string;
+  carriedOver: string;
 }
 
 export interface LeaveRequest {
@@ -361,7 +367,8 @@ export interface LeaveRequest {
   leaveType: LeaveType;
   startDate: string;
   endDate: string;
-  totalDays: number;
+  /** `leave_requests.totalDays`, `Decimal(5, 2)`. */
+  totalDays: string;
   reason?: string;
   isHalfDay?: boolean;
   halfDayPeriod?: 'FIRST_HALF' | 'SECOND_HALF';
@@ -402,7 +409,8 @@ export interface CompOffRequest {
   workedDate: string;
   reason: string;
   expiryDate?: string;
-  earnedDays: number;
+  /** `comp_off_requests.earnedDays`, `Decimal(3, 1)`. */
+  earnedDays: string;
   status: CompOffStatus;
   approverId?: string;
   approverNote?: string;

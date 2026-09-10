@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { cn, formatDate, getStatusColor } from '@/lib/utils';
+import { formatDays } from '@/lib/leaveDays';
 import {
     Check,
     X,
@@ -27,7 +28,8 @@ interface LeaveRequest {
     };
     startDate: string;
     endDate: string;
-    totalDays: number;
+    // A decimal string, not a number: see @/lib/leaveDays.
+    totalDays: string;
     status: string;
     reason?: string;
     createdAt: string;
@@ -153,7 +155,7 @@ export function ApprovalCard({ request, onApprove, onReject, isSelected, onToggl
                             </div>
                             <div className="flex items-center gap-2 text-warm-600">
                                 <Clock className="w-4 h-4" />
-                                <span>{request.totalDays} day{request.totalDays > 1 ? 's' : ''}</span>
+                                <span>{formatDays(request.totalDays)} day{formatDays(request.totalDays) === '1' ? '' : 's'}</span>
                             </div>
                             {request.employee.department && (
                                 <div className="flex items-center gap-2 text-warm-600">
@@ -220,7 +222,7 @@ export function ApprovalCard({ request, onApprove, onReject, isSelected, onToggl
                                     {request.employee.firstName} {request.employee.lastName}
                                 </div>
                                 <div className="text-sm text-warm-500">
-                                    {request.leaveType.name} • {request.totalDays} day{request.totalDays > 1 ? 's' : ''}
+                                    {request.leaveType.name} • {formatDays(request.totalDays)} day{formatDays(request.totalDays) === '1' ? '' : 's'}
                                 </div>
                                 <div className="text-sm text-warm-500">
                                     {formatDate(request.startDate)} — {formatDate(request.endDate)}

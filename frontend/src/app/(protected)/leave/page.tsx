@@ -7,6 +7,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { leaveApi } from '@/lib/api';
 import { formatDate, getStatusColor, cn } from '@/lib/utils';
+import { availableDays, entitledDays, formatDays } from '@/lib/leaveDays';
 import { useRouter } from 'next/navigation';
 import {
   Calendar,
@@ -24,10 +25,11 @@ import {
 interface LeaveBalance {
   id: string;
   leaveType: { id: string; name: string; code: string };
-  totalDays: number;
-  usedDays: number;
-  pendingDays: number;
-  carriedOver: number;
+  // Decimal strings, not numbers: see @/lib/leaveDays.
+  totalDays: string;
+  usedDays: string;
+  pendingDays: string;
+  carriedOver: string;
 }
 
 interface LeaveRequest {
@@ -35,7 +37,7 @@ interface LeaveRequest {
   leaveType: { name: string; code: string };
   startDate: string;
   endDate: string;
-  totalDays: number;
+  totalDays: string;
   isHalfDay?: boolean;
   halfDayPeriod?: 'FIRST_HALF' | 'SECOND_HALF';
   status: string;
@@ -117,9 +119,12 @@ export default function LeavePage() {
     return colors[code] || 'from-indigo-500 to-indigo-600';
   };
 
-  const getProgressPercentage = (used: number, total: number): number => {
-    if (total === 0) return 0;
-    return Math.min((used / total) * 100, 100);
+  // A bar width, and the only place a day count is deliberately parsed into a
+  // number: this is a proportion for CSS, not an entitlement.
+  const getProgressPercentage = (used: string, total: string): number => {
+    const totalNum = Number(total);
+    if (!totalNum) return 0;
+    return Math.min((Number(used) / totalNum) * 100, 100);
   };
 
   if (loading) {
@@ -190,10 +195,10 @@ export default function LeavePage() {
           </h2>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {balances.map((balance) => {
-              const total = balance.totalDays + balance.carriedOver;
+              const total = entitledDays(balance);
               const used = balance.usedDays;
               const pending = balance.pendingDays;
-              const available = total - used - pending;
+              const available = formatDays(availableDays(balance));
               const usedPercent = getProgressPercentage(used, total);
               const pendingPercent = getProgressPercentage(pending, total);
 
@@ -333,7 +338,7 @@ export default function LeavePage() {
                           <div className="text-sm text-warm-500">
                             {formatDate(request.startDate)}{!request.isHalfDay && <> — {formatDate(request.endDate)}</>}
                             <span className="ml-2 text-warm-400">
-                              ({request.totalDays} day{request.totalDays !== 1 ? 's' : ''})
+                              ({formatDays(request.totalDays)} day{formatDays(request.totalDays) === '1' ? '' : 's'})
                             </span>
                           </div>
                         </div>
