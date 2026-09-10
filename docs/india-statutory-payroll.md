@@ -282,16 +282,69 @@ settlement records all four limbs and which one bound, because an employee taxed
 on part of their encashment is owed the figure that limited it. The amount
 payable is unchanged; only its taxable portion is now known.
 
+## More of the year, and correcting a mistake
+
+**Section 10 beyond house rent.** Leave travel, and the two section 10(14)
+allowances for children's education and hostel. The 10(14) pair are capped at
+₹100 and ₹300 a month per child for at most two children, so a declaration of
+₹5,000 does not exempt ₹5,000. The cap is applied in the calculation, not the
+form, for the same reason the Chapter VI-A ceilings are: approving a school fee
+receipt confirms the fee, it does not raise a statutory limit. All of them are
+old-regime only, and all three have a proof head, since travel tickets and fee
+receipts are exactly the kind of claim evidence settles.
+
+**Tax on a settlement is computed.** The figure is the balance of the year still
+owing: what the payslips already show plus the taxable parts of the settlement,
+taxed through the same engine the monthly run uses, less what has already been
+deducted. It stays editable, and an override is recorded as an override with its
+reason, because a leaver's circumstances can include things the system cannot
+see. A year with no tax configuration produces an explained zero rather than a
+silent one.
+
+**Correcting a run before it is approved.** A computed run can be recomputed,
+which was previously impossible: fixing a rate meant deleting the run and
+starting again. **An approved or paid run is refused.** Those figures have been
+signed off or paid out, and rewriting them would change what somebody was told
+they received and desynchronise the run from any return already filed from it.
+The remedy for an error found after approval is an adjustment in a later run.
+
+**Editing the slab tables.** Professional tax rows and income tax ladders can be
+edited without running the seed script. A ladder is saved whole and validated
+before it is written: it must start at zero, have no gap and no overlap, and
+have exactly one open-ended band at the top. A ladder with a hole in it taxes
+the income falling in that hole at nothing.
+
 ## Not implemented
 
 Known and deliberate, so nobody assumes otherwise:
 
 - **Form 16 Part A.** TRACES issues it. See above.
-- **Slab editing.** Professional tax and income tax slabs are seeded, not
-  edited through the interface. Rates and thresholds are editable; the slab
-  tables themselves are not.
 - **Automatic proof checking.** A person reads every document. Nothing extracts
   figures from a PDF or validates a policy number.
+- **The leave travel block year.** Section 10(5) allows the exemption for two
+  journeys in a block of four calendar years, and covers fare only. Nothing
+  records block-year usage, so with proof verification switched off an employee
+  can claim it every year running. A reviewer looking at the tickets settles
+  both points; the arithmetic does not.
+- **Section 89 relief.** A settlement bunches several years of gratuity and
+  leave into one year and can push a leaver into a higher band. The relief that
+  exists for exactly that is not computed, so the tax on a settlement can exceed
+  what the leaver finally owes. This is the most likely reason somebody
+  overrides the computed figure, which is why the override is a first-class
+  thing rather than a nicety.
+- **Settlement tax is not capped at the net payable.** A large tax against a
+  small settlement can drive the net negative, as notice recovery already can.
+- **A settlement does not consult approved proofs.** The monthly engine replaces
+  declared figures with verified ones from the cutoff month; the settlement
+  takes the declaration as it stands.
+- **The month of exit can be counted twice.** If payroll has already run for
+  that month and the settlement also pays pro-rata salary, the tax is
+  overstated. The working records the payslip count and the year to date so it
+  is visible. Netting it off needs a rule about which months a settlement
+  supersedes.
+- **The printed Form 16 shows line 2 as one figure.** The breakdown of which
+  section 10 heads made it up is computed and returned, but the PDF does not
+  render it yet.
 - **Half-yearly professional tax rates.** The mechanism is there; Tamil Nadu is
   not seeded. Its published rates are half-yearly lump sums, and somebody who
   files for that state must confirm the current figures and collection months
@@ -307,9 +360,3 @@ Known and deliberate, so nobody assumes otherwise:
 - **Average salary for the encashment exemption** is the last drawn basic and
   dearness allowance, not the average of the final ten months the section asks
   for. Only the current salary is on record.
-- **Section 10 exemptions other than HRA.** Leave travel allowance, children's
-  education and similar are not tracked, because nothing records them.
-- **TDS on a settlement.** Taken as supplied rather than computed from the
-  year's position.
-- **Retrospective recalculation.** Changing a rate affects the next run. Runs
-  already computed are not recalculated.

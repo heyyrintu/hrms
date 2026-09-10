@@ -46,6 +46,7 @@ import {
   ReceiptText,
   FileSearch,
   FolderCheck,
+  Table2,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -193,6 +194,7 @@ const sections: NavSection[] = [
           { name: 'Audit Logs', href: '/admin/audit', icon: <Shield className="h-4 w-4" /> },
           { name: 'Biometric Devices', href: '/admin/biometric-devices', icon: <Cpu className="h-4 w-4" /> },
           { name: 'Statutory Payroll', href: '/admin/statutory', icon: <Scale className="h-4 w-4" /> },
+          { name: 'Tax Slabs', href: '/admin/slabs', icon: <Table2 className="h-4 w-4" /> },
         ],
       },
     ],

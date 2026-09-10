@@ -21,6 +21,7 @@ import {
   monthlyTdsInstalment,
   IncomeTaxResult,
   PtSlab,
+  Section10AllowanceLimits,
 } from './statutory.calculators';
 import { ageBandOn31March, collectsProfessionalTaxIn, DeductionLimits } from './tax-correctness.types';
 
@@ -76,7 +77,15 @@ const ZERO = new Decimal(0);
  * has no proof head and so keeps coming from the declaration whatever the
  * verification setting says.
  */
-const PROOF_BACKED_FIELDS: readonly ProofBackedField[] = Object.values(
+/**
+ * Every declaration field a proof can support.
+ *
+ * Exported because Form 16 must replace exactly the same set: a head with no
+ * approved proof allows nothing once verification is in force, and iterating
+ * only the heads that happen to have a proof would leave the others at their
+ * declared figures on the certificate while the payslips allowed nothing.
+ */
+export const PROOF_BACKED_FIELDS: readonly ProofBackedField[] = Object.values(
   PROOF_SECTION_TO_DECLARATION_FIELD,
 );
 
@@ -141,6 +150,15 @@ export interface ResolvedIncomeTaxConfig {
     section80CLimit: Decimal;
     section80DLimit: Decimal;
     section80CCD1BLimit: Decimal;
+    /**
+     * The section 10(14) ceilings. Optional because a row seeded before these
+     * columns existed carries none, and the callers fall back to the statutory
+     * figures — which are also the schema's defaults — rather than exempting
+     * an uncapped amount.
+     */
+    childrenEducationMonthlyLimit?: Decimal;
+    hostelAllowanceMonthlyLimit?: Decimal;
+    childrenAllowanceMaxChildren?: number;
     marginalReliefEnabled: boolean;
     slabs: { fromAmount: Decimal; toAmount: Decimal | null; rate: Decimal }[];
   };
@@ -467,11 +485,22 @@ export class StatutoryService {
       section80CCD1B: new Decimal(declaration?.section80CCD1B ?? 0),
       section80CCD2: new Decimal(declaration?.section80CCD2 ?? 0),
       hraExemption: new Decimal(declaration?.hraExemption ?? 0),
+      // The section 10 heads. Absent on a declaration written before the
+      // columns existed, which reads as nought and so moves nobody's tax.
+      ltaExemption: new Decimal(declaration?.ltaExemption ?? 0),
+      childrenEducationAllowance: new Decimal(declaration?.childrenEducationAllowance ?? 0),
+      hostelAllowance: new Decimal(declaration?.hostelAllowance ?? 0),
       homeLoanInterest: new Decimal(declaration?.homeLoanInterest ?? 0),
       otherDeductions: new Decimal(declaration?.otherDeductions ?? 0),
       otherIncome: new Decimal(declaration?.otherIncome ?? 0),
       previousEmployerTds: new Decimal(declaration?.previousEmployerTds ?? 0),
     };
+
+    // Not a money figure and not a proof-backed one: a school fee receipt says
+    // what was paid, not how many children there are. So it comes from the
+    // declaration whatever the verification setting says, and the calculation
+    // caps it at the year's maximum.
+    const childrenCount = declaration?.childrenCount ?? 0;
 
     // Off by default, so a tenant that has not opted in is answered without a
     // query and computed from exactly the figures it was computed from before.
@@ -506,6 +535,18 @@ export class StatutoryService {
     };
     const marginalReliefEnabled = taxConfig.marginalReliefEnabled ?? true;
 
+    // The year's section 10(14) ceilings, per child per month, and the most
+    // children they may be claimed for. Passed down for the same reason the
+    // chapter VI-A ceilings are: the calculator caps, so the rule lives in one
+    // place, and a year that moves the figures needs no code change.
+    const section10Limits: Section10AllowanceLimits = {
+      childrenEducationMonthlyLimit: new Decimal(
+        taxConfig.childrenEducationMonthlyLimit ?? 100,
+      ),
+      hostelAllowanceMonthlyLimit: new Decimal(taxConfig.hostelAllowanceMonthlyLimit ?? 300),
+      maxChildren: taxConfig.childrenAllowanceMaxChildren ?? 2,
+    };
+
     const computed: IncomeTaxResult = calculateIncomeTax(
       annualGross,
       {
@@ -525,9 +566,10 @@ export class StatutoryService {
         })),
         ageBand: ageBandUsed,
         limits,
+        section10Limits,
         marginalReliefEnabled,
       },
-      declarations,
+      { ...declarations, childrenCount },
       annualProfessionalTax,
     );
 
@@ -543,6 +585,22 @@ export class StatutoryService {
           limit: cap.limit.toFixed(2),
           allowed: cap.allowed.toFixed(2),
           disallowed: cap.disallowed.toFixed(2),
+        },
+      ]),
+    );
+
+    // Likewise from the calculator, which is where the per-child ceilings are
+    // applied: what was claimed under each section 10 head against what the
+    // section actually allowed. Keyed by the calculator's own head labels and
+    // empty under the new regime, which withdraws all of them.
+    const section10Exemptions = Object.fromEntries(
+      computed.section10Exemptions.map((e) => [
+        e.head,
+        {
+          declared: e.declared.toFixed(2),
+          limit: e.limit === null ? null : e.limit.toFixed(2),
+          allowed: e.allowed.toFixed(2),
+          disallowed: e.disallowed.toFixed(2),
         },
       ]),
     );
@@ -581,6 +639,21 @@ export class StatutoryService {
           section80CCD1B: limits.section80CCD1B.toFixed(2),
         },
         chapterVIACaps,
+        // The section 10 exemptions, which reduce salary rather than total
+        // income: house rent, leave travel and the two allowances for
+        // children. The ceilings applied to the last two, the number of
+        // children they were allowed for, and what each head claimed against
+        // what it got — the answer to "why did ₹5,000 of school fees exempt
+        // ₹1,200".
+        section10Limits: {
+          childrenEducationMonthlyLimit: section10Limits.childrenEducationMonthlyLimit.toFixed(2),
+          hostelAllowanceMonthlyLimit: section10Limits.hostelAllowanceMonthlyLimit.toFixed(2),
+          maxChildren: section10Limits.maxChildren,
+        },
+        childrenCount,
+        childrenAllowed: Math.max(0, Math.min(childrenCount, section10Limits.maxChildren)),
+        section10Exemptions,
+        totalSection10Exemption: computed.totalSection10Exemption.toFixed(2),
         marginalReliefEnabled,
         marginalReliefApplied: computed.marginalRelief.gt(0),
         marginalRelief: computed.marginalRelief.toFixed(2),
@@ -613,37 +686,17 @@ export class StatutoryService {
    * claimed figure is what the employee asserted, and standing in for a missing
    * decision with it would defeat the verification it is meant to represent.
    */
-  private async approvedProofTotals(
+  private approvedProofTotals(
     input: StatutoryInput,
     financialYear: number,
   ): Promise<VerifiedTotals> {
-    const proofs = await this.prisma.investmentProof.findMany({
-      where: {
-        tenantId: input.tenantId,
-        employeeId: input.employeeId,
-        financialYear,
-        status: InvestmentProofStatus.APPROVED,
-      },
-      select: { section: true, verifiedAmount: true },
-    });
-
-    const totals: Partial<Record<ProofBackedField, Decimal>> = {};
-
-    for (const proof of proofs) {
-      const field = PROOF_SECTION_TO_DECLARATION_FIELD[proof.section];
-      // A head the contract does not map is not one this calculation can use.
-      if (!field) continue;
-
-      const amount =
-        proof.verifiedAmount === null ? ZERO : new Decimal(proof.verifiedAmount);
-      totals[field] = (totals[field] ?? ZERO).add(amount);
-    }
-
-    return Object.fromEntries(
-      Object.entries(totals).map(([field, amount]) => [field, amount.toString()]),
-    ) as VerifiedTotals;
+    return readApprovedProofTotals(
+      this.prisma,
+      input.tenantId,
+      input.employeeId,
+      financialYear,
+    );
   }
-
   /** Gross, professional tax and TDS already recorded this financial year. */
   private async yearToDateTotals(
     input: StatutoryInput,
@@ -672,4 +725,45 @@ export class StatutoryService {
       { gross: ZERO, professionalTax: ZERO, tds: ZERO },
     );
   }
+}
+
+/**
+ * The sum of an employee's approved proofs, per declaration field.
+ *
+ * Exported rather than private because Form 16 needs the same figures. A
+ * certificate built from the declaration while the year's payslips were
+ * computed from approved proofs would show more exempt than was actually
+ * allowed, and the two disagreeing is worse than either being wrong alone.
+ */
+export async function readApprovedProofTotals(
+  prisma: PrismaService,
+  tenantId: string,
+  employeeId: string,
+  financialYear: number,
+): Promise<VerifiedTotals> {
+  const proofs = await prisma.investmentProof.findMany({
+    where: {
+      tenantId,
+      employeeId,
+      financialYear,
+      status: InvestmentProofStatus.APPROVED,
+    },
+    select: { section: true, verifiedAmount: true },
+  });
+
+  const totals: Partial<Record<ProofBackedField, Decimal>> = {};
+
+  for (const proof of proofs) {
+    const field = PROOF_SECTION_TO_DECLARATION_FIELD[proof.section];
+    // A head the contract does not map is not one this calculation can use.
+    if (!field) continue;
+
+    const amount =
+      proof.verifiedAmount === null ? ZERO : new Decimal(proof.verifiedAmount);
+    totals[field] = (totals[field] ?? ZERO).add(amount);
+  }
+
+  return Object.fromEntries(
+    Object.entries(totals).map(([field, amount]) => [field, amount.toString()]),
+  ) as VerifiedTotals;
 }

@@ -584,6 +584,11 @@ describe('ProofsService', () => {
         'HOME_LOAN_INTEREST',
         'OTHER_DEDUCTIONS',
         'PREVIOUS_EMPLOYER_TDS',
+        // The section 10 heads: travel tickets, school fees, hostel bills.
+        // Exactly the kind of claim a document settles.
+        'LTA',
+        'CHILDREN_EDUCATION',
+        'HOSTEL_ALLOWANCE',
       ]);
     });
 

@@ -187,6 +187,29 @@ export class UpsertTaxDeclarationDto {
   @Min(0)
   section80CCD2?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) hraExemption?: number;
+  @ApiPropertyOptional({ description: 'Section 10(5): leave travel actually spent.' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  ltaExemption?: number;
+  @ApiPropertyOptional({
+    description:
+      "Section 10(14): children's education allowance. Capped per child for at most two children by the calculation, not trusted as declared.",
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  childrenEducationAllowance?: number;
+  @ApiPropertyOptional({ description: 'Section 10(14): hostel allowance, capped the same way.' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  hostelAllowance?: number;
+  @ApiPropertyOptional({ description: 'Children the two allowances are claimed for. At most two count.' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  childrenCount?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) homeLoanInterest?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) otherDeductions?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) otherIncome?: number;

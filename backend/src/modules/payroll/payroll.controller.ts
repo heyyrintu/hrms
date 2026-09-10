@@ -204,6 +204,29 @@ export class PayrollController {
     return this.payrollService.processRun(user.tenantId, id);
   }
 
+  @Post('runs/:id/recompute')
+  @ApiOperation({
+    summary: 'Recompute a COMPUTED payroll run after a configuration fix',
+    description:
+      'Discards the run\'s existing payslips and regenerates them from the current configuration (e.g. after a rate correction). Only a COMPUTED run can be recomputed — APPROVED and PAID runs are refused because their figures have already been signed off or paid out; correct those with an adjustment in a later run instead.',
+  })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({
+    status: 400,
+    description: 'Run is not COMPUTED, or is APPROVED/PAID and cannot be recomputed',
+  })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
+  @ApiResponse({ status: 409, description: 'Run is already being processed' })
+  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  async recomputeRun(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.payrollService.recomputeRun(user.tenantId, id);
+  }
+
   @Post('runs/:id/reset')
   @ApiOperation({
     summary: 'Reset a payroll run stuck in PROCESSING back to DRAFT',

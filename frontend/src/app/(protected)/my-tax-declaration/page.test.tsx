@@ -103,6 +103,10 @@ function declaration(overrides: Record<string, unknown> = {}) {
     section80CCD1B: '50000.00',
     section80CCD2: '0.00',
     hraExemption: '120000.00',
+    ltaExemption: '0.00',
+    childrenEducationAllowance: '0.00',
+    hostelAllowance: '0.00',
+    childrenCount: 0,
     homeLoanInterest: '0.00',
     otherDeductions: '0.00',
     otherIncome: '0.00',
@@ -160,6 +164,9 @@ describe('MyTaxDeclarationPage', () => {
       'section80D',
       'section80CCD1B',
       'hraExemption',
+      'ltaExemption',
+      'childrenEducationAllowance',
+      'hostelAllowance',
       'homeLoanInterest',
       'otherDeductions',
     ]) {
@@ -305,5 +312,149 @@ describe('MyTaxDeclarationPage', () => {
     render(<MyTaxDeclarationPage />);
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
+  });
+});
+
+describe('MyTaxDeclarationPage — the section 10 fields', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedApi.getMyDeclaration.mockResolvedValue({ data: null } as any);
+    mockedApi.saveMyDeclaration.mockResolvedValue({ data: declaration() } as any);
+  });
+
+  it('renders LTA, the children allowances and a count of children', async () => {
+    await renderWithNoDeclaration();
+
+    expect(screen.getByLabelText('LTA exemption')).toBeInTheDocument();
+    expect(screen.getByLabelText("Children's education allowance")).toBeInTheDocument();
+    expect(screen.getByLabelText('Hostel allowance')).toBeInTheDocument();
+    expect(screen.getByLabelText('Number of children')).toBeInTheDocument();
+  });
+
+  it('warns above the per-child cap for the children\'s education allowance, scaled to the declared count', async () => {
+    await renderWithNoDeclaration();
+
+    fireEvent.change(screen.getByLabelText('Number of children'), { target: { value: '1' } });
+    // One child: 100 a month, twelve months, one child — a 1,200 ceiling.
+    fireEvent.change(screen.getByLabelText("Children's education allowance"), {
+      target: { value: '5000' },
+    });
+
+    expect(
+      within(fieldRow('childrenEducationAllowance')).getByText(/1,200/),
+    ).toBeInTheDocument();
+    expect(
+      within(fieldRow('childrenEducationAllowance')).getByText(/will not reduce your tax/i),
+    ).toBeInTheDocument();
+  });
+
+  it('caps the hostel allowance ceiling at two children even when more are declared', async () => {
+    await renderWithNoDeclaration();
+
+    fireEvent.change(screen.getByLabelText('Number of children'), { target: { value: '5' } });
+    // 300 a month, twelve months, capped at two children — a 7,200 ceiling,
+    // not five times that.
+    fireEvent.change(screen.getByLabelText('Hostel allowance'), { target: { value: '10000' } });
+
+    expect(within(fieldRow('hostelAllowance')).getByText(/7,200/)).toBeInTheDocument();
+    expect(screen.queryByText(/18,000/)).not.toBeInTheDocument();
+  });
+
+  it('does not warn when the entry is within the per-child cap', async () => {
+    await renderWithNoDeclaration();
+
+    fireEvent.change(screen.getByLabelText('Number of children'), { target: { value: '2' } });
+    // Two children: 100 a month, twelve months, two children — a 2,400 ceiling.
+    fireEvent.change(screen.getByLabelText("Children's education allowance"), {
+      target: { value: '2000' },
+    });
+
+    expect(
+      within(fieldRow('childrenEducationAllowance')).queryByText(/will not reduce your tax/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it('still saves a children\'s allowance declared above its cap, exactly as entered', async () => {
+    await renderWithNoDeclaration();
+
+    fireEvent.change(screen.getByLabelText('Number of children'), { target: { value: '1' } });
+    fireEvent.change(screen.getByLabelText("Children's education allowance"), {
+      target: { value: '5000' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save declaration/i }));
+
+    await waitFor(() => expect(mockedApi.saveMyDeclaration).toHaveBeenCalled());
+    expect(mockedApi.saveMyDeclaration.mock.calls[0][0]).toMatchObject({
+      childrenEducationAllowance: 5000,
+      childrenCount: 1,
+    });
+  });
+
+  it('saves LTA, the children allowances and the children count as numbers', async () => {
+    await renderWithNoDeclaration();
+
+    fireEvent.change(screen.getByLabelText('LTA exemption'), { target: { value: '25000' } });
+    fireEvent.change(screen.getByLabelText('Number of children'), { target: { value: '2' } });
+    fireEvent.change(screen.getByLabelText('Hostel allowance'), { target: { value: '3000' } });
+    fireEvent.click(screen.getByRole('button', { name: /save declaration/i }));
+
+    await waitFor(() => expect(mockedApi.saveMyDeclaration).toHaveBeenCalled());
+    expect(mockedApi.saveMyDeclaration.mock.calls[0][0]).toMatchObject({
+      ltaExemption: 25000,
+      hostelAllowance: 3000,
+      childrenCount: 2,
+    });
+  });
+
+  it('refuses a children count that is not a whole number, naming the field, before any request', async () => {
+    await renderWithNoDeclaration();
+
+    fireEvent.change(screen.getByLabelText('Number of children'), { target: { value: '1.5' } });
+    fireEvent.click(screen.getByRole('button', { name: /save declaration/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Number of children must be a whole number/i),
+      ).toBeInTheDocument(),
+    );
+    expect(mockedApi.saveMyDeclaration).not.toHaveBeenCalled();
+  });
+
+  it('refuses a negative children count', async () => {
+    await renderWithNoDeclaration();
+
+    fireEvent.change(screen.getByLabelText('Number of children'), { target: { value: '-1' } });
+    fireEvent.click(screen.getByRole('button', { name: /save declaration/i }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Number of children must be a whole number/i)).toBeInTheDocument(),
+    );
+    expect(mockedApi.saveMyDeclaration).not.toHaveBeenCalled();
+  });
+
+  it('sends a blank children count as zero, like a blank rupee figure', async () => {
+    await renderWithNoDeclaration();
+
+    fireEvent.click(screen.getByRole('button', { name: /save declaration/i }));
+
+    await waitFor(() => expect(mockedApi.saveMyDeclaration).toHaveBeenCalled());
+    expect(mockedApi.saveMyDeclaration.mock.calls[0][0]).toMatchObject({ childrenCount: 0 });
+  });
+
+  it('fills the count and the new figures from what is on record', async () => {
+    mockedApi.getMyDeclaration.mockResolvedValue({
+      data: declaration({
+        ltaExemption: '18000.00',
+        childrenEducationAllowance: '1200.00',
+        hostelAllowance: '3600.00',
+        childrenCount: 2,
+      }),
+    } as any);
+    render(<MyTaxDeclarationPage />);
+
+    await waitFor(() => expect(screen.getByLabelText('LTA exemption')).toHaveValue('18000.00'));
+    expect(screen.getByLabelText('Number of children')).toHaveValue('2');
+    expect(screen.getByLabelText("Children's education allowance")).toHaveValue('1200.00');
+    expect(screen.getByLabelText('Hostel allowance')).toHaveValue('3600.00');
   });
 });

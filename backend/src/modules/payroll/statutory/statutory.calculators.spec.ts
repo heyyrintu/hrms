@@ -673,3 +673,240 @@ describe('calculateProfessionalTax: collection months', () => {
     expect(calculateProfessionalTax(d(50000), maharashtra, 3, null, [2, 8]).toString()).toBe('0');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Section 10 exemptions beyond house rent
+// ---------------------------------------------------------------------------
+
+// FY 2025-26 section 10(14) ceilings, as held on the year's configuration row.
+// Held as data, not written into the calculation: the Finance Act moves them.
+const section10Limits = {
+  childrenEducationMonthlyLimit: d(100),
+  hostelAllowanceMonthlyLimit: d(300),
+  maxChildren: 2,
+};
+
+const oldRegimeWithSection10 = { ...oldRegimeWithLimits, section10Limits };
+
+describe('calculateIncomeTax: section 10 exemptions beyond house rent', () => {
+  it('caps the education allowance at the monthly ceiling per child', () => {
+    // One child, 5,000 declared for the year. The section allows 100 a month
+    // per child: 100 x 12 x 1 = 1,200. So 1,200 is exempt and 3,800 is not.
+    //
+    // Gross 12,00,000, old regime. Deductions 50,000 standard + 1,200 = 51,200,
+    // so 11,48,800 is taxable. Old slabs: 2,50,000 at nil, 2,50,000 at 5% =
+    // 12,500, 5,00,000 at 20% = 1,00,000, 1,48,800 at 30% = 44,640. Tax
+    // 1,57,140, cess at 4% = 6,285.60 -> 6,286, total 1,63,426.
+    //
+    // Taken at the declared 5,000 it would have been 11,45,000 taxable,
+    // 1,56,000 of tax and 1,62,240 in total: 1,186 too little.
+    const r = calculateIncomeTax(
+      d(1200000),
+      oldRegimeWithSection10,
+      { ...noDeclarations, childrenEducationAllowance: d(5000), childrenCount: 1 },
+      d(0),
+    );
+
+    expect(r.totalDeductions.toString()).toBe('51200');
+    expect(r.taxableIncome.toString()).toBe('1148800');
+    expect(r.taxBeforeRebate.toString()).toBe('157140');
+    expect(r.totalTax.toString()).toBe('163426');
+  });
+
+  it('counts at most two children, however many are declared', () => {
+    // Three children, 10,000 declared. The section stops at two, so the
+    // ceiling is 100 x 12 x 2 = 2,400, not 3,600.
+    const r = calculateIncomeTax(
+      d(1200000),
+      oldRegimeWithSection10,
+      { ...noDeclarations, childrenEducationAllowance: d(10000), childrenCount: 3 },
+      d(0),
+    );
+
+    const education = r.section10Exemptions.find((e) => e.head === 'CHILDREN_EDUCATION');
+
+    expect(education?.declared.toString()).toBe('10000');
+    expect(education?.limit?.toString()).toBe('2400');
+    expect(education?.allowed.toString()).toBe('2400');
+    expect(education?.disallowed.toString()).toBe('7600');
+    expect(r.totalDeductions.toString()).toBe('52400');
+  });
+
+  it('leaves a claim inside the ceiling exactly as declared', () => {
+    // Two children, 5,000 of hostel allowance. The ceiling is 300 a month per
+    // child: 300 x 12 x 2 = 7,200, which the claim is well inside, so nothing
+    // is trimmed.
+    const r = calculateIncomeTax(
+      d(1200000),
+      oldRegimeWithSection10,
+      { ...noDeclarations, hostelAllowance: d(5000), childrenCount: 2 },
+      d(0),
+    );
+
+    const hostel = r.section10Exemptions.find((e) => e.head === 'HOSTEL_ALLOWANCE');
+
+    expect(hostel?.limit?.toString()).toBe('7200');
+    expect(hostel?.allowed.toString()).toBe('5000');
+    expect(hostel?.disallowed.toString()).toBe('0');
+    expect(r.totalDeductions.toString()).toBe('55000');
+  });
+
+  it('allows nothing under either 10(14) head when no child is declared', () => {
+    // The ceiling is per child, so with no children it is nil. An allowance
+    // claimed for nobody exempts nothing.
+    const r = calculateIncomeTax(
+      d(1200000),
+      oldRegimeWithSection10,
+      {
+        ...noDeclarations,
+        childrenEducationAllowance: d(2400),
+        hostelAllowance: d(7200),
+        childrenCount: 0,
+      },
+      d(0),
+    );
+
+    expect(r.totalDeductions.toString()).toBe('50000');
+    for (const head of ['CHILDREN_EDUCATION', 'HOSTEL_ALLOWANCE']) {
+      const entry = r.section10Exemptions.find((e) => e.head === head);
+      expect(entry?.limit?.toString()).toBe('0');
+      expect(entry?.allowed.toString()).toBe('0');
+    }
+  });
+
+  it('takes the ceilings from the year configuration, not from the code', () => {
+    // A year that doubled the monthly figures must double the exemption
+    // without anyone editing the calculation.
+    const doubled = {
+      ...oldRegimeWithLimits,
+      section10Limits: {
+        childrenEducationMonthlyLimit: d(200),
+        hostelAllowanceMonthlyLimit: d(600),
+        maxChildren: 2,
+      },
+    };
+
+    const r = calculateIncomeTax(
+      d(1200000),
+      doubled,
+      {
+        ...noDeclarations,
+        childrenEducationAllowance: d(99999),
+        hostelAllowance: d(99999),
+        childrenCount: 2,
+      },
+      d(0),
+    );
+
+    // 200 x 12 x 2 = 4,800 and 600 x 12 x 2 = 14,400.
+    expect(
+      r.section10Exemptions.find((e) => e.head === 'CHILDREN_EDUCATION')?.allowed.toString(),
+    ).toBe('4800');
+    expect(
+      r.section10Exemptions.find((e) => e.head === 'HOSTEL_ALLOWANCE')?.allowed.toString(),
+    ).toBe('14400');
+  });
+
+  it('allows leave travel at the declared figure, with no ceiling of its own', () => {
+    // Section 10(5) limits the concession to what was actually spent on
+    // travel. That is the figure the employee declares and a proof settles;
+    // there is no monetary maximum in the Act to apply here.
+    const r = calculateIncomeTax(
+      d(1200000),
+      oldRegimeWithSection10,
+      { ...noDeclarations, ltaExemption: d(45000) },
+      d(0),
+    );
+
+    const lta = r.section10Exemptions.find((e) => e.head === 'LTA');
+
+    expect(lta?.declared.toString()).toBe('45000');
+    expect(lta?.limit).toBeNull();
+    expect(lta?.allowed.toString()).toBe('45000');
+    expect(r.totalDeductions.toString()).toBe('95000');
+  });
+
+  it('adds the exempt allowances to house rent for the section 10 total', () => {
+    // HRA 1,20,000 + LTA 45,000 + education 1,200 (of 5,000, one child) +
+    // hostel 7,200 (of 9,000, two children) = 1,73,400. That is line 2 of
+    // Form 16.
+    const r = calculateIncomeTax(
+      d(1200000),
+      oldRegimeWithSection10,
+      {
+        ...noDeclarations,
+        hraExemption: d(120000),
+        ltaExemption: d(45000),
+        childrenEducationAllowance: d(5000),
+        hostelAllowance: d(9000),
+        childrenCount: 2,
+      },
+      d(0),
+    );
+
+    // Education: 100 x 12 x 2 = 2,400 allowed of the 5,000 declared.
+    // Hostel: 300 x 12 x 2 = 7,200 allowed of the 9,000 declared.
+    // 1,20,000 + 45,000 + 2,400 + 7,200 = 1,74,600.
+    expect(r.totalSection10Exemption.toString()).toBe('174600');
+    expect(r.section10Exemptions.map((e) => e.head)).toEqual([
+      'HRA',
+      'LTA',
+      'CHILDREN_EDUCATION',
+      'HOSTEL_ALLOWANCE',
+    ]);
+    // 50,000 standard + 1,74,600 exempt
+    expect(r.totalDeductions.toString()).toBe('224600');
+  });
+
+  it('exempts none of them under the new regime, as it exempts no house rent', () => {
+    // Section 115BAC withdraws all four. The employee is taxed on 12,00,000
+    // less the 75,000 standard deduction whatever they declared.
+    const r = calculateIncomeTax(
+      d(1200000),
+      { ...newRegime, section10Limits },
+      {
+        ...noDeclarations,
+        hraExemption: d(120000),
+        ltaExemption: d(45000),
+        childrenEducationAllowance: d(5000),
+        hostelAllowance: d(9000),
+        childrenCount: 2,
+      },
+      d(0),
+    );
+
+    expect(r.section10Exemptions).toEqual([]);
+    expect(r.totalSection10Exemption.toString()).toBe('0');
+    expect(r.taxableIncome.toString()).toBe('1125000');
+  });
+
+  it('taxes an employee who declares none of them exactly as before', () => {
+    // The regression that matters: nobody's tax may move because the three new
+    // heads exist. 10,00,000 old regime with 1,50,000 of 80C is the chapter
+    // VI-A case above, and it must still come to 75,400.
+    const r = calculateIncomeTax(
+      d(1000000),
+      oldRegimeWithSection10,
+      { ...noDeclarations, section80C: d(150000) },
+      d(0),
+    );
+
+    expect(r.taxableIncome.toString()).toBe('800000');
+    expect(r.totalTax.toString()).toBe('75400');
+    expect(r.totalSection10Exemption.toString()).toBe('0');
+  });
+
+  it('falls back to the statutory ceilings when the year supplies none', () => {
+    // A caller not yet passing the year's row still gets the cap, because
+    // capping is the correct behaviour and 100 / 300 / two children are both
+    // the section and the schema's defaults.
+    const r = calculateIncomeTax(
+      d(1200000),
+      oldRegimeWithLimits,
+      { ...noDeclarations, childrenEducationAllowance: d(5000), childrenCount: 1 },
+      d(0),
+    );
+
+    expect(r.totalDeductions.toString()).toBe('51200');
+  });
+});

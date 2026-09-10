@@ -8,13 +8,14 @@
  * collects or checks proof; see `DeclarationCaveat`, which says so on the page.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { FileText, Save } from 'lucide-react';
 
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
+import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { statutoryApi } from '@/lib/api';
 import type {
@@ -40,8 +41,14 @@ import {
   ignoredForRegime,
 } from '@/components/declaration/DeclarationFieldRow';
 import {
+  CHILDREN_COUNT_FIELD,
+  CHILDREN_EDUCATION_ALLOWANCE_MONTHLY_CEILING,
   DECLARATION_FIELDS,
   DeclarationAmountKey,
+  DeclarationFieldSpec,
+  HOSTEL_ALLOWANCE_MONTHLY_CEILING,
+  childrenAllowanceCeiling,
+  parseChildrenCount,
 } from '@/components/declaration/fields';
 import { parseDeclaredAmount } from '@/components/declaration/parseAmount';
 
@@ -77,6 +84,10 @@ export default function MyTaxDeclarationPage() {
   const [regime, setRegime] = useState<TaxRegimeName>('NEW');
   const [amounts, setAmounts] = useState<AmountMap>(EMPTY_AMOUNTS);
   const [errors, setErrors] = useState<ErrorMap>({});
+  // `childrenCount` is a count, not one of the rupee figures in `amounts`, so
+  // it is tracked separately and parsed with its own, integer-only rule.
+  const [childrenCount, setChildrenCountValue] = useState('');
+  const [childrenCountError, setChildrenCountError] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   /** Generation counter identifying the newest in-flight load. */
@@ -101,14 +112,17 @@ export default function MyTaxDeclarationPage() {
       const data = (response.data ?? null) as EmployeeTaxDeclaration | null;
       setDeclaration(data);
       setErrors({});
+      setChildrenCountError(undefined);
       if (data) {
         setRegime(data.regime);
         setAmounts(amountsFrom(data));
+        setChildrenCountValue(String(data.childrenCount ?? 0));
       } else {
         // No row yet. The form starts empty rather than at zero: an employee
         // has declared nothing, which is not the same as declaring nil.
         setRegime('NEW');
         setAmounts(EMPTY_AMOUNTS);
+        setChildrenCountValue('');
       }
     } catch {
       if (requestRef.current !== request) return;
@@ -135,6 +149,20 @@ export default function MyTaxDeclarationPage() {
     });
   };
 
+  const setChildrenCount = (value: string) => {
+    setChildrenCountValue(value);
+    setChildrenCountError(undefined);
+  };
+
+  // A best-effort read of the children count for the two allowance ceilings
+  // below, while the user is still typing. An unreadable entry shows a
+  // ceiling of nil rather than crashing the ceiling display; the actual save
+  // refuses it outright, in `handleSave`.
+  const childrenCountForCeiling = (() => {
+    const parsed = parseChildrenCount(childrenCount);
+    return parsed.ok ? parsed.value : 0;
+  })();
+
   const handleSave = async () => {
     const nextErrors: ErrorMap = {};
     const payload: UpsertTaxDeclarationPayload = { financialYear, regime };
@@ -148,10 +176,19 @@ export default function MyTaxDeclarationPage() {
       }
     }
 
+    const parsedChildrenCount = parseChildrenCount(childrenCount);
+    let nextChildrenCountError: string | undefined;
+    if (parsedChildrenCount.ok) {
+      payload.childrenCount = parsedChildrenCount.value;
+    } else {
+      nextChildrenCountError = parsedChildrenCount.message;
+    }
+    setChildrenCountError(nextChildrenCountError);
+
     setErrors(nextErrors);
     // Nothing is sent while any entry is unreadable. Dropping the bad entry and
     // saving the rest would write a zero nobody typed into the basis for tax.
-    if (Object.keys(nextErrors).length > 0) {
+    if (Object.keys(nextErrors).length > 0 || nextChildrenCountError) {
       toast.error('Nothing was saved. Check the entries marked below.');
       return;
     }
@@ -230,6 +267,13 @@ export default function MyTaxDeclarationPage() {
                       </dd>
                     </div>
                   ))}
+                  <div className="flex items-baseline justify-between gap-4">
+                    <dt className="text-xs text-warm-500">{CHILDREN_COUNT_FIELD.label}</dt>
+                    {/* A count, not rupees, so it is not run through formatINR. */}
+                    <dd className="text-xs font-medium tabular-nums text-warm-800">
+                      {declaration.childrenCount}
+                    </dd>
+                  </div>
                 </dl>
               </CardContent>
               </Card>
@@ -243,17 +287,72 @@ export default function MyTaxDeclarationPage() {
           <Card>
             <CardContent className="space-y-5">
               <div className="grid gap-5 sm:grid-cols-2">
-                {DECLARATION_FIELDS.map((field) => (
-                  <EditableDeclarationField
-                    key={field.key}
-                    field={field}
-                    value={amounts[field.key]}
-                    onChange={(value) => setAmount(field.key, value)}
-                    error={errors[field.key]}
-                    ignored={ignoredForRegime(field.key, regime)}
-                    disabled={saving}
-                  />
-                ))}
+                {DECLARATION_FIELDS.map((field) => {
+                  // The count that drives the two allowances below has to be
+                  // entered somewhere, and it belongs right before the first
+                  // figure it caps rather than off on its own.
+                  const countField =
+                    field.key === 'childrenEducationAllowance' ? (
+                      <div key="childrenCount" data-testid="field-childrenCount" className="space-y-1.5">
+                        <label
+                          htmlFor="declaration-childrenCount"
+                          className="text-sm font-medium text-warm-700"
+                        >
+                          {CHILDREN_COUNT_FIELD.label}
+                        </label>
+                        <Input
+                          id="declaration-childrenCount"
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete="off"
+                          placeholder="0"
+                          value={childrenCount}
+                          disabled={saving}
+                          error={childrenCountError}
+                          onChange={(event) => setChildrenCount(event.target.value)}
+                        />
+                        <p className="text-xs text-warm-500">{CHILDREN_COUNT_FIELD.hint}</p>
+                      </div>
+                    ) : null;
+
+                  // The section 10(14) ceiling for these two figures depends on
+                  // how many children were declared, so it cannot sit on the
+                  // shared spec as a constant. It is computed here and laid
+                  // over the field for this render only, reusing the same
+                  // ceiling warning every other figure gets.
+                  const effectiveField: DeclarationFieldSpec =
+                    field.key === 'childrenEducationAllowance'
+                      ? {
+                          ...field,
+                          ceiling: childrenAllowanceCeiling(
+                            CHILDREN_EDUCATION_ALLOWANCE_MONTHLY_CEILING,
+                            childrenCountForCeiling,
+                          ),
+                        }
+                      : field.key === 'hostelAllowance'
+                        ? {
+                            ...field,
+                            ceiling: childrenAllowanceCeiling(
+                              HOSTEL_ALLOWANCE_MONTHLY_CEILING,
+                              childrenCountForCeiling,
+                            ),
+                          }
+                        : field;
+
+                  return (
+                    <Fragment key={field.key}>
+                      {countField}
+                      <EditableDeclarationField
+                        field={effectiveField}
+                        value={amounts[field.key]}
+                        onChange={(value) => setAmount(field.key, value)}
+                        error={errors[field.key]}
+                        ignored={ignoredForRegime(field.key, regime)}
+                        disabled={saving}
+                      />
+                    </Fragment>
+                  );
+                })}
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-warm-100 pt-4">

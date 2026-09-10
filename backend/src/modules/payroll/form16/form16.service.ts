@@ -2,8 +2,19 @@ import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nest
 import { Decimal } from '@prisma/client/runtime/library';
 import { TaxAgeBand, TaxRegime, UserRole } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import {
+  PROOF_BACKED_FIELDS,
+  readApprovedProofTotals,
+} from '../statutory/statutory.service';
+import { verificationApplies } from '../proofs/proofs.types';
 import { AuthenticatedUser } from '../../../common/types/jwt-payload.type';
-import { calculateIncomeTax, IncomeTaxResult } from '../statutory/statutory.calculators';
+import {
+  calculateIncomeTax,
+  calculateSection10Exemptions,
+  IncomeTaxResult,
+  Section10AllowanceLimits,
+  Section10ExemptionEntry,
+} from '../statutory/statutory.calculators';
 import { resolveIncomeTaxConfig } from '../statutory/statutory.service';
 import { ageBandOn31March, DeductionLimits } from '../statutory/tax-correctness.types';
 
@@ -167,6 +178,14 @@ export interface Form16PartB {
   grossSalary: Decimal;
   /** 2. Less: allowances exempt under section 10. */
   allowancesExemptSection10: Decimal;
+  /**
+   * The heads that make up line 2, claimed against allowed.
+   *
+   * Empty on a new-regime certificate, which exempts none of them. Optional
+   * only so a `Partial<Form16PartB>`-built fixture elsewhere still type-checks;
+   * every certificate this service returns carries it.
+   */
+  allowancesExemptSection10Breakdown?: Section10ExemptionEntry[];
   /** 3. Balance. */
   balance: Decimal;
   /** 4. Deductions under section 16. */
@@ -276,7 +295,11 @@ export class Form16Service {
 
     const statutoryConfig = await this.prisma.statutoryConfig.findUnique({
       where: { tenantId },
-      select: { defaultTaxRegime: true },
+      select: {
+        defaultTaxRegime: true,
+        proofVerificationRequired: true,
+        proofCutoffMonth: true,
+      },
     });
 
     // The employee's own election wins, then whatever they declared, then the
@@ -306,11 +329,54 @@ export class Form16Service {
       section80CCD1B: new Decimal(declaration?.section80CCD1B ?? 0),
       section80CCD2: new Decimal(declaration?.section80CCD2 ?? 0),
       hraExemption: new Decimal(declaration?.hraExemption ?? 0),
+      // The section 10 heads, read exactly as the monthly TDS engine reads
+      // them, so the certificate and the payslips are fed the same figures.
+      ltaExemption: new Decimal(declaration?.ltaExemption ?? 0),
+      childrenEducationAllowance: new Decimal(declaration?.childrenEducationAllowance ?? 0),
+      hostelAllowance: new Decimal(declaration?.hostelAllowance ?? 0),
+      childrenCount: declaration?.childrenCount ?? 0,
       homeLoanInterest: new Decimal(declaration?.homeLoanInterest ?? 0),
       otherDeductions: new Decimal(declaration?.otherDeductions ?? 0),
       otherIncome: new Decimal(declaration?.otherIncome ?? 0),
       previousEmployerTds: new Decimal(declaration?.previousEmployerTds ?? 0),
     };
+
+    // Once the employer requires proofs, the year's TDS was computed from what
+    // was approved rather than from what was declared. A certificate built on
+    // the declaration would show more exempt than the payslips allowed, and a
+    // certificate that disagrees with the year's payslips is worse than either
+    // being wrong on its own. Verification is judged at March, the last month
+    // of the financial year, because that is the position the year closed on.
+    if (statutoryConfig?.proofVerificationRequired) {
+      const inForceByYearEnd = verificationApplies({
+        proofVerificationRequired: true,
+        proofCutoffMonth: statutoryConfig.proofCutoffMonth ?? 1,
+        payrollMonth: 3,
+      });
+
+      if (inForceByYearEnd) {
+        const verified = await readApprovedProofTotals(
+          this.prisma,
+          tenantId,
+          employeeId,
+          financialYear,
+        );
+        // Every proof-backed head, not only the ones with a proof: an
+        // unproved head allows nothing, exactly as it did on the payslips.
+        for (const field of PROOF_BACKED_FIELDS) {
+          const amount = verified[field] ?? 0;
+          // Only the money fields are proof-backed; childrenCount is a count
+          // and stays declared, because a fee receipt says what was paid, not
+          // how many children there are.
+          (declared as unknown as Record<string, Decimal>)[field] = new Decimal(
+            amount,
+          );
+        }
+        notes.push(
+          'Your employer requires proof of a claimed deduction, so the figures here are what was accepted on the evidence you filed, not what you declared.',
+        );
+      }
+    }
 
     // Age is read as at 31 March of the financial year, matching the monthly
     // TDS engine exactly, so a certificate cannot disagree with the payslips
@@ -347,9 +413,32 @@ export class Form16Service {
     const section16Total = standardDeduction.add(section16ProfessionalTax);
 
     // ---- Line 2: exemptions under section 10 --------------------------------
-    // Only HRA is tracked in the declaration. LTA, gratuity and leave
-    // encashment exemptions are not carried here; see the caveats note.
-    const allowancesExempt = isOldRegime ? declared.hraExemption : ZERO;
+    // House rent, leave travel and the two allowances for children. The last
+    // two are ceilinged per child per month, and the ceilings come from the
+    // year's row; a row seeded before those columns existed falls back to the
+    // statutory figures, which are also the schema's defaults.
+    //
+    // Computed by the calculator's own function rather than added up here, so
+    // line 2 is arithmetically the same figure the calculator deducted — and
+    // so a certificate with no slabs to price still caps what it reports.
+    // Gratuity and leave encashment exemptions are settled on exit rather than
+    // in payroll and are not carried here; see the caveats note.
+    const section10Limits: Section10AllowanceLimits | undefined = taxConfig
+      ? {
+          childrenEducationMonthlyLimit: new Decimal(
+            taxConfig.childrenEducationMonthlyLimit ?? 100,
+          ),
+          hostelAllowanceMonthlyLimit: new Decimal(taxConfig.hostelAllowanceMonthlyLimit ?? 300),
+          maxChildren: taxConfig.childrenAllowanceMaxChildren ?? 2,
+        }
+      : undefined;
+
+    const section10Exemptions = calculateSection10Exemptions(
+      declared,
+      isOldRegime,
+      section10Limits,
+    );
+    const allowancesExempt = section10Exemptions.reduce((sum, e) => sum.add(e.allowed), ZERO);
 
     // ---- Line 6: other heads -------------------------------------------------
     // Home loan interest is a loss from house property, so it enters as a
@@ -405,6 +494,9 @@ export class Form16Service {
         })),
         ageBand,
         limits,
+        // The same ceilings line 2 was built from, so the calculator's own
+        // section 10 total and this certificate's line 2 cannot differ.
+        section10Limits,
         marginalReliefEnabled,
       };
 
@@ -515,9 +607,26 @@ export class Form16Service {
     }
     notes.push(
       'Declared amounts are passed to the same tax calculator the monthly TDS engine uses, which ' +
-        "applies the year's Chapter VI-A ceilings and any marginal relief on surcharge; this " +
-        'certificate does not compute either itself. Exemptions other than HRA are not tracked.',
+        "applies the year's Chapter VI-A ceilings, the section 10(14) per-child ceilings and any " +
+        'marginal relief on surcharge; this certificate does not compute any of them itself. Line 2 ' +
+        'covers house rent, leave travel and the two allowances for children; exemptions settled on ' +
+        'exit, such as gratuity and leave encashment, are not tracked here.',
     );
+
+    const trimmed = section10Exemptions.filter((e) => e.disallowed.gt(0));
+    if (trimmed.length > 0) {
+      notes.push(
+        'Line 2 allows less than was claimed under ' +
+          trimmed
+            .map(
+              (e) =>
+                `${e.head} (claimed ${e.declared.toFixed(2)}, allowed ${e.allowed.toFixed(2)})`,
+            )
+            .join(', ') +
+          '. The section 10(14) allowances are capped per child, per month, for at most ' +
+          `${section10Limits?.maxChildren ?? 2} children.`,
+      );
+    }
 
     return {
       financialYear,
@@ -540,6 +649,7 @@ export class Form16Service {
 
       grossSalary: totals.gross,
       allowancesExemptSection10: allowancesExempt,
+      allowancesExemptSection10Breakdown: section10Exemptions,
       balance,
       deductionsSection16: {
         standardDeduction,

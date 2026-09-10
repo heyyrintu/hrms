@@ -660,3 +660,206 @@ describe('Form16Service.getQuarterlyTdsSummary', () => {
     );
   });
 });
+
+describe('Form16Service.computePartB — section 10 exemptions beyond house rent', () => {
+  let service: Form16Service;
+  let prisma: any;
+
+  /** The old-regime declaration, plus the three section 10 heads. */
+  const withSection10 = {
+    ...oldRegimeDeclaration,
+    ltaExemption: new Decimal(45000),
+    childrenEducationAllowance: new Decimal(5000),
+    hostelAllowance: new Decimal(9000),
+    childrenCount: 1,
+  };
+
+  const taxConfigWithSection10 = {
+    ...oldRegimeTaxConfig,
+    childrenEducationMonthlyLimit: new Decimal(100),
+    hostelAllowanceMonthlyLimit: new Decimal(300),
+    childrenAllowanceMaxChildren: 2,
+  };
+
+  beforeEach(async () => {
+    prisma = createMockPrismaService();
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [Form16Service, { provide: PrismaService, useValue: prisma }],
+    }).compile();
+
+    service = module.get<Form16Service>(Form16Service);
+
+    prisma.employee.findFirst.mockResolvedValue(employeeRow);
+    prisma.tenant.findUnique.mockResolvedValue(tenantRow);
+    prisma.statutoryConfig.findUnique.mockResolvedValue({ defaultTaxRegime: 'NEW' });
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(withSection10);
+    prisma.incomeTaxConfig.findUnique.mockResolvedValue(taxConfigWithSection10);
+    prisma.payslip.findMany.mockResolvedValue(payslips(100000, 200, 5000));
+  });
+
+  it('puts all four exempt allowances on line 2, not among the Chapter VI-A deductions', async () => {
+    const result = await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
+
+    // One child, so the two section 10(14) ceilings are 100 x 12 = 1,200 and
+    // 300 x 12 = 3,600 for the year.
+    //
+    //  1. gross salary                            12,00,000
+    //  2. exempt under section 10:
+    //       house rent                             1,20,000
+    //       leave travel                             45,000
+    //       education (1,200 of the 5,000 claimed)    1,200
+    //       hostel (3,600 of the 9,000 claimed)       3,600
+    //                                              1,69,800
+    //  3. balance                                 10,30,200
+    //  4. section 16: 50,000 standard + 2,400 PT     52,400
+    //  5/7. income chargeable / gross total         9,77,800
+    //  8. chapter VI-A: 1,50,000 + 25,000 + 50,000  2,25,000
+    //  9. total income                              7,52,800
+    // 10. tax: 2,50,000 @5% = 12,500;
+    //          2,52,800 @20% = 50,560                63,060
+    // 13. cess at 4% of 63,060 = 2,522.40 -> 2,522    2,522
+    // 14. total tax                                  65,582
+    expect(result.allowancesExemptSection10.toFixed(2)).toBe('169800.00');
+    expect(result.balance.toFixed(2)).toBe('1030200.00');
+    expect(result.incomeChargeableUnderSalaries.toFixed(2)).toBe('977800.00');
+    // The three new heads reduce salary. None of them may appear on line 8.
+    expect(result.deductionsChapterVIA.total.toFixed(2)).toBe('225000.00');
+    expect(result.totalIncome.toFixed(2)).toBe('752800.00');
+    expect(result.taxOnTotalIncome.toFixed(2)).toBe('63060.00');
+    expect(result.healthAndEducationCess.toFixed(2)).toBe('2522.00');
+    expect(result.totalTaxPayable.toFixed(2)).toBe('65582.00');
+  });
+
+  it('reconciles line 9 with the taxable income the tax engine used', async () => {
+    // The certificate and the payslips must not hold two opinions of the same
+    // year. The service warns into `notes` when they diverge, so an empty
+    // divergence note is the assertion that they did not.
+    const result = await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
+
+    expect(result.notes.some((n) => n.includes('does not reconcile'))).toBe(false);
+  });
+
+  it('shows what each head claimed against what it was allowed', async () => {
+    const result = await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
+
+    const byHead = new Map(
+      (result.allowancesExemptSection10Breakdown ?? []).map((e) => [e.head, e]),
+    );
+
+    expect(byHead.get('HRA')?.allowed.toFixed(2)).toBe('120000.00');
+    expect(byHead.get('LTA')?.allowed.toFixed(2)).toBe('45000.00');
+    expect(byHead.get('LTA')?.limit).toBeNull();
+    expect(byHead.get('CHILDREN_EDUCATION')?.declared.toFixed(2)).toBe('5000.00');
+    expect(byHead.get('CHILDREN_EDUCATION')?.limit?.toFixed(2)).toBe('1200.00');
+    expect(byHead.get('CHILDREN_EDUCATION')?.allowed.toFixed(2)).toBe('1200.00');
+    expect(byHead.get('CHILDREN_EDUCATION')?.disallowed.toFixed(2)).toBe('3800.00');
+    expect(byHead.get('HOSTEL_ALLOWANCE')?.limit?.toFixed(2)).toBe('3600.00');
+    expect(byHead.get('HOSTEL_ALLOWANCE')?.disallowed.toFixed(2)).toBe('5400.00');
+  });
+
+  it('exempts none of them on a new-regime certificate', async () => {
+    prisma.employee.findFirst.mockResolvedValue({ ...employeeRow, taxRegime: 'NEW' });
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue({
+      ...withSection10,
+      regime: 'NEW',
+    });
+    prisma.incomeTaxConfig.findUnique.mockResolvedValue(newRegimeTaxConfig);
+
+    const result = await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
+
+    // Section 115BAC withdraws all four, so line 2 is nil and line 3 is the
+    // whole of the gross salary.
+    expect(result.allowancesExemptSection10.toFixed(2)).toBe('0.00');
+    expect(result.balance.toFixed(2)).toBe('1200000.00');
+    expect(result.allowancesExemptSection10Breakdown).toEqual([]);
+  });
+
+  it('still caps line 2 on a certificate with no slabs to compute a liability from', async () => {
+    // No income tax configuration for the year: lines 10 to 14 are nil and a
+    // note says why, but the salary lines are still reported — and an
+    // uncapped 5,000 of school fees on line 2 would be as wrong there as
+    // anywhere else.
+    prisma.incomeTaxConfig.findUnique.mockResolvedValue(null);
+
+    const result = await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
+
+    // 1,20,000 house rent + 45,000 leave travel + 1,200 education +
+    // 3,600 hostel, on the statutory ceilings the calculator falls back to.
+    expect(result.allowancesExemptSection10.toFixed(2)).toBe('169800.00');
+    expect(result.totalTaxPayable.toFixed(2)).toBe('0.00');
+  });
+
+  it('leaves a certificate that declares none of them exactly as it was', async () => {
+    // The regression that matters: no certificate already issued may change
+    // because three new heads exist on the declaration.
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(oldRegimeDeclaration);
+    prisma.incomeTaxConfig.findUnique.mockResolvedValue(oldRegimeTaxConfig);
+
+    const result = await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
+
+    expect(result.allowancesExemptSection10.toFixed(2)).toBe('120000.00');
+    expect(result.totalIncome.toFixed(2)).toBe('802600.00');
+    expect(result.totalTaxPayable.toFixed(2)).toBe('75941.00');
+  });
+
+  it('uses verified amounts on the certificate when the employer requires proofs', async () => {
+    // The year's TDS was computed from approved proofs once verification bit.
+    // A certificate built from the declaration instead would show more exempt
+    // than the payslips allowed, and the two must not disagree.
+    prisma.statutoryConfig.findUnique.mockResolvedValue({
+      proofVerificationRequired: true,
+      proofCutoffMonth: 1,
+    });
+    prisma.investmentProof.findMany.mockResolvedValue([
+      { section: 'SECTION_80C', verifiedAmount: new Decimal(40000) },
+    ]);
+
+    await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
+
+    expect(prisma.investmentProof.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: 'APPROVED', financialYear: FY }),
+      }),
+    );
+  });
+
+  it('leaves the certificate on declared amounts when the employer does not require proofs', async () => {
+    prisma.statutoryConfig.findUnique.mockResolvedValue({
+      proofVerificationRequired: false,
+      proofCutoffMonth: 1,
+    });
+
+    await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
+
+    expect(prisma.investmentProof.findMany).not.toHaveBeenCalled();
+  });
+
+  it('allows nothing for a head with no approved proof, as the payslips did', async () => {
+    // The monthly engine sets every proof-backed head to what was approved,
+    // and an unproved head to zero. A certificate that kept the declared
+    // figure for the unproved heads would show more exempt than the year's
+    // payslips allowed, which is the divergence this whole path exists to
+    // prevent.
+    prisma.statutoryConfig.findUnique.mockResolvedValue({
+      proofVerificationRequired: true,
+      proofCutoffMonth: 1,
+    });
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue({
+      regime: 'OLD',
+      section80C: new Decimal(150000),
+      hraExemption: new Decimal(120000),
+      ltaExemption: new Decimal(45000),
+    });
+    // Only 80C was evidenced.
+    prisma.investmentProof.findMany.mockResolvedValue([
+      { section: 'SECTION_80C', verifiedAmount: new Decimal(40000) },
+    ]);
+
+    const result = await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
+
+    // House rent and leave travel were declared but never proved, so neither
+    // reduces salary on the certificate.
+    expect(result.allowancesExemptSection10.toFixed(2)).toBe('0.00');
+  });
+});

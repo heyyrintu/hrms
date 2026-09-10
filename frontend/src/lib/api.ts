@@ -2,6 +2,8 @@ import axios from 'axios';
 
 import { StatutoryReturnKind, UpdateSettlementPayload } from '@/types/statutory';
 import {
+  IncomeTaxConfigPayload,
+  ProfessionalTaxSlabPayload,
   UpdateStatutoryConfigPayload,
   UpsertTaxDeclarationPayload,
 } from '@/types/statutory-config';
@@ -729,4 +731,38 @@ export const proofsApi = {
     });
     downloadBlob(response.data as Blob, filename, 'application/octet-stream');
   },
+};
+
+// ============================================
+// SLAB TABLES
+// ============================================
+/**
+ * Editing the statutory slab tables.
+ *
+ * These were seed-only until now. They are statutory figures, so a wrong slab
+ * mis-deducts tax from every employee it touches and a wrong professional tax
+ * row does the same for a whole state. Anywhere these are edited should say so.
+ *
+ * An income tax ladder is replaced whole rather than row by row: a set of slabs
+ * with a gap or an overlap in it is not a ladder, and saving one band at a time
+ * would let a table sit broken between saves.
+ */
+export const slabsApi = {
+  listProfessionalTax: (state?: string) =>
+    api.get('/payroll/slabs/professional-tax', { params: state ? { state } : undefined }),
+  createProfessionalTax: (data: ProfessionalTaxSlabPayload) =>
+    api.post('/payroll/slabs/professional-tax', data),
+  updateProfessionalTax: (id: string, data: ProfessionalTaxSlabPayload) =>
+    api.put(`/payroll/slabs/professional-tax/${id}`, data),
+  deleteProfessionalTax: (id: string) =>
+    api.delete(`/payroll/slabs/professional-tax/${id}`),
+
+  listIncomeTax: (financialYear?: number) =>
+    api.get('/payroll/slabs/income-tax', {
+      params: financialYear ? { financialYear } : undefined,
+    }),
+  /** Creates or replaces the configuration for a year, regime and age band. */
+  saveIncomeTax: (data: IncomeTaxConfigPayload) =>
+    api.put('/payroll/slabs/income-tax', data),
+  deleteIncomeTax: (id: string) => api.delete(`/payroll/slabs/income-tax/${id}`),
 };

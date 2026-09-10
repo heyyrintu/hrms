@@ -13,11 +13,13 @@ import { Form16PdfService } from './form16/form16-pdf.service';
 import { Form16Service } from './form16/form16.service';
 import { ProofsController } from './proofs/proofs.controller';
 import { ProofsService } from './proofs/proofs.service';
+import { SlabsController } from './slabs/slabs.controller';
+import { SlabsService } from './slabs/slabs.service';
 
 @Module({
-  controllers: [PayrollController, StatutoryController, ReturnsController, Form16Controller, ProofsController],
+  controllers: [PayrollController, StatutoryController, ReturnsController, Form16Controller, ProofsController, SlabsController],
   providers: [PayrollService, SalaryService, PayrollCalculationService,
-    StatutoryService, PayrollPdfService, ReturnsService, Form16Service, Form16PdfService, ProofsService],
+    StatutoryService, PayrollPdfService, ReturnsService, Form16Service, Form16PdfService, ProofsService, SlabsService],
   exports: [PayrollService, SalaryService],
 })
 export class PayrollModule {}
