@@ -674,6 +674,22 @@ export interface EmployeeReportParams {
 // PAYROLL TYPES
 // ============================================
 
+/**
+ * Money on these types is a `string`, not a `number`.
+ *
+ * The backend holds these columns as Prisma `Decimal`, which serializes to a
+ * decimal string rather than a JavaScript number, and that is deliberate: a
+ * rupee figure that has been through a float is no longer the figure that was
+ * computed. Format them with `formatCurrency` from `@/lib/salaryCalculations`,
+ * add them with `sumMoney`, and send them back untouched. Do not parse one
+ * into a `number` and then store it or add it.
+ *
+ * Two fields below stay `number` on purpose. `SalaryComponent.value` and
+ * `PayslipLineItem.amount` live inside `Json` columns rather than `Decimal`
+ * ones, and the backend writes real JSON numbers into them. See the notes at
+ * each. `SalaryBreakdown` is computed in the browser and never crosses the wire.
+ */
+
 export enum PayrollRunStatus {
   DRAFT = 'DRAFT',
   PROCESSING = 'PROCESSING',
@@ -686,6 +702,13 @@ export interface SalaryComponent {
   name: string;
   type: 'earning' | 'deduction';
   calcType: 'fixed' | 'percentage';
+  /**
+   * A flat amount or a percentage, depending on `calcType`.
+   *
+   * `number`, not `string`: this lives in `salary_structures.components`, a
+   * `Json` column rather than a `Decimal` one, and the DTO validates it with
+   * `@IsNumber()`. It is a structure input, not a computed payroll figure.
+   */
   value: number;
 }
 
@@ -706,7 +729,8 @@ export interface EmployeeSalary {
   tenantId: string;
   employeeId: string;
   salaryStructureId: string;
-  basePay: number;
+  /** `employee_salaries.basePay`, `Decimal(12, 2)`. */
+  basePay: string;
   effectiveFrom: string;
   effectiveTo?: string;
   isActive: boolean;
@@ -716,6 +740,14 @@ export interface EmployeeSalary {
   updatedAt: string;
 }
 
+/**
+ * A preview of what a structure pays on a given base, computed in the browser
+ * by `calculateSalaryBreakdown` for the salary form and the employee card.
+ *
+ * Numbers throughout, and deliberately so: this is never sent by the API and
+ * never sent back to it. The authoritative figures are the ones the backend
+ * computes in `Decimal` when payroll is run, which arrive on `Payslip`.
+ */
 export interface SalaryBreakdown {
   basePay: number;
   earnings: Array<{ name: string; amount: number }>;
@@ -731,9 +763,13 @@ export interface PayrollRun {
   month: number;
   year: number;
   status: PayrollRunStatus;
-  totalGross: number;
-  totalDeductions: number;
-  totalNet: number;
+  /** `payroll_runs.totalGross`, `Decimal(14, 2)`. */
+  totalGross: string;
+  /** `payroll_runs.totalDeductions`, `Decimal(14, 2)`. */
+  totalDeductions: string;
+  /** `payroll_runs.totalNet`, `Decimal(14, 2)`. */
+  totalNet: string;
+  /** A count of employees, and an `Int` column. */
   processedCount: number;
   remarks?: string;
   processedAt?: string;
@@ -746,6 +782,11 @@ export interface PayrollRun {
 
 export interface PayslipLineItem {
   name: string;
+  /**
+   * `number`, not `string`: the earnings and deductions lines live in `Json`
+   * columns, and the backend rounds each to paise and calls `.toNumber()`
+   * before writing them, so a real JSON number is what arrives.
+   */
   amount: number;
 }
 
@@ -758,14 +799,20 @@ export interface Payslip {
   presentDays: number;
   leaveDays: number;
   lopDays: number;
-  otHours: number;
-  basePay: number;
+  /** `payslips.otHours`, `Decimal(6, 2)`. Hours, but a decimal string all the same. */
+  otHours: string;
+  /** `payslips.basePay`, `Decimal(12, 2)`. */
+  basePay: string;
   earnings: PayslipLineItem[];
   deductions: PayslipLineItem[];
-  grossPay: number;
-  totalDeductions: number;
-  netPay: number;
-  otPay: number;
+  /** `payslips.grossPay`, `Decimal(12, 2)`. */
+  grossPay: string;
+  /** `payslips.totalDeductions`, `Decimal(12, 2)`. */
+  totalDeductions: string;
+  /** `payslips.netPay`, `Decimal(12, 2)`. */
+  netPay: string;
+  /** `payslips.otPay`, `Decimal(12, 2)`. */
+  otPay: string;
   employee?: {
     id: string;
     employeeCode: string;

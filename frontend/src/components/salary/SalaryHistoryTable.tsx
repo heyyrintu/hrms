@@ -64,7 +64,7 @@ export function SalaryHistoryTable({
                 {record.salaryStructure?.name || 'N/A'}
               </td>
               <td className="px-4 py-3 text-sm font-semibold text-warm-900 text-right">
-                {formatCurrency(Number(record.basePay))}
+                {formatCurrency(record.basePay)}
               </td>
               <td className="px-4 py-3 text-sm text-warm-600">
                 {formatSalaryDate(record.effectiveFrom)}

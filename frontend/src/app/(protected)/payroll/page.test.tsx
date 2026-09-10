@@ -1,6 +1,7 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import PayrollPage from './page';
+import { payrollApi } from '@/lib/api';
 
 // Mock lucide-react icons
 jest.mock('lucide-react', () =>
@@ -123,5 +124,44 @@ describe('PayrollPage', () => {
     await waitFor(() => {
       expect(screen.getByText('No Payroll Runs')).toBeInTheDocument();
     });
+  });
+
+  /**
+   * Run totals arrive as decimal strings, because the backend holds them as
+   * Prisma `Decimal`. Added as floats these three come to 7948158.499999999,
+   * which is displayed as a rupee less than was actually paid out.
+   */
+  it('totals paid runs exactly, without adding them as floats', async () => {
+    const paidRun = (id: string, month: number, totalNet: string) => ({
+      id,
+      tenantId: 't1',
+      month,
+      year: 2026,
+      status: 'PAID',
+      totalGross: totalNet,
+      totalDeductions: '0.00',
+      totalNet,
+      processedCount: 10,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    (payrollApi.getRuns as jest.Mock).mockResolvedValueOnce({
+      data: [
+        paidRun('r1', 1, '448631.64'),
+        paidRun('r2', 2, '6898878.10'),
+        paidRun('r3', 3, '600648.76'),
+      ],
+    });
+
+    render(<PayrollPage />);
+
+    // The stat cards render before the runs arrive, so wait for a row.
+    await waitFor(() => {
+      expect(screen.getByText('January 2026')).toBeInTheDocument();
+    });
+
+    const totalPaidOut = screen.getByText('Total Paid Out').nextElementSibling;
+    expect(totalPaidOut).toHaveTextContent('₹79,48,159');
   });
 });

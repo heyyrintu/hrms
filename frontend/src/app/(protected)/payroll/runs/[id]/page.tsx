@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { payrollApi } from '@/lib/api';
+import { formatCurrency, isPositiveMoney } from '@/lib/salaryCalculations';
 import { PayrollRun, Payslip, PayrollRunStatus } from '@/types';
 import toast from 'react-hot-toast';
 import {
@@ -89,13 +90,6 @@ export default function PayrollRunDetailPage() {
             toast.error(error.response?.data?.message || 'Failed to mark as paid');
         }
     };
-
-    const formatCurrency = (val: number) =>
-        new Intl.NumberFormat('en-IN', {
-            style: 'currency',
-            currency: 'INR',
-            maximumFractionDigits: 0,
-        }).format(val);
 
     const handleDownload = async (slip: Payslip) => {
         setDownloading(slip.id);
@@ -192,7 +186,7 @@ export default function PayrollRunDetailPage() {
                         <CardContent className="py-4">
                             <p className="text-sm text-warm-500">Total Gross</p>
                             <p className="text-2xl font-bold text-warm-900">
-                                {formatCurrency(Number(run.totalGross))}
+                                {formatCurrency(run.totalGross)}
                             </p>
                         </CardContent>
                     </Card>
@@ -200,7 +194,7 @@ export default function PayrollRunDetailPage() {
                         <CardContent className="py-4">
                             <p className="text-sm text-warm-500">Total Deductions</p>
                             <p className="text-2xl font-bold text-red-600">
-                                {formatCurrency(Number(run.totalDeductions))}
+                                {formatCurrency(run.totalDeductions)}
                             </p>
                         </CardContent>
                     </Card>
@@ -208,7 +202,7 @@ export default function PayrollRunDetailPage() {
                         <CardContent className="py-4">
                             <p className="text-sm text-warm-500">Total Net Pay</p>
                             <p className="text-2xl font-bold text-emerald-600">
-                                {formatCurrency(Number(run.totalNet))}
+                                {formatCurrency(run.totalNet)}
                             </p>
                         </CardContent>
                     </Card>
@@ -266,21 +260,21 @@ export default function PayrollRunDetailPage() {
                                                 )}
                                             </td>
                                             <td className="px-4 py-3 text-right text-sm">
-                                                {formatCurrency(Number(slip.basePay))}
+                                                {formatCurrency(slip.basePay)}
                                             </td>
                                             <td className="px-4 py-3 text-right text-sm text-blue-600">
-                                                {Number(slip.otPay) > 0
-                                                    ? formatCurrency(Number(slip.otPay))
+                                                {isPositiveMoney(slip.otPay)
+                                                    ? formatCurrency(slip.otPay)
                                                     : '-'}
                                             </td>
                                             <td className="px-4 py-3 text-right text-sm font-medium">
-                                                {formatCurrency(Number(slip.grossPay))}
+                                                {formatCurrency(slip.grossPay)}
                                             </td>
                                             <td className="px-4 py-3 text-right text-sm text-red-600">
-                                                {formatCurrency(Number(slip.totalDeductions))}
+                                                {formatCurrency(slip.totalDeductions)}
                                             </td>
                                             <td className="px-4 py-3 text-right text-sm font-bold text-emerald-700">
-                                                {formatCurrency(Number(slip.netPay))}
+                                                {formatCurrency(slip.netPay)}
                                             </td>
                                             <td className="px-4 py-3 text-center">
                                                 <button

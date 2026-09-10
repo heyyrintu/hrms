@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { payrollApi } from '@/lib/api';
+import { formatCurrency, sumMoney } from '@/lib/salaryCalculations';
 import { PayrollRun, PayrollRunStatus } from '@/types';
 import toast from 'react-hot-toast';
 import {
@@ -127,17 +128,13 @@ export default function PayrollPage() {
         }
     };
 
-    const formatCurrency = (val: number) =>
-        new Intl.NumberFormat('en-IN', {
-            style: 'currency',
-            currency: 'INR',
-            maximumFractionDigits: 0,
-        }).format(val);
-
-    // Summary stats
-    const totalPaid = runs
-        .filter((r) => r.status === PayrollRunStatus.PAID)
-        .reduce((sum, r) => sum + Number(r.totalNet), 0);
+    // Summary stats. Run totals are decimal strings, so they are added as
+    // decimals: three plausible monthly totals adding to 7948158.50 come to
+    // 7948158.499999999 as floats, and the card then reports a rupee less
+    // than was actually paid out.
+    const totalPaid = sumMoney(
+        runs.filter((r) => r.status === PayrollRunStatus.PAID).map((r) => r.totalNet),
+    );
     const pendingRuns = runs.filter(
         (r) => r.status === PayrollRunStatus.DRAFT || r.status === PayrollRunStatus.COMPUTED,
     ).length;
@@ -262,13 +259,13 @@ export default function PayrollPage() {
                                                 {run.processedCount || run._count?.payslips || 0}
                                             </td>
                                             <td className="px-4 py-3 text-right text-sm font-medium">
-                                                {formatCurrency(Number(run.totalGross))}
+                                                {formatCurrency(run.totalGross)}
                                             </td>
                                             <td className="px-4 py-3 text-right text-sm text-red-600">
-                                                {formatCurrency(Number(run.totalDeductions))}
+                                                {formatCurrency(run.totalDeductions)}
                                             </td>
                                             <td className="px-4 py-3 text-right text-sm font-bold text-emerald-700">
-                                                {formatCurrency(Number(run.totalNet))}
+                                                {formatCurrency(run.totalNet)}
                                             </td>
                                             <td className="px-4 py-3">
                                                 <div className="flex items-center justify-center gap-1">
