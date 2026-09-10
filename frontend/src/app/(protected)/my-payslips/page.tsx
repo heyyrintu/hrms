@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { payrollApi } from '@/lib/api';
+import { formatCurrency, isPositiveMoney } from '@/lib/salaryCalculations';
 import { Payslip, PayrollRunStatus } from '@/types';
 import toast from 'react-hot-toast';
 import { Receipt, ChevronDown, ChevronUp, Download } from 'lucide-react';
@@ -35,13 +36,6 @@ export default function MyPayslipsPage() {
             setLoading(false);
         }
     };
-
-    const formatCurrency = (val: number) =>
-        new Intl.NumberFormat('en-IN', {
-            style: 'currency',
-            currency: 'INR',
-            maximumFractionDigits: 0,
-        }).format(val);
 
     const handleDownload = async (slip: Payslip) => {
         setDownloading(slip.id);
@@ -121,7 +115,7 @@ export default function MyPayslipsPage() {
                                             <div className="flex items-center gap-4">
                                                 <div className="text-right">
                                                     <p className="text-lg font-bold text-emerald-700">
-                                                        {formatCurrency(Number(slip.netPay))}
+                                                        {formatCurrency(slip.netPay)}
                                                     </p>
                                                     <Badge
                                                         variant={
@@ -154,7 +148,7 @@ export default function MyPayslipsPage() {
                                                             <div className="flex justify-between text-sm">
                                                                 <span className="text-warm-600">Base Pay</span>
                                                                 <span className="font-medium">
-                                                                    {formatCurrency(Number(slip.basePay))}
+                                                                    {formatCurrency(slip.basePay)}
                                                                 </span>
                                                             </div>
                                                             {earnings.map((e, i) => (
@@ -165,19 +159,19 @@ export default function MyPayslipsPage() {
                                                                     </span>
                                                                 </div>
                                                             ))}
-                                                            {Number(slip.otPay) > 0 && (
+                                                            {isPositiveMoney(slip.otPay) && (
                                                                 <div className="flex justify-between text-sm">
                                                                     <span className="text-warm-600">
-                                                                        OT Pay ({Number(slip.otHours)}h)
+                                                                        OT Pay ({slip.otHours}h)
                                                                     </span>
                                                                     <span className="font-medium text-blue-600">
-                                                                        {formatCurrency(Number(slip.otPay))}
+                                                                        {formatCurrency(slip.otPay)}
                                                                     </span>
                                                                 </div>
                                                             )}
                                                             <div className="flex justify-between text-sm font-bold pt-1.5 border-t border-warm-200">
                                                                 <span>Gross Pay</span>
-                                                                <span>{formatCurrency(Number(slip.grossPay))}</span>
+                                                                <span>{formatCurrency(slip.grossPay)}</span>
                                                             </div>
                                                         </div>
                                                     </div>
@@ -201,7 +195,7 @@ export default function MyPayslipsPage() {
                                                             <div className="flex justify-between text-sm font-bold pt-1.5 border-t border-warm-200">
                                                                 <span>Total Deductions</span>
                                                                 <span className="text-red-600">
-                                                                    {formatCurrency(Number(slip.totalDeductions))}
+                                                                    {formatCurrency(slip.totalDeductions)}
                                                                 </span>
                                                             </div>
                                                         </div>
@@ -212,7 +206,7 @@ export default function MyPayslipsPage() {
                                                 <div className="mt-4 p-3 bg-emerald-50 rounded-lg flex justify-between items-center">
                                                     <span className="font-semibold text-emerald-900">Net Pay</span>
                                                     <span className="text-xl font-bold text-emerald-700">
-                                                        {formatCurrency(Number(slip.netPay))}
+                                                        {formatCurrency(slip.netPay)}
                                                     </span>
                                                 </div>
 

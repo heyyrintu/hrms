@@ -88,7 +88,7 @@ export function CurrentSalaryCard({
           <div>
             <p className="text-sm text-warm-500">Base Pay</p>
             <p className="text-2xl font-bold text-warm-900 mt-1">
-              {formatCurrency(Number(salary.basePay))}
+              {formatCurrency(salary.basePay)}
             </p>
           </div>
           <div>
@@ -109,6 +109,14 @@ export function CurrentSalaryCard({
         {salary.salaryStructure?.components && (
           <div>
             <h4 className="text-sm font-semibold text-warm-900 mb-3">Salary Breakdown</h4>
+            {/*
+              The one place a payroll figure is deliberately parsed into a
+              number. SalaryComponentsPreview estimates what this structure
+              pays on this base, from component percentages, in the browser.
+              It is not a payslip: the figures an employee is actually paid
+              are computed by the backend in Decimal when payroll runs, and
+              arrive on Payslip.
+            */}
             <SalaryComponentsPreview
               basePay={Number(salary.basePay)}
               components={salary.salaryStructure.components}
