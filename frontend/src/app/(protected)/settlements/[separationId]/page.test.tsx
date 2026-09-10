@@ -558,4 +558,17 @@ describe('SettlementDetailPage — recompute', () => {
       });
     });
   });
+
+  it('refuses a negative recovery rather than letting the server reject it', async () => {
+    render(<SettlementDetailPage />);
+
+    const recoveries = (await screen.findByLabelText(/Other recoveries/i)) as HTMLInputElement;
+    fireEvent.change(recoveries, { target: { value: '-500' } });
+    fireEvent.click(screen.getByRole('button', { name: /save entered figures/i }));
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/Other recoveries/i));
+    });
+    expect(mockedSettlementApi.update).not.toHaveBeenCalled();
+  });
 });

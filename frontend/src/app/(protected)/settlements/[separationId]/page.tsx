@@ -154,12 +154,30 @@ export default function SettlementDetailPage() {
 
   const handleSaveFigures = async () => {
     if (!settlement) return;
+
+    // Read all three before sending. An unreadable entry used to become zero on
+    // the way out and the save reported success, so a typo in the TDS box would
+    // write a figure nobody entered to a settlement someone is paid from.
+    const entered: [string, number | null][] = [
+      ['Other earnings', toPayloadNumber(figures.otherEarnings)],
+      ['Other recoveries', toPayloadNumber(figures.otherRecoveries)],
+      ['TDS', toPayloadNumber(figures.tds)],
+    ];
+    const unreadable = entered.find(([, value]) => value === null);
+    if (unreadable) {
+      toast.error(
+        `${unreadable[0]} must be a number of rupees, zero or more. Nothing was saved.`,
+      );
+      return;
+    }
+    const [[, otherEarnings], [, otherRecoveries], [, tds]] = entered;
+
     setBusy(true);
     try {
       const payload: UpdateSettlementPayload = {
-        otherEarnings: toPayloadNumber(figures.otherEarnings),
-        otherRecoveries: toPayloadNumber(figures.otherRecoveries),
-        tds: toPayloadNumber(figures.tds),
+        otherEarnings: otherEarnings as number,
+        otherRecoveries: otherRecoveries as number,
+        tds: tds as number,
         remarks: figures.remarks,
       };
       // The client takes a loose record; the payload above is the typed shape

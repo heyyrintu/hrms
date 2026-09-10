@@ -18,9 +18,12 @@ import toast from 'react-hot-toast';
  * it gets a state of its own rather than an empty cell.
  */
 const NOT_COMPUTED = 'NOT_COMPUTED';
+/** The settlement could not be looked up, which is not the same as absent. */
+const UNAVAILABLE = 'UNAVAILABLE';
 
 const settlementStateOptions = [
   { value: NOT_COMPUTED, label: 'Not computed' },
+  { value: UNAVAILABLE, label: 'Unavailable' },
   { value: SettlementStatus.DRAFT, label: 'Draft' },
   { value: SettlementStatus.APPROVED, label: 'Approved' },
   { value: SettlementStatus.PAID, label: 'Paid' },
@@ -29,6 +32,7 @@ const settlementStateOptions = [
 
 const stateVariants: Record<string, 'info' | 'warning' | 'success' | 'gray'> = {
   [NOT_COMPUTED]: 'gray',
+  [UNAVAILABLE]: 'warning',
   [SettlementStatus.DRAFT]: 'warning',
   [SettlementStatus.APPROVED]: 'info',
   [SettlementStatus.PAID]: 'success',
@@ -47,9 +51,24 @@ const typeColors: Record<string, 'info' | 'danger' | 'gray' | 'warning'> = {
 interface Row {
   separation: Separation;
   settlement: Settlement | null;
+  /**
+   * The lookup failed for a reason other than "there isn't one".
+   *
+   * Only a 404 means no settlement has been computed. Any other failure leaves
+   * us not knowing, and calling that "Not computed" would offer to compute over
+   * a settlement that may already be approved.
+   */
+  lookupFailed: boolean;
 }
 
-const stateOf = (row: Row): string => row.settlement?.status ?? NOT_COMPUTED;
+const stateOf = (row: Row): string => {
+  if (row.settlement) return row.settlement.status;
+  return row.lookupFailed ? UNAVAILABLE : NOT_COMPUTED;
+};
+
+/** A 404 is the expected answer for a leaver whose settlement is not computed. */
+const isNotFound = (error: unknown): boolean =>
+  (error as { response?: { status?: number } })?.response?.status === 404;
 
 /**
  * Who is owed a settlement, and what stage each one is at.
@@ -96,9 +115,11 @@ export default function SettlementsPage() {
       setRows(
         separations.map((separation, index) => {
           const result = settled[index];
+          const found = result.status === 'fulfilled';
           return {
             separation,
-            settlement: result.status === 'fulfilled' ? result.value.data : null,
+            settlement: found ? result.value.data : null,
+            lookupFailed: !found && !isNotFound(result.reason),
           };
         }),
       );
@@ -257,7 +278,7 @@ export default function SettlementsPage() {
       ) : (
         <div className="space-y-4">
           {filteredRows.map((row) => {
-            const { separation, settlement } = row;
+            const { separation, settlement, lookupFailed } = row;
             const employee = separation.employee;
             const state = stateOf(row);
             return (
@@ -286,7 +307,11 @@ export default function SettlementsPage() {
                           {separation.status.replace(/_/g, ' ')}
                         </Badge>
                         <Badge variant={stateVariants[state] ?? 'gray'}>
-                          {state === NOT_COMPUTED ? 'Not computed' : state}
+                          {state === NOT_COMPUTED
+                            ? 'Not computed'
+                            : state === UNAVAILABLE
+                              ? 'Unavailable'
+                              : state}
                         </Badge>
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-warm-400">
@@ -311,7 +336,7 @@ export default function SettlementsPage() {
                         href={`/settlements/${separation.id}`}
                         className="inline-flex items-center gap-1 rounded-lg px-3 py-2 text-sm font-medium text-primary-700 transition-colors hover:bg-primary-50"
                       >
-                        {settlement ? 'Open' : 'Compute'}
+                        {settlement || lookupFailed ? 'Open' : 'Compute'}
                         <ArrowRight className="h-4 w-4" />
                       </Link>
                     </div>

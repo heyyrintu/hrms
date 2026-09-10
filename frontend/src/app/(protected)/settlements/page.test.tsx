@@ -273,4 +273,23 @@ describe('SettlementsPage', () => {
 
     expect(screen.queryByText(/Asha/)).not.toBeInTheDocument();
   });
+
+  it('does not report a server failure as a settlement that was never computed', async () => {
+    // Only a 404 means "no settlement yet". A 500 or a dropped connection tells
+    // us nothing about whether one exists, and showing Compute against an
+    // approved settlement invites someone to try replacing it.
+    mockedExitApi.getAll.mockResolvedValue({ data: [asha] } as never);
+    mockedSettlementApi.getBySeparation.mockRejectedValue({
+      response: { status: 500, data: { message: 'Database unavailable' } },
+    } as never);
+
+    render(<SettlementsPage />);
+
+    // "Not computed" also names a stat card and a filter option, so assert on
+    // the row itself: its badge and the action it offers.
+    const row = await screen.findByTestId('settlement-row-sep-1');
+    expect(within(row).getByText(/Unavailable/i)).toBeInTheDocument();
+    expect(within(row).getByRole('link', { name: /Open/i })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Compute/i })).not.toBeInTheDocument();
+  });
 });

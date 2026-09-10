@@ -3,10 +3,32 @@
  * its starting year: 2026 means FY 2026-27, April 2026 to March 2027.
  */
 
-/** The financial year that today falls in. */
+/**
+ * The calendar date in India, whatever zone the reader's browser is in.
+ *
+ * `Date#getMonth` reads the browser's local zone. At 20:00 UTC on 31 March,
+ * India has already begun the new financial year while a browser in New York
+ * has not, and the page would default to the year that closed the night
+ * before. The financial year is a fact about India, so it is read in India.
+ */
+const istParts = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Kolkata',
+  year: 'numeric',
+  month: 'numeric',
+});
+
+/** The financial year that today falls in, by Indian time. */
 export function currentFinancialYear(today: Date = new Date()): number {
-  // getMonth() is zero based, so 3 is April.
-  return today.getMonth() >= 3 ? today.getFullYear() : today.getFullYear() - 1;
+  const parts = istParts.formatToParts(today);
+  const year = Number(parts.find((part) => part.type === 'year')?.value);
+  // Months here are one based, so 4 is April.
+  const month = Number(parts.find((part) => part.type === 'month')?.value);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    // Should not happen, but guessing a year on a payroll page is worse than
+    // falling back to the browser's own reading of the same instant.
+    return today.getMonth() >= 3 ? today.getFullYear() : today.getFullYear() - 1;
+  }
+  return month >= 4 ? year : year - 1;
 }
 
 /** "FY 2026-27" for 2026. */
