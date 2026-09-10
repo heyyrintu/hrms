@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Badge } from '@/components/ui/Badge';
 import { payrollApi } from '@/lib/api';
-import { formatCurrency, isPositiveMoney } from '@/lib/salaryCalculations';
+import { formatCurrency, formatHours, isPositiveMoney } from '@/lib/salaryCalculations';
 import { Payslip, PayrollRunStatus } from '@/types';
 import toast from 'react-hot-toast';
 import { Receipt, ChevronDown, ChevronUp, Download } from 'lucide-react';
@@ -162,7 +162,7 @@ export default function MyPayslipsPage() {
                                                             {isPositiveMoney(slip.otPay) && (
                                                                 <div className="flex justify-between text-sm">
                                                                     <span className="text-warm-600">
-                                                                        OT Pay ({slip.otHours}h)
+                                                                        OT Pay ({formatHours(slip.otHours)}h)
                                                                     </span>
                                                                     <span className="font-medium text-blue-600">
                                                                         {formatCurrency(slip.otPay)}

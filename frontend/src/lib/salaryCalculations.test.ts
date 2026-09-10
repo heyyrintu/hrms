@@ -1,6 +1,7 @@
 import {
   calculateSalaryBreakdown,
   formatCurrency,
+  formatHours,
   isPositiveMoney,
   sumMoney,
 } from './salaryCalculations';
@@ -57,6 +58,34 @@ describe('sumMoney', () => {
 
   it('refuses a value that is not a decimal, rather than silently dropping it', () => {
     expect(() => sumMoney(['1000.00', 'not-a-number'])).toThrow(/not-a-number/);
+  });
+});
+
+describe('formatHours', () => {
+  it.each([
+    ['2.50', '2.5'],
+    ['2.00', '2'],
+    ['0.00', '0'],
+    ['10.25', '10.25'],
+    ['0.50', '0.5'],
+    ['12', '12'],
+    ['100.10', '100.1'],
+  ])('shows %s as %s', (value, expected) => {
+    expect(formatHours(value)).toBe(expected);
+  });
+
+  it('leaves a whole number alone rather than showing "2."', () => {
+    expect(formatHours('2.000')).toBe('2');
+  });
+
+  it('keeps a figure it cannot read, rather than showing NaN', () => {
+    expect(formatHours('')).toBe('0');
+    expect(formatHours('n/a')).toBe('n/a');
+  });
+
+  it('still reads a number, for figures computed in the browser', () => {
+    expect(formatHours(2.5)).toBe('2.5');
+    expect(formatHours(3)).toBe('3');
   });
 });
 

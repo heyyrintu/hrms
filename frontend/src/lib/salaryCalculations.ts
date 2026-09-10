@@ -68,6 +68,24 @@ export function formatCurrency(amount: string | number): string {
 }
 
 /**
+ * Formats a decimal quantity for display, without its trailing zeros.
+ *
+ * `payslips.otHours` is a `Decimal(6, 2)`, so two hours arrive as "2.00" and
+ * two and a half as "2.50". Neither reads as a count of hours. The zeros are
+ * trimmed off the string rather than parsed away through a float, and a
+ * figure that is not a plain decimal is shown as it arrived rather than as
+ * "NaN".
+ */
+export function formatHours(value: string | number): string {
+  const raw = String(value).trim();
+  if (raw === '') return '0';
+  if (!DECIMAL_STRING.test(raw)) return raw;
+  if (!raw.includes('.')) return raw;
+  const trimmed = raw.replace(/0+$/, '').replace(/\.$/, '');
+  return trimmed === '' || trimmed === '-' ? '0' : trimmed;
+}
+
+/**
  * Whether a figure is greater than zero.
  *
  * A decimal string is read as digits, so nothing is parsed into a float to
