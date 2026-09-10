@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { expensesApi } from '@/lib/api';
+import { formatCurrency, sumMoney } from '@/lib/salaryCalculations';
 import { cn } from '@/lib/utils';
 import {
     RefreshCw,
@@ -116,15 +117,9 @@ export default function ExpenseApprovalsPage() {
         });
     };
 
-    const formatCurrency = (amount: number) => {
-        return new Intl.NumberFormat('en-IN', {
-            style: 'currency',
-            currency: 'INR',
-            maximumFractionDigits: 0,
-        }).format(amount);
-    };
-
-    const totalPendingAmount = claims.reduce((sum, c) => sum + Number(c.amount), 0);
+    // Decimal strings, added as decimals: summing them as floats drifts across
+    // a rounding boundary and reports a rupee less than is pending.
+    const totalPendingAmount = sumMoney(claims.map((c) => c.amount));
 
     return (
         <>
@@ -240,7 +235,7 @@ export default function ExpenseApprovalsPage() {
                                                 {formatDate(claim.expenseDate)}
                                             </td>
                                             <td className="px-4 py-3 text-sm font-semibold text-warm-900 text-right whitespace-nowrap">
-                                                {formatCurrency(Number(claim.amount))}
+                                                {formatCurrency(claim.amount)}
                                             </td>
                                             <td className="px-4 py-3 text-right whitespace-nowrap">
                                                 <button
@@ -289,7 +284,7 @@ export default function ExpenseApprovalsPage() {
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-sm text-warm-500">Amount</span>
-                                <span className="text-sm font-bold">{formatCurrency(Number(reviewingClaim.amount))}</span>
+                                <span className="text-sm font-bold">{formatCurrency(reviewingClaim.amount)}</span>
                             </div>
                             <div className="flex justify-between">
                                 <span className="text-sm text-warm-500">Date</span>

@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { expensesApi } from '@/lib/api';
+import { formatCurrency, sumMoney } from '@/lib/salaryCalculations';
 import { cn } from '@/lib/utils';
 import {
     Plus,
@@ -96,7 +97,8 @@ export default function ExpensesPage() {
         setEditingClaim(claim);
         setFormData({
             categoryId: claim.categoryId,
-            amount: String(claim.amount),
+            // Already a decimal string; the form edits it as typed.
+            amount: claim.amount,
             description: claim.description,
             expenseDate: claim.expenseDate.split('T')[0],
         });
@@ -184,18 +186,17 @@ export default function ExpensesPage() {
         });
     };
 
-    const formatCurrency = (amount: number) => {
-        return new Intl.NumberFormat('en-IN', {
-            style: 'currency',
-            currency: 'INR',
-            maximumFractionDigits: 0,
-        }).format(amount);
-    };
-
-    const totalClaimed = claims.reduce((sum, c) => sum + Number(c.amount), 0);
-    const totalApproved = claims
-        .filter((c) => c.status === 'APPROVED' || c.status === 'REIMBURSED')
-        .reduce((sum, c) => sum + Number(c.amount), 0);
+    // Claim amounts are decimal strings, so they are added as decimals. Three
+    // plausible claims adding to 44967.50 come to 44967.49999999999 as floats,
+    // and the card then reports a rupee less than was claimed. A claim list
+    // holds a row per expense, so these run over far more additions than the
+    // payroll totals do.
+    const totalClaimed = sumMoney(claims.map((c) => c.amount));
+    const totalApproved = sumMoney(
+        claims
+            .filter((c) => c.status === 'APPROVED' || c.status === 'REIMBURSED')
+            .map((c) => c.amount),
+    );
     const pendingCount = claims.filter((c) => c.status === 'SUBMITTED').length;
 
     return (
@@ -339,7 +340,7 @@ export default function ExpensesPage() {
                                                 {claim.description}
                                             </td>
                                             <td className="px-4 py-3 text-sm font-semibold text-warm-900 text-right whitespace-nowrap">
-                                                {formatCurrency(Number(claim.amount))}
+                                                {formatCurrency(claim.amount)}
                                             </td>
                                             <td className="px-4 py-3 text-center">
                                                 <Badge variant={statusColors[claim.status] as 'gray' | 'warning' | 'success' | 'danger' | 'info'}>
@@ -403,7 +404,7 @@ export default function ExpensesPage() {
                             <option value="">Select category</option>
                             {categories.map((cat) => (
                                 <option key={cat.id} value={cat.id}>
-                                    {cat.name} {cat.maxAmount ? `(Max: ${formatCurrency(Number(cat.maxAmount))})` : ''}
+                                    {cat.name} {cat.maxAmount ? `(Max: ${formatCurrency(cat.maxAmount)})` : ''}
                                 </option>
                             ))}
                         </select>
@@ -468,7 +469,7 @@ export default function ExpensesPage() {
             >
                 <p className="text-warm-600">
                     Are you sure you want to delete this expense claim of{' '}
-                    <strong>{deletingClaim ? formatCurrency(Number(deletingClaim.amount)) : ''}</strong>?
+                    <strong>{deletingClaim ? formatCurrency(deletingClaim.amount) : ''}</strong>?
                 </p>
                 <ModalFooter>
                     <Button variant="secondary" onClick={() => setDeleteModalOpen(false)} disabled={saving}>
