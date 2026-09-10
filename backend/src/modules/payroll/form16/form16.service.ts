@@ -2,7 +2,10 @@ import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nest
 import { Decimal } from '@prisma/client/runtime/library';
 import { TaxAgeBand, TaxRegime, UserRole } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { readApprovedProofTotals } from '../statutory/statutory.service';
+import {
+  PROOF_BACKED_FIELDS,
+  readApprovedProofTotals,
+} from '../statutory/statutory.service';
 import { verificationApplies } from '../proofs/proofs.types';
 import { AuthenticatedUser } from '../../../common/types/jwt-payload.type';
 import {
@@ -358,7 +361,10 @@ export class Form16Service {
           employeeId,
           financialYear,
         );
-        for (const [field, amount] of Object.entries(verified)) {
+        // Every proof-backed head, not only the ones with a proof: an
+        // unproved head allows nothing, exactly as it did on the payslips.
+        for (const field of PROOF_BACKED_FIELDS) {
+          const amount = verified[field] ?? 0;
           // Only the money fields are proof-backed; childrenCount is a count
           // and stays declared, because a fee receipt says what was paid, not
           // how many children there are.

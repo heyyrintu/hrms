@@ -438,4 +438,50 @@ describe('AdminSlabsPage — income tax ladder', () => {
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
   });
+
+  it('keeps the lowest band starting at zero when a band above it is removed', async () => {
+    // The first band's lower bound is not editable, because a ladder must
+    // start at zero. Removing band one would otherwise leave 250000 sitting at
+    // index nought with a disabled input, and no way back: the server refuses
+    // the ladder and the page offers no means of fixing it.
+    render(<AdminSlabsPage />);
+    await waitFor(() => expect(mockListIt).toHaveBeenCalled());
+    await screen.findByLabelText('Band 3 rate (%)');
+
+    fireEvent.click(within(bandRow(0)).getByRole('button', { name: /remove/i }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Band 1 from (₹)')).toHaveValue('0'),
+    );
+  });
+
+  it('closes the confirmation when the server refuses a band, so the refusal is visible', async () => {
+    mockSaveIt.mockRejectedValueOnce({
+      response: {
+        data: {
+          message:
+            'The band starting at 250000.00 leaves a gap after 200000.00: income in ' +
+            'that range would be taxed at nothing',
+        },
+      },
+    });
+    render(<AdminSlabsPage />);
+    await waitFor(() => expect(mockListIt).toHaveBeenCalled());
+    await screen.findByLabelText('Band 3 rate (%)');
+
+    fireEvent.click(screen.getByRole('button', { name: /save ladder/i }));
+    fireEvent.click(
+      within(
+        screen.getByRole('dialog', { name: /confirm income tax ladder change/i }),
+      ).getByRole('button', { name: /confirm.*save/i }),
+    );
+
+    // The dialog sitting open over the row hides the very message it caused,
+    // and invites the reader to confirm the same refusal again.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: /confirm income tax ladder change/i }),
+      ).not.toBeInTheDocument(),
+    );
+  });
 });

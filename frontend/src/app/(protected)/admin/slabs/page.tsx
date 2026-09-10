@@ -700,8 +700,23 @@ function IncomeTaxSection() {
     });
   };
 
+  /**
+   * A ladder starts at zero, and the first row's lower bound is not editable
+   * for that reason. So whatever removal or reorder leaves at index nought has
+   * to be pinned back to zero, or the row sits at some other amount with a
+   * disabled input and no way for anyone to correct it.
+   */
+  const pinLowestBandToZero = (rows: BandDraft[]): BandDraft[] =>
+    rows.length === 0 || rows[0].fromAmount === '0'
+      ? rows
+      : [{ ...rows[0], fromAmount: '0' }, ...rows.slice(1)];
+
   const removeBand = (index: number) => {
-    setBands((current) => (current.length <= 1 ? current : current.filter((_, i) => i !== index)));
+    setBands((current) =>
+      current.length <= 1
+        ? current
+        : pinLowestBandToZero(current.filter((_, i) => i !== index)),
+    );
   };
 
   const moveBand = (index: number, direction: -1 | 1) => {
@@ -710,7 +725,7 @@ function IncomeTaxSection() {
       if (target < 0 || target >= current.length) return current;
       const next = [...current];
       [next[index], next[target]] = [next[target], next[index]];
-      return next;
+      return pinLowestBandToZero(next);
     });
   };
 
@@ -803,8 +818,13 @@ function IncomeTaxSection() {
       // The server names a band by the amount it starts at, so it needs the
       // ladder on screen to map that back to a row.
       const parsed = parseLadderError(message, bands);
+      // Close the confirmation either way. Left open it sits over the very row
+      // the message belongs to, hides it, and invites the reader to confirm
+      // the same refusal again.
+      setConfirmOpen(false);
       if (parsed.bandIndex !== null && parsed.bandIndex < bands.length) {
         setBandErrors((current) => ({ ...current, [parsed.bandIndex as number]: message }));
+        toast.error(message);
       } else {
         setLadderError(message);
         toast.error(message);

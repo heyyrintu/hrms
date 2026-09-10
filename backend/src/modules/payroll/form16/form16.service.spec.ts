@@ -834,4 +834,32 @@ describe('Form16Service.computePartB — section 10 exemptions beyond house rent
 
     expect(prisma.investmentProof.findMany).not.toHaveBeenCalled();
   });
+
+  it('allows nothing for a head with no approved proof, as the payslips did', async () => {
+    // The monthly engine sets every proof-backed head to what was approved,
+    // and an unproved head to zero. A certificate that kept the declared
+    // figure for the unproved heads would show more exempt than the year's
+    // payslips allowed, which is the divergence this whole path exists to
+    // prevent.
+    prisma.statutoryConfig.findUnique.mockResolvedValue({
+      proofVerificationRequired: true,
+      proofCutoffMonth: 1,
+    });
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue({
+      regime: 'OLD',
+      section80C: new Decimal(150000),
+      hraExemption: new Decimal(120000),
+      ltaExemption: new Decimal(45000),
+    });
+    // Only 80C was evidenced.
+    prisma.investmentProof.findMany.mockResolvedValue([
+      { section: 'SECTION_80C', verifiedAmount: new Decimal(40000) },
+    ]);
+
+    const result = await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
+
+    // House rent and leave travel were declared but never proved, so neither
+    // reduces salary on the certificate.
+    expect(result.allowancesExemptSection10.toFixed(2)).toBe('0.00');
+  });
 });

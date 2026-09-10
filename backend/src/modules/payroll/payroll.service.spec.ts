@@ -353,6 +353,8 @@ describe('PayrollService', () => {
 
     it('should recompute a COMPUTED run, discarding the old payslips and regenerating them', async () => {
       prisma.payrollRun.findFirst.mockResolvedValue(computedRun);
+      // A recompute takes the run's own cohort, not the current active list.
+      prisma.payslip.findMany.mockResolvedValue([{ employeeId: 'emp-1' }]);
       prisma.employee.findMany.mockResolvedValue([{ id: 'emp-1' }]);
       calculationService.calculateForEmployee.mockResolvedValue(calcResult);
       prisma.payslip.deleteMany.mockResolvedValue({ count: 1 });
@@ -465,20 +467,25 @@ describe('PayrollService', () => {
     it('should revert to COMPUTED status (not DRAFT) on processing error, since that is where it started', async () => {
       prisma.payrollRun.findFirst.mockResolvedValue(computedRun);
       prisma.payrollRun.update.mockResolvedValueOnce({}); // claim succeeds
-      prisma.employee.findMany.mockRejectedValue(new Error('DB error'));
+      // Recompute reads the run's own cohort, so that is the read to fail.
+      prisma.payslip.findMany.mockRejectedValue(new Error('DB error'));
 
       await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow('DB error');
 
-      // First call = claim to PROCESSING, second call = revert to COMPUTED
-      expect(prisma.payrollRun.update).toHaveBeenCalledTimes(2);
-      expect(prisma.payrollRun.update).toHaveBeenLastCalledWith({
-        where: { id: runId },
+      // The claim is the only plain update; the revert is guarded on the
+      // claim this recompute still holds, so a run somebody reset meanwhile is
+      // left alone rather than marked COMPUTED with no payslips.
+      expect(prisma.payrollRun.update).toHaveBeenCalledTimes(1);
+      expect(prisma.payrollRun.updateMany).toHaveBeenCalledWith({
+        where: { id: runId, status: PayrollRunStatus.PROCESSING },
         data: { status: PayrollRunStatus.COMPUTED },
       });
     });
 
     it('is one atomic unit of work: payslips are deleted and recreated inside the same transaction as the run update', async () => {
       prisma.payrollRun.findFirst.mockResolvedValue(computedRun);
+      // A recompute takes the run's own cohort, not the current active list.
+      prisma.payslip.findMany.mockResolvedValue([{ employeeId: 'emp-1' }]);
       prisma.employee.findMany.mockResolvedValue([{ id: 'emp-1' }]);
       calculationService.calculateForEmployee.mockResolvedValue(calcResult);
       prisma.payslip.deleteMany.mockResolvedValue({ count: 1 });
@@ -832,5 +839,68 @@ describe('PayrollService', () => {
         NotFoundException,
       );
     });
+  });
+
+  it('recomputes the employees the run already covers, not whoever is active today', async () => {
+    // A run computed in April and recomputed in June must still cover the
+    // employee who left in May. Taking the current active list would delete
+    // their payslip and quietly shrink a run that has already been reported on.
+    prisma.payrollRun.findFirst.mockResolvedValue({
+      id: 'run-1',
+      tenantId,
+      status: 'COMPUTED',
+      month: 4,
+      year: 2026,
+      totalGross: new Decimal(0),
+      totalDeductions: new Decimal(0),
+      totalNet: new Decimal(0),
+      processedCount: 2,
+    });
+    prisma.payrollRun.update.mockResolvedValue({});
+    prisma.payslip.findMany.mockResolvedValue([
+      { employeeId: 'emp-still-here' },
+      { employeeId: 'emp-who-left' },
+    ]);
+    prisma.employee.findMany.mockResolvedValue([{ id: 'emp-still-here' }]);
+
+    await service.recomputeRun(tenantId, 'run-1').catch(() => undefined);
+
+    const asked = calculationService.calculateForEmployee.mock.calls.map(
+      (call: unknown[]) => call[1],
+    );
+    expect(asked).toContain('emp-who-left');
+  });
+
+  it('will not publish a recompute over a run somebody reset underneath it', async () => {
+    // resetRun can move the run back to DRAFT and clear its payslips while a
+    // recompute is still calculating. Publishing on the id alone would then
+    // recreate payslips on a run that was deliberately emptied, or mark a
+    // reset run COMPUTED with nothing in it.
+    prisma.payrollRun.findFirst.mockResolvedValue({
+      id: 'run-1',
+      tenantId,
+      status: 'COMPUTED',
+      month: 4,
+      year: 2026,
+      totalGross: new Decimal(0),
+      totalDeductions: new Decimal(0),
+      totalNet: new Decimal(0),
+      processedCount: 1,
+    });
+    prisma.payrollRun.update.mockResolvedValue({});
+    prisma.payslip.findMany.mockResolvedValue([{ employeeId: 'emp-1' }]);
+
+    await service.recomputeRun(tenantId, 'run-1').catch(() => undefined);
+
+    const publishes = prisma.payrollRun.update.mock.calls.filter(
+      (call: { where?: { status?: unknown } }[]) =>
+        (call[0] as { data?: { status?: unknown } })?.data?.status === 'COMPUTED',
+    );
+    expect(publishes.length).toBeGreaterThan(0);
+    for (const call of publishes) {
+      expect((call[0] as { where?: { status?: unknown } }).where?.status).toBe(
+        'PROCESSING',
+      );
+    }
   });
 });

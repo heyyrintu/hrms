@@ -345,8 +345,11 @@ export class SlabsService {
 
       if (from.gt(prevTo)) {
         throw new BadRequestException(
-          `There is a gap between ${prevTo.toFixed(2)} and ${from.toFixed(2)}: income in ` +
-            'that range would be taxed at nothing',
+          // Named the way every other refusal names a band, by the amount it
+          // starts at, so the page can put the message against that row
+          // instead of floating it above the whole ladder.
+          `The band starting at ${from.toFixed(2)} leaves a gap after ` +
+            `${prevTo.toFixed(2)}: income in that range would be taxed at nothing`,
         );
       }
 

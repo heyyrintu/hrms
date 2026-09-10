@@ -288,10 +288,16 @@ export class PayrollService {
 
     try {
       // Get all active employees with salary assignments
-      const employees = await this.prisma.employee.findMany({
-        where: { tenantId, status: 'ACTIVE' },
-        select: { id: true },
+      // The employees this run already covers, not whoever is active today. A
+      // run computed in April and recomputed in June must still cover somebody
+      // who left in May: taking the current active list would delete their
+      // payslip and quietly shrink a run that may already have been reported
+      // on. Anyone hired since belongs in their own run, not retrofitted here.
+      const covered = await this.prisma.payslip.findMany({
+        where: { payrollRunId: id, tenantId },
+        select: { employeeId: true },
       });
+      const employees = covered.map((slip) => ({ id: slip.employeeId }));
 
       // Compute every payslip first (reads only), so the write transaction
       // below stays short and cannot time out mid-run on a large tenant.
@@ -367,8 +373,12 @@ export class PayrollService {
           });
         }
 
+        // Guarded on the claim this recompute still holds. A reset can move
+        // the run back to DRAFT and clear its payslips while this was still
+        // calculating; publishing on the id alone would recreate payslips on a
+        // run somebody deliberately emptied.
         return tx.payrollRun.update({
-          where: { id },
+          where: { id, status: PayrollRunStatus.PROCESSING },
           data: {
             status: PayrollRunStatus.COMPUTED,
             totalGross,
@@ -405,8 +415,11 @@ export class PayrollService {
       // Revert to COMPUTED — the status this run was in before the claim —
       // not DRAFT. A failed recompute must not leave the run looking like
       // it was never computed at all.
-      await this.prisma.payrollRun.update({
-        where: { id },
+      // Same guard: only revert a run this recompute still holds. If somebody
+      // reset it meanwhile, marking it COMPUTED would leave a run with that
+      // status and no payslips.
+      await this.prisma.payrollRun.updateMany({
+        where: { id, status: PayrollRunStatus.PROCESSING },
         data: { status: PayrollRunStatus.COMPUTED },
       });
       throw error;

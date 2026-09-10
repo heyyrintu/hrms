@@ -77,7 +77,15 @@ const ZERO = new Decimal(0);
  * has no proof head and so keeps coming from the declaration whatever the
  * verification setting says.
  */
-const PROOF_BACKED_FIELDS: readonly ProofBackedField[] = Object.values(
+/**
+ * Every declaration field a proof can support.
+ *
+ * Exported because Form 16 must replace exactly the same set: a head with no
+ * approved proof allows nothing once verification is in force, and iterating
+ * only the heads that happen to have a proof would leave the others at their
+ * declared figures on the certificate while the payslips allowed nothing.
+ */
+export const PROOF_BACKED_FIELDS: readonly ProofBackedField[] = Object.values(
   PROOF_SECTION_TO_DECLARATION_FIELD,
 );
 
