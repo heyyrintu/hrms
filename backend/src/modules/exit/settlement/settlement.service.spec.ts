@@ -103,8 +103,32 @@ function makeConfig(overrides: Record<string, unknown> = {}) {
     gratuityExemptionCap: new Decimal(2000000),
     leaveEncashmentEnabled: true,
     encashmentMonthDays: new Decimal(30),
+    encashmentExemptionCap: new Decimal(2500000),
+    encashmentExemptDaysPerYear: new Decimal(30),
+    encashmentExemptMonths: new Decimal(10),
+    encashmentGovernmentEmployer: false,
     ...overrides,
   };
+}
+
+/**
+ * A single earned-leave row with a large balance, for the cases where the
+ * section 10(10AA) exemption actually bites. 400 days at 2,000 a day is
+ * 8,00,000 payable, far more than the six months of salary the leaver's
+ * completed service permits to be exempt.
+ */
+function makeLargeBalance() {
+  return [
+    {
+      id: 'bal-1',
+      leaveTypeId: 'lt-el',
+      totalDays: new Decimal(400),
+      carriedOver: new Decimal(0),
+      usedDays: new Decimal(0),
+      pendingDays: new Decimal(0),
+      leaveType: { id: 'lt-el', name: 'Earned Leave', code: 'EL', isPaid: true },
+    },
+  ];
 }
 
 /**
@@ -363,6 +387,150 @@ describe('SettlementService', () => {
         grossPayable: '305985.11',
         totalRecoveries: '15870.97',
         netPayable: '290114.14',
+      });
+    });
+
+    // ── section 10(10AA) ───────────────────────────────────
+
+    describe('the section 10(10AA) exemption on leave encashment', () => {
+      it('exempts the whole encashment when it is smaller than every statutory limit', async () => {
+        arrangeCompute();
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const exemption = result.breakdown.leaveEncashment.exemption;
+
+        // Basic + DA is 60,000, so a statutory day is 2,000. 12 days paid at
+        // the tenant's own 30-day month is also 2,000 a day, so:
+        //
+        //   1. received                          24,000   <- least
+        //   2. ceiling                        25,00,000
+        //   3. ten months' salary  60,000 x 10 = 6,00,000
+        //   4. 12 days (of 30 x 6 = 180 permitted) / 30 x 60,000 = 24,000
+        expect(exemption.limitedBy).toBe('AMOUNT_PAID');
+        expect(exemption.exempt).toBe('24000.00');
+        expect(exemption.taxable).toBe('0.00');
+        expect(exemption.limbs).toEqual({
+          amountPaid: '24000.00',
+          statutoryCapRemaining: '2500000.00',
+          averageSalaryMonths: '600000.00',
+          leaveDaysPerYear: '24000.00',
+        });
+      });
+
+      it('counts 6 completed years between 1 April 2018 and 15 March 2025', async () => {
+        arrangeCompute();
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+
+        // 1 April 2018 to 15 March 2025 inclusive is 83 completed months:
+        // 6 years and 11 months. The eleven months do not round up — the
+        // section counts completed years, not the gratuity Act's rounded ones.
+        expect(result.breakdown.leaveEncashment.exemption.completedYears).toBe('6');
+      });
+
+      it('taxes the excess when the leave at credit outruns 30 days a year', async () => {
+        arrangeCompute({ balances: makeLargeBalance() });
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const exemption = result.breakdown.leaveEncashment.exemption;
+
+        // 400 days at 2,000 = 8,00,000 paid.
+        //
+        //   1. received                          8,00,000
+        //   2. ceiling                          25,00,000
+        //   3. ten months' salary  60,000 x 10 = 6,00,000
+        //   4. 30 x 6 = 180 days of the 400 encashed:
+        //      180 / 30 = 6 months x 60,000    = 3,60,000   <- least
+        expect(exemption.limitedBy).toBe('LEAVE_DAYS_PER_YEAR');
+        expect(exemption.exempt).toBe('360000.00');
+        expect(exemption.taxable).toBe('440000.00');
+        expect(exemption.limbs.averageSalaryMonths).toBe('600000.00');
+      });
+
+      it('leaves the amount payable untouched by the exemption', async () => {
+        arrangeCompute({ balances: makeLargeBalance() });
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+
+        // The exemption says how much of the encashment escapes tax, not how
+        // much is paid. Every payable figure is what it would have been before
+        // any of this existed.
+        expect(result.leaveEncashmentDays.toFixed(2)).toBe('400.00');
+        expect(result.leaveEncashment.toFixed(2)).toBe('800000.00');
+        // 39,677.42 + 8,00,000.00 + 2,42,307.69
+        expect(result.grossPayable.toFixed(2)).toBe('1081985.11');
+        expect(result.totalRecoveries.toFixed(2)).toBe('15870.97');
+        expect(result.netPayable.toFixed(2)).toBe('1066114.14');
+      });
+
+      it('exempts nothing when no year of service has been completed', async () => {
+        arrangeCompute({
+          separation: makeSeparation({
+            employee: {
+              ...makeSeparation().employee,
+              joinDate: new Date('2025-01-10T12:00:00Z'),
+            },
+          }),
+        });
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const exemption = result.breakdown.leaveEncashment.exemption;
+
+        // Two months of service is no completed year, so the fourth limb is
+        // nil and the whole 24,000 is taxable as salary.
+        expect(exemption.completedYears).toBe('0');
+        expect(exemption.limitedBy).toBe('LEAVE_DAYS_PER_YEAR');
+        expect(exemption.exempt).toBe('0.00');
+        expect(exemption.taxable).toBe('24000.00');
+      });
+
+      it('exempts a government employer’s encashment in full', async () => {
+        arrangeCompute({
+          config: makeConfig({ encashmentGovernmentEmployer: true }),
+        });
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const exemption = result.breakdown.leaveEncashment.exemption;
+
+        expect(exemption.limitedBy).toBe('GOVERNMENT_EMPLOYER');
+        expect(exemption.exempt).toBe('24000.00');
+        expect(exemption.taxable).toBe('0.00');
+      });
+
+      it('honours a tenant configuration that departs from 30 days and 10 months', async () => {
+        arrangeCompute({
+          balances: makeLargeBalance(),
+          config: makeConfig({ encashmentExemptMonths: new Decimal(4) }),
+        });
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const exemption = result.breakdown.leaveEncashment.exemption;
+
+        // Four months of 60,000 is 2,40,000, less than the 3,60,000 the
+        // 30-days-a-year limb allows, so the third limb now binds.
+        expect(exemption.limbs.averageSalaryMonths).toBe('240000.00');
+        expect(exemption.limitedBy).toBe('AVERAGE_SALARY_MONTHS');
+        expect(exemption.exempt).toBe('240000.00');
+        expect(exemption.taxable).toBe('560000.00');
+      });
+
+      it('records a nil exemption when encashment is disabled for the tenant', async () => {
+        arrangeCompute({ config: makeConfig({ leaveEncashmentEnabled: false }) });
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const exemption = result.breakdown.leaveEncashment.exemption;
+
+        expect(exemption.limitedBy).toBe('AMOUNT_PAID');
+        expect(exemption.exempt).toBe('0.00');
+        expect(exemption.taxable).toBe('0.00');
+      });
+
+      it('no longer claims the exemption is not computed', async () => {
+        arrangeCompute();
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+
+        expect(result.breakdown.leaveEncashment.note).not.toMatch(/not computed/i);
       });
     });
 
@@ -719,5 +887,18 @@ describe('SettlementService', () => {
         ConflictException,
       );
     });
+  });
+
+  it('stores the encashment exemption as a column, not only inside the breakdown', async () => {
+    // Gratuity's exempt part is a column, so it can be totalled across
+    // settlements for a return or a reconciliation. Leaving the encashment
+    // exemption only in the JSON means no query can reach it.
+    arrangeCompute();
+
+    await service.compute(TENANT, 'sep-1', {});
+
+    const data = prisma.settlement.create.mock.calls[0][0].data;
+    expect(data.leaveEncashmentExempt).toBeDefined();
+    expect(data.leaveEncashmentExempt.toFixed(2)).toBe('24000.00');
   });
 });

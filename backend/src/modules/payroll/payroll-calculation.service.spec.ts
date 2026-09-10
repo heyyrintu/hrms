@@ -98,6 +98,38 @@ describe('PayrollCalculationService', () => {
       prisma.employeeSalary.findFirst.mockResolvedValue(mockSalary);
     });
 
+    it('tells the statutory engine the date of birth, or seniors get the wrong slabs', async () => {
+      // The old regime's basic exemption is higher at 60 and higher again at
+      // 80. The engine reads the band from the date of birth, so withholding
+      // it here taxes every senior employee at the general rate and nothing
+      // anywhere says so.
+      const dateOfBirth = new Date('1960-06-15T00:00:00.000Z');
+      prisma.holiday.findMany.mockResolvedValue([]);
+      prisma.attendanceRecord.findMany.mockResolvedValue([]);
+      prisma.leaveRequest.findMany.mockResolvedValue([]);
+      prisma.employeeSalary.findFirst.mockResolvedValue({
+        ...mockSalary,
+        employee: { ...mockSalary.employee, dateOfBirth },
+      });
+
+      await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+      expect(statutory.compute).toHaveBeenCalledWith(
+        expect.objectContaining({ dateOfBirth }),
+      );
+    });
+
+    it('asks the database for the date of birth in the first place', async () => {
+      prisma.holiday.findMany.mockResolvedValue([]);
+      prisma.attendanceRecord.findMany.mockResolvedValue([]);
+      prisma.leaveRequest.findMany.mockResolvedValue([]);
+
+      await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+      const args = prisma.employeeSalary.findFirst.mock.calls[0][0];
+      expect(args.include.employee.select.dateOfBirth).toBe(true);
+    });
+
     it('should compute provident fund on basic plus flagged components, not on gross', async () => {
       prisma.employeeSalary.findFirst.mockResolvedValue({
         ...mockSalary,

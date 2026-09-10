@@ -45,6 +45,18 @@ export class UpdateStatutoryConfigDto {
   @IsString()
   ptState?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Calendar months in which the state collects professional tax. Empty means every month, which is what most states do.',
+    type: [Number],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  @Max(12, { each: true })
+  ptMonths?: number[];
+
   @ApiPropertyOptional() @IsOptional() @IsBoolean() lwfEnabled?: boolean;
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) lwfEmployeeAmount?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) lwfEmployerAmount?: number;
@@ -92,6 +104,28 @@ export class UpdateStatutoryConfigDto {
 
   // ---- Leave encashment on exit ----
   @ApiPropertyOptional() @IsOptional() @IsBoolean() leaveEncashmentEnabled?: boolean;
+  @ApiPropertyOptional({
+    description:
+      'Section 10(10AA) lifetime ceiling for a non-government employee. Caps the exempt part, not the amount paid.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  encashmentExemptionCap?: number;
+  @ApiPropertyOptional({ description: 'Days per completed year the section recognises. The Act says 30.' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  encashmentExemptDaysPerYear?: number;
+  @ApiPropertyOptional({ description: "Months of average salary the exemption is capped at. The Act says 10." })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  encashmentExemptMonths?: number;
+  @ApiPropertyOptional({ description: 'Encashment paid by a government employer is exempt in full.' })
+  @IsOptional()
+  @IsBoolean()
+  encashmentGovernmentEmployer?: boolean;
   @ApiPropertyOptional({ description: 'Days treated as a month when valuing an encashed day.' })
   @IsOptional()
   @IsNumber()

@@ -78,6 +78,10 @@ export class PayrollCalculationService {
             payType: true,
             hourlyRate: true,
             gender: true,
+            // The old regime's basic exemption depends on age, read as at
+            // 31 March. Without this every senior employee gets the general
+            // slabs and nothing says so.
+            dateOfBirth: true,
             pfOptOut: true,
             taxRegime: true,
           },
@@ -200,6 +204,7 @@ export class PayrollCalculationService {
       grossPay,
       pfOptOut: salary.employee.pfOptOut,
       gender: salary.employee.gender,
+      dateOfBirth: salary.employee.dateOfBirth,
       employeeRegime: salary.employee.taxRegime,
     });
 

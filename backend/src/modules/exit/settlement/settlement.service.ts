@@ -13,6 +13,11 @@ import {
 } from '../../../common/utils/prisma-errors';
 import { calculateGratuity } from '../gratuity/gratuity.calculator';
 import { GratuityConfig, GratuityResult } from '../gratuity/gratuity.types';
+import { calculateEncashmentExemption } from './encashment-exemption';
+import type {
+  EncashmentExemptionConfig,
+  EncashmentExemptionResult,
+} from '../../payroll/statutory/tax-correctness.types';
 import { ComputeSettlementDto, UpdateSettlementDto } from './dto/settlement.dto';
 
 /**
@@ -37,10 +42,20 @@ import { ComputeSettlementDto, UpdateSettlementDto } from './dto/settlement.dto'
  *   calendar days in the month of the last working day. Many contracts recover
  *   on basic alone, on working days rather than calendar days, or at a rate
  *   fixed in the appointment letter. None of those variants are supported.
- * - **Leave encashment tax exemption under section 10(10AA) is not computed.**
- *   The whole encashment amount is carried into gross pay; the exempt portion
- *   for a non-government employee (the least of four limits, against a lifetime
- *   ceiling) is not worked out here, and no exempt figure is stored.
+ * - **The section 10(10AA) exemption on leave encashment is worked out, but
+ *   only recorded in the breakdown.** The whole encashment is payable and is
+ *   carried into gross pay as before; what the exemption says is how much of it
+ *   escapes tax. There is no column on the settlement to hold that figure the
+ *   way `gratuityExempt` holds gratuity's, so it lives in the breakdown JSON,
+ *   and nothing downstream reads it into the year's tax computation yet.
+ * - **The exemption is measured against last drawn basic plus DA**, not against
+ *   the average of the last ten months' salary the section asks for, because
+ *   the settlement holds only the current salary assignment. Anyone whose pay
+ *   moved during those ten months gets a slightly wrong second and third limb.
+ * - **No exemption used at an earlier employer is carried in.** The ceiling is
+ *   a lifetime one, but nothing in the schema records what a previous employer
+ *   already exempted, so zero is assumed and a leaver who has used part of the
+ *   ceiling elsewhere will be over-exempted here.
  * - **Notice served is counted in calendar days** between the separation's
  *   initiated date and the last working day, inclusive. Leave taken during
  *   notice, and any contractual rule about extending notice to make up for it,
@@ -86,6 +101,43 @@ function daysInMonthOf(date: Date): number {
 function inclusiveDaysBetween(from: Date, to: Date): number {
   const span = Math.floor((to.getTime() - from.getTime()) / MS_PER_DAY);
   return span < 0 ? 0 : span + 1;
+}
+
+/**
+ * Completed years from joining to the last working day, both days served.
+ *
+ * Section 10(10AA) counts *completed* years, so a part-year is simply dropped:
+ * six years and eleven months is six. That is deliberately not the gratuity
+ * Act's count, which rounds a part-year over six months up — borrowing the
+ * rounded figure here would grant thirty days of exemption for a year that was
+ * never completed.
+ *
+ * Dates are read in UTC, as they are in the gratuity calculator. Prisma hands
+ * back date-only columns as UTC midnight, and reading them in the server's
+ * local zone would move a leaver who left on the first of a month back into
+ * the previous one.
+ */
+function completedYearsOfService(joinDate: Date, lastWorkingDate: Date): number {
+  const startM = joinDate.getUTCMonth();
+  const startD = joinDate.getUTCDate();
+
+  // The exclusive end of the period: the day after the last day served.
+  const end = new Date(
+    Date.UTC(
+      lastWorkingDate.getUTCFullYear(),
+      lastWorkingDate.getUTCMonth(),
+      lastWorkingDate.getUTCDate() + 1,
+    ),
+  );
+
+  let totalMonths =
+    (end.getUTCFullYear() - joinDate.getUTCFullYear()) * 12 +
+    (end.getUTCMonth() - startM);
+  // The day of the month has not come round yet, so the last month is not
+  // complete.
+  if (end.getUTCDate() < startD) totalMonths -= 1;
+
+  return totalMonths <= 0 ? 0 : Math.floor(totalMonths / 12);
 }
 
 @Injectable()
@@ -224,6 +276,37 @@ export class SettlementService {
           enabled: false,
         };
 
+    // How much of that encashment escapes tax. This changes nothing about what
+    // is paid: `encashment.amount` still goes into gross pay in full, and the
+    // exemption is recorded beside it so the leaver can be shown the working.
+    const encashmentCompletedYears = completedYearsOfService(
+      separation.employee.joinDate,
+      lastWorkingDate,
+    );
+    const exemptionConfig: EncashmentExemptionConfig = {
+      exemptionCap: new Decimal(config.encashmentExemptionCap),
+      exemptDaysPerYear: new Decimal(config.encashmentExemptDaysPerYear),
+      exemptMonths: new Decimal(config.encashmentExemptMonths),
+      governmentEmployer: config.encashmentGovernmentEmployer,
+    };
+    const encashmentExemption: EncashmentExemptionResult =
+      calculateEncashmentExemption(
+        {
+          amountPaid: encashment.amount,
+          // The settlement values encashment on last drawn basic plus DA, and
+          // the section's "average salary" is the same heads of pay, so the
+          // same figure is used. See the note at the head of this file for what
+          // that approximation costs.
+          averageMonthlySalary: lastDrawnWages,
+          completedYears: new Decimal(encashmentCompletedYears),
+          daysEncashed: encashment.totalDays,
+          // Nothing records what a previous employer already exempted, so the
+          // whole lifetime ceiling is treated as available.
+          exemptionAlreadyUsed: new Decimal(0),
+        },
+        exemptionConfig,
+      );
+
     const gratuityConfig: GratuityConfig = {
       gratuityEnabled: config.gratuityEnabled,
       gratuityDaysPerYear: new Decimal(config.gratuityDaysPerYear),
@@ -280,7 +363,29 @@ export class SettlementService {
         totalDays: encashment.totalDays.toFixed(2),
         amount: encashment.amount.toFixed(2),
         leaveTypes: encashment.leaveTypes,
-        note: 'Section 10(10AA) exemption is not computed; the whole amount is shown as payable',
+        exemption: {
+          exempt: encashmentExemption.exempt.toFixed(2),
+          taxable: encashmentExemption.taxable.toFixed(2),
+          limitedBy: encashmentExemption.limitedBy,
+          averageMonthlySalary: lastDrawnWages.toFixed(2),
+          completedYears: String(encashmentCompletedYears),
+          daysEncashed: encashment.totalDays.toFixed(2),
+          exemptionAlreadyUsed: '0.00',
+          governmentEmployer: config.encashmentGovernmentEmployer,
+          limbs: {
+            amountPaid: encashmentExemption.limbs.amountPaid.toFixed(2),
+            statutoryCapRemaining:
+              encashmentExemption.limbs.statutoryCapRemaining.toFixed(2),
+            averageSalaryMonths:
+              encashmentExemption.limbs.averageSalaryMonths.toFixed(2),
+            leaveDaysPerYear: encashmentExemption.limbs.leaveDaysPerYear.toFixed(2),
+          },
+          note:
+            'Section 10(10AA): the least of the amount paid, the balance of the ' +
+            `lifetime ceiling, ${config.encashmentExemptMonths.toString()} months of average salary, and the ` +
+            `cash equivalent of ${config.encashmentExemptDaysPerYear.toString()} days of leave for each completed year`,
+        },
+        note: 'The whole amount is payable; the exemption below is the part of it that escapes tax',
       },
       gratuity: {
         eligible: gratuity.eligible,
@@ -311,6 +416,7 @@ export class SettlementService {
       proRataSalary: proRata.amount,
       leaveEncashmentDays: encashment.totalDays,
       leaveEncashment: encashment.amount,
+      leaveEncashmentExempt: encashmentExemption.exempt,
       gratuity: gratuity.amount,
       gratuityExempt: gratuity.exemptAmount,
       otherEarnings: zero,
