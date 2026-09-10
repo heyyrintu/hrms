@@ -59,6 +59,45 @@ export class UpdateStatutoryConfigDto {
   @Max(12, { each: true })
   lwfMonths?: number[];
 
+  // ---- Gratuity (Payment of Gratuity Act, 1972) ----
+  // Held as configuration rather than constants because an employer may pay
+  // better than the Act, and the section 10(10) ceiling has been revised more
+  // than once. Rows nobody can edit through the API are constants in disguise.
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() gratuityEnabled?: boolean;
+  @ApiPropertyOptional({ description: 'Days of wages per completed year. The Act says 15.' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  gratuityDaysPerYear?: number;
+  @ApiPropertyOptional({
+    description: "Days treated as a month's wages. The Act says 26 for covered establishments.",
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  gratuityMonthDays?: number;
+  @ApiPropertyOptional({ description: 'Completed years of service before gratuity is payable.' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  gratuityMinYears?: number;
+  @ApiPropertyOptional({
+    description:
+      'Lifetime exemption ceiling under section 10(10). Caps the exempt part, not the amount payable.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  gratuityExemptionCap?: number;
+
+  // ---- Leave encashment on exit ----
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() leaveEncashmentEnabled?: boolean;
+  @ApiPropertyOptional({ description: 'Days treated as a month when valuing an encashed day.' })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  encashmentMonthDays?: number;
+
   @ApiPropertyOptional() @IsOptional() @IsBoolean() tdsEnabled?: boolean;
   @ApiPropertyOptional({ enum: TaxRegime })
   @IsOptional()

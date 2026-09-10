@@ -1,6 +1,10 @@
 import axios from 'axios';
 
 import { StatutoryReturnKind, UpdateSettlementPayload } from '@/types/statutory';
+import {
+  UpdateStatutoryConfigPayload,
+  UpsertTaxDeclarationPayload,
+} from '@/types/statutory-config';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
@@ -621,4 +625,45 @@ export const settlementApi = {
     api.put(`/exit/settlements/${id}`, data),
   approve: (id: string) => api.post(`/exit/settlements/${id}/approve`),
   markAsPaid: (id: string) => api.post(`/exit/settlements/${id}/pay`),
+};
+
+// ============================================
+// STATUTORY CONFIGURATION AND TAX DECLARATIONS
+// ============================================
+/**
+ * Rates and slabs are data, not code.
+ *
+ * `getConfig` resolves with `null` when the tenant has never configured
+ * statutory payroll. That is not an error and must not be shown as one: with no
+ * row, nothing statutory is deducted and payroll behaves exactly as it did
+ * before the feature existed.
+ *
+ * Slab tables are read-only here. They are seeded per state and financial year,
+ * and editing a slab is a migration, not a form.
+ */
+export const statutoryApi = {
+  getConfig: () => api.get('/payroll/statutory/config'),
+  updateConfig: (data: UpdateStatutoryConfigPayload) =>
+    api.put('/payroll/statutory/config', data),
+
+  getProfessionalTaxSlabs: (state?: string) =>
+    api.get('/payroll/statutory/professional-tax-slabs', {
+      params: state ? { state } : undefined,
+    }),
+  getIncomeTaxConfig: (financialYear?: number) =>
+    api.get('/payroll/statutory/income-tax-config', {
+      params: financialYear ? { financialYear } : undefined,
+    }),
+
+  getMyDeclaration: (financialYear?: number) =>
+    api.get('/payroll/statutory/my-declaration', {
+      params: financialYear ? { financialYear } : undefined,
+    }),
+  saveMyDeclaration: (data: UpsertTaxDeclarationPayload) =>
+    api.put('/payroll/statutory/my-declaration', data),
+  /** Payroll staff reading an employee's declaration. Read only by design. */
+  getDeclarationFor: (employeeId: string, financialYear?: number) =>
+    api.get(`/payroll/statutory/declarations/${employeeId}`, {
+      params: financialYear ? { financialYear } : undefined,
+    }),
 };

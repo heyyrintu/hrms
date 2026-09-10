@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 import { AxiosHeaders, InternalAxiosRequestConfig } from 'axios';
-import { api, form16Api, returnsApi, settlementApi } from './api';
+import { api, form16Api, returnsApi, settlementApi, statutoryApi } from './api';
 import { StatutoryReturnKind } from '@/types/statutory';
 
 /**
@@ -102,6 +102,53 @@ describe('statutory API requests', () => {
 
             expect(sent[0].url).toBe('/exit/settlements/set-1/approve');
             expect(sent[1].url).toBe('/exit/settlements/set-1/pay');
+        });
+    });
+
+    describe('statutoryApi', () => {
+        it('reads and patches the one configuration row', async () => {
+            await statutoryApi.getConfig();
+            await statutoryApi.updateConfig({ pfEmployeeRate: 12, gratuityMinYears: 5 });
+
+            expect(sent[0].url).toBe('/payroll/statutory/config');
+            expect(sent[1].method).toBe('put');
+            expect(sent[1].data).toBe(
+                JSON.stringify({ pfEmployeeRate: 12, gratuityMinYears: 5 }),
+            );
+        });
+
+        it('omits the state filter entirely rather than sending an empty one', async () => {
+            await statutoryApi.getProfessionalTaxSlabs();
+            await statutoryApi.getProfessionalTaxSlabs('Karnataka');
+
+            // An empty `state` would be a filter matching nothing, not "all".
+            expect(sent[0].params).toBeUndefined();
+            expect(sent[1].params).toEqual({ state: 'Karnataka' });
+        });
+
+        it('omits the year filter when none is asked for', async () => {
+            await statutoryApi.getIncomeTaxConfig();
+            await statutoryApi.getIncomeTaxConfig(2026);
+
+            expect(sent[0].params).toBeUndefined();
+            expect(sent[1].params).toEqual({ financialYear: 2026 });
+        });
+
+        it('separates a self-service declaration from a staff lookup', async () => {
+            await statutoryApi.getMyDeclaration(2026);
+            await statutoryApi.getDeclarationFor('emp-7', 2026);
+
+            expect(sent[0].url).toBe('/payroll/statutory/my-declaration');
+            expect(sent[1].url).toBe('/payroll/statutory/declarations/emp-7');
+        });
+
+        it('saves a declaration against the employee the token identifies', async () => {
+            await statutoryApi.saveMyDeclaration({ section80C: 150000 });
+
+            // There is no employee id in the path: the server takes it from the
+            // token, so one employee cannot file another's declaration.
+            expect(sent[0].url).toBe('/payroll/statutory/my-declaration');
+            expect(sent[0].method).toBe('put');
         });
     });
 });

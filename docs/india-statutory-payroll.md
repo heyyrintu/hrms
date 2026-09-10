@@ -167,6 +167,9 @@ notice shortfall recovery, other recoveries and TDS.
 | Payroll → Form 16 | HR admin | Any employee's Part B certificate and PDF |
 | My Form 16 | Everyone | Your own Part B certificate and PDF |
 | Settlements | HR admin | Full and final settlements, with the gratuity working |
+| Admin → Statutory Payroll | HR admin | Rates, thresholds and which levies apply |
+| Payroll → Tax Declarations | HR admin | Read what an employee declared |
+| My Tax Declaration | Everyone | Record what you expect to claim this year |
 
 Two things the pages do deliberately, which are easy to undo by accident.
 
@@ -182,6 +185,24 @@ the caveat that applies to it, and the Form 16 pages say on every view that Part
 A comes from TRACES and cannot be produced here. A user who downloads and
 uploads without reading is the case these pages are designed against.
 
+**A tenant with no configuration is shown as exactly that.** With no row,
+nothing statutory comes off anyone's pay and payroll behaves as it did before
+the feature existed. The page says so and offers to set it up, rather than
+rendering a form full of zeros that would read as rates of nil. Choosing to set
+it up fills the form with the rates in the Act but writes nothing until somebody
+has checked the figures and saved.
+
+**Slab tables are read-only in the interface**, because they are seeded per
+state and financial year and there is no endpoint to edit one. Changing a slab
+is a seed or a migration, not a form.
+
+**A declaration is not a proof.** Nothing collects, verifies or approves
+evidence, and no statutory ceiling is enforced on a declared amount. The form
+warns when a figure exceeds the ceiling it is subject to but still saves it,
+because the system genuinely accepts it and the employee should know it will not
+help them. Under the new regime the entries the regime ignores are marked rather
+than silently accepted.
+
 Payroll and settlement pages are gated to HR administrators in the browser as
 well as at the API. The gate is not the security boundary, since the API already
 refuses the calls; without it a non-admin who types the URL sees the full shell
@@ -193,10 +214,9 @@ they should not be on.
 Known and deliberate, so nobody assumes otherwise:
 
 - **Form 16 Part A.** TRACES issues it. See above.
-- **Statutory configuration UI.** Rates, slabs and the employee tax declaration
-  are set through the API or the seed script; there is no page for them yet.
-  Without a declaration, TDS is computed on salary alone with only the standard
-  deduction.
+- **Slab editing.** Professional tax and income tax slabs are seeded, not
+  edited through the interface. Rates and thresholds are editable; the slab
+  tables themselves are not.
 - **Investment proof workflow.** Declarations are taken at face value. Nothing
   collects, verifies or approves evidence, and no limit is enforced on a
   declared amount, so section 80C above ₹1,50,000 will be accepted as declared.
