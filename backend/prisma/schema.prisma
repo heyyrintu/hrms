@@ -115,6 +115,7 @@ model Tenant {
   incomeTaxConfigs        IncomeTaxConfig[]
   taxDeclarations         EmployeeTaxDeclaration[]
   settlements             Settlement[]
+  investmentProofs        InvestmentProof[]
 
   @@map("tenants")
 }
@@ -344,6 +345,7 @@ model Employee {
   separations           Separation[]               @relation("SeparationEmployee")
   taxDeclarations       EmployeeTaxDeclaration[]
   settlements           Settlement[]               @relation("SettlementEmployee")
+  investmentProofs      InvestmentProof[]          @relation("InvestmentProofEmployee")
   processedSeparations  Separation[]               @relation("SeparationProcessedBy")
 
   @@unique([tenantId, employeeCode])
@@ -727,6 +729,7 @@ model Upload {
   tenant       Tenant             @relation(fields: [tenantId], references: [id])
   documents    EmployeeDocument[]
   expenseClaims ExpenseClaim[]
+  investmentProofs InvestmentProof[]
 
   @@index([tenantId])
   @@index([entityType, entityId])
@@ -1837,6 +1840,15 @@ model StatutoryConfig {
   /// Days treated as a month for valuing an encashed day.
   encashmentMonthDays Decimal @default(30) @db.Decimal(5, 2)
 
+  // ---- Investment proofs ----
+  /// Whether a verified proof is required before a declared deduction reduces
+  /// TDS. Off by default, so an existing installation keeps taking declarations
+  /// at face value exactly as it did before proofs existed.
+  proofVerificationRequired Boolean @default(false)
+  /// The month from which verified amounts replace declared ones, 1 to 12.
+  /// January by convention: declarations carry the year until proofs fall due.
+  proofCutoffMonth Int @default(1)
+
   // ---- TDS (Income Tax Act, section 192) ----
   tdsEnabled       Boolean   @default(true)
   /// Applied to employees who have not chosen a regime themselves.
@@ -2025,4 +2037,77 @@ model Settlement {
   @@index([tenantId])
   @@index([employeeId])
   @@map("settlements")
+}
+
+
+// ============================================
+// INVESTMENT PROOFS
+// ============================================
+
+enum InvestmentProofStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// The heads a proof can be filed under.
+///
+/// Only deductions evidence can support. Section 80CCD(2) is the employer's own
+/// contribution and needs no proof from the employee, and declared other income
+/// increases tax rather than reducing it, so neither appears here.
+enum InvestmentProofSection {
+  SECTION_80C
+  SECTION_80D
+  SECTION_80CCD1B
+  HRA
+  HOME_LOAN_INTEREST
+  OTHER_DEDUCTIONS
+  PREVIOUS_EMPLOYER_TDS
+}
+
+/// One piece of evidence for one head, for one financial year.
+///
+/// An employee may file several against the same head; what counts is the sum
+/// of the approved ones. The claimed amount is what the employee says the
+/// document shows; the verified amount is what the reviewer accepted, and may
+/// be lower.
+model InvestmentProof {
+  id            String                @id @default(uuid())
+  tenantId      String
+  employeeId    String
+  /// FY 2026-27 is 2026.
+  financialYear Int
+  section       InvestmentProofSection
+  status        InvestmentProofStatus @default(PENDING)
+
+  /// What the employee says the document supports.
+  claimedAmount  Decimal  @db.Decimal(12, 2)
+  /// What the reviewer accepted. Null until a decision is recorded.
+  verifiedAmount Decimal? @db.Decimal(12, 2)
+
+  uploadId    String
+  description String? @db.VarChar(500)
+
+  reviewedBy String?
+  reviewedAt DateTime?
+  /// Why it was rejected, or a note on a partial approval. Required on refusal:
+  /// an employee whose evidence is refused is owed a reason.
+  reviewNote String? @db.VarChar(1000)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  employee Employee @relation("InvestmentProofEmployee", fields: [employeeId], references: [id])
+  upload   Upload   @relation(fields: [uploadId], references: [id])
+
+  /// One document per head per year. Two proofs pointing at the same upload
+  /// under one head would both be summed once approved, inflating a deduction
+  /// and under-deducting tax. The same document may still support a different
+  /// head, which is why the section is part of the identity.
+  @@unique([tenantId, employeeId, financialYear, section, uploadId])
+  @@index([tenantId, financialYear])
+  @@index([employeeId, financialYear])
+  @@index([tenantId, status])
+  @@map("investment_proofs")
 }

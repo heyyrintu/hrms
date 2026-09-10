@@ -1,7 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/library';
-import { TaxRegime } from '@prisma/client';
+import { InvestmentProofStatus, TaxRegime } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import {
+  PROOF_SECTION_TO_DECLARATION_FIELD,
+  ProofBackedField,
+  VerifiedTotals,
+  verificationApplies,
+} from '../proofs/proofs.types';
 import {
   UpdateStatutoryConfigDto,
   UpsertTaxDeclarationDto,
@@ -54,6 +60,17 @@ export interface StatutoryResult {
 }
 
 const ZERO = new Decimal(0);
+
+/**
+ * The declaration fields evidence can support, taken from the shared contract
+ * rather than listed again here. Everything else on a declaration — the
+ * employer's own NPS contribution under 80CCD(2), and declared other income —
+ * has no proof head and so keeps coming from the declaration whatever the
+ * verification setting says.
+ */
+const PROOF_BACKED_FIELDS: readonly ProofBackedField[] = Object.values(
+  PROOF_SECTION_TO_DECLARATION_FIELD,
+);
 
 function emptyResult(): StatutoryResult {
   return {
@@ -289,7 +306,11 @@ export class StatutoryService {
    */
   private async computeTds(
     input: StatutoryInput,
-    config: { defaultTaxRegime: TaxRegime },
+    config: {
+      defaultTaxRegime: TaxRegime;
+      proofVerificationRequired: boolean;
+      proofCutoffMonth: number;
+    },
     professionalTaxThisMonth: Decimal,
   ): Promise<{ tds: Decimal; taxComputation: Record<string, unknown> | null }> {
     const financialYear = financialYearOf(input.month, input.year);
@@ -333,7 +354,7 @@ export class StatutoryService {
       professionalTaxThisMonth.mul(remainingMonths),
     );
 
-    const declarations = {
+    const declared = {
       section80C: new Decimal(declaration?.section80C ?? 0),
       section80D: new Decimal(declaration?.section80D ?? 0),
       section80CCD1B: new Decimal(declaration?.section80CCD1B ?? 0),
@@ -344,6 +365,29 @@ export class StatutoryService {
       otherIncome: new Decimal(declaration?.otherIncome ?? 0),
       previousEmployerTds: new Decimal(declaration?.previousEmployerTds ?? 0),
     };
+
+    // Off by default, so a tenant that has not opted in is answered without a
+    // query and computed from exactly the figures it was computed from before.
+    const useVerified = verificationApplies({
+      proofVerificationRequired: config.proofVerificationRequired ?? false,
+      proofCutoffMonth: config.proofCutoffMonth ?? 1,
+      payrollMonth: input.month,
+    });
+
+    const verified = useVerified
+      ? await this.approvedProofTotals(input, financialYear)
+      : null;
+
+    // Where verification is in force, a proof-backed head is worth what the
+    // approved proofs prove and nothing more. No approved proof means nothing
+    // is allowed under that head — not the declared figure — which is the whole
+    // point of switching verification on.
+    const declarations = { ...declared };
+    if (verified) {
+      for (const field of PROOF_BACKED_FIELDS) {
+        declarations[field] = new Decimal(verified[field] ?? 0);
+      }
+    }
 
     const computed: IncomeTaxResult = calculateIncomeTax(
       annualGross,
@@ -386,8 +430,62 @@ export class StatutoryService {
         annualTax: computed.totalTax.toFixed(2),
         alreadyDeducted: alreadyDeducted.toFixed(2),
         remainingMonths,
+        // Whoever has to explain why this employee's TDS jumped in January
+        // needs the answer here rather than in someone's memory.
+        verifiedAmountsUsed: useVerified,
+        proofCutoffMonth: config.proofCutoffMonth ?? 1,
+        ...(verified
+          ? {
+              verifiedDeductions: Object.fromEntries(
+                PROOF_BACKED_FIELDS.map((f) => [f, declarations[f].toFixed(2)]),
+              ),
+              declaredDeductions: Object.fromEntries(
+                PROOF_BACKED_FIELDS.map((f) => [f, declared[f].toFixed(2)]),
+              ),
+            }
+          : {}),
       },
     };
+  }
+
+  /**
+   * The sum of the employee's approved proofs for the year, by declaration
+   * field. Only approved rows count: a pending proof has not been accepted and
+   * a rejected one never will be.
+   *
+   * An approved row with no verified amount recorded contributes nothing. The
+   * claimed figure is what the employee asserted, and standing in for a missing
+   * decision with it would defeat the verification it is meant to represent.
+   */
+  private async approvedProofTotals(
+    input: StatutoryInput,
+    financialYear: number,
+  ): Promise<VerifiedTotals> {
+    const proofs = await this.prisma.investmentProof.findMany({
+      where: {
+        tenantId: input.tenantId,
+        employeeId: input.employeeId,
+        financialYear,
+        status: InvestmentProofStatus.APPROVED,
+      },
+      select: { section: true, verifiedAmount: true },
+    });
+
+    const totals: Partial<Record<ProofBackedField, Decimal>> = {};
+
+    for (const proof of proofs) {
+      const field = PROOF_SECTION_TO_DECLARATION_FIELD[proof.section];
+      // A head the contract does not map is not one this calculation can use.
+      if (!field) continue;
+
+      const amount =
+        proof.verifiedAmount === null ? ZERO : new Decimal(proof.verifiedAmount);
+      totals[field] = (totals[field] ?? ZERO).add(amount);
+    }
+
+    return Object.fromEntries(
+      Object.entries(totals).map(([field, amount]) => [field, amount.toString()]),
+    ) as VerifiedTotals;
   }
 
   /** Gross, professional tax and TDS already recorded this financial year. */

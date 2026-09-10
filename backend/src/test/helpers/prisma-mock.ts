@@ -68,6 +68,7 @@ const prismaModels = [
   'incomeTaxSlab',
   'employeeTaxDeclaration',
   'settlement',
+  'investmentProof',
   'biometricDevice',
   'deviceAttendanceLog',
   'feedback',

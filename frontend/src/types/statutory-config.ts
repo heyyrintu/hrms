@@ -79,6 +79,15 @@ export interface StatutoryConfig {
   leaveEncashmentEnabled: boolean;
   encashmentMonthDays: string;
 
+  /**
+   * Whether a verified proof is required before a declared deduction reduces
+   * TDS. Off by default: an installation that has not opted in keeps taking
+   * declarations at face value exactly as it did before proofs existed.
+   */
+  proofVerificationRequired: boolean;
+  /** Calendar month from which verified amounts replace declared ones. */
+  proofCutoffMonth: number;
+
   // Income Tax Act section 192.
   tdsEnabled: boolean;
   /** Applied to employees who have not chosen a regime themselves. */
@@ -127,6 +136,9 @@ export interface UpdateStatutoryConfigPayload {
 
   leaveEncashmentEnabled?: boolean;
   encashmentMonthDays?: number;
+
+  proofVerificationRequired?: boolean;
+  proofCutoffMonth?: number;
 
   tdsEnabled?: boolean;
   defaultTaxRegime?: TaxRegimeName;

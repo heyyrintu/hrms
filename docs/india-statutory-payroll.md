@@ -170,6 +170,8 @@ notice shortfall recovery, other recoveries and TDS.
 | Admin → Statutory Payroll | HR admin | Rates, thresholds and which levies apply |
 | Payroll → Tax Declarations | HR admin | Read what an employee declared |
 | My Tax Declaration | Everyone | Record what you expect to claim this year |
+| My Tax Proofs | Everyone | Submit evidence and see where each piece stands |
+| Payroll → Proof Review | HR admin | Review evidence and record a decision |
 
 Two things the pages do deliberately, which are easy to undo by accident.
 
@@ -196,12 +198,46 @@ has checked the figures and saved.
 state and financial year and there is no endpoint to edit one. Changing a slab
 is a seed or a migration, not a form.
 
-**A declaration is not a proof.** Nothing collects, verifies or approves
-evidence, and no statutory ceiling is enforced on a declared amount. The form
-warns when a figure exceeds the ceiling it is subject to but still saves it,
-because the system genuinely accepts it and the employee should know it will not
-help them. Under the new regime the entries the regime ignores are marked rather
-than silently accepted.
+## Investment proofs
+
+An employee files evidence against a head, payroll staff accept or refuse it,
+and from a cutoff month the accepted amounts replace the declared ones in the
+TDS calculation. That last part is the point: without it the approvals would be
+decorative.
+
+**It is off by default and must stay that way until somebody decides
+otherwise.** `proofVerificationRequired` on `statutory_configs` starts false, so
+an installation that does not opt in keeps taking declarations at face value
+exactly as it did before proofs existed. Switching it on means a head with no
+approved proof allows nothing, which raises the tax deducted from every employee
+who has not submitted evidence. That is correct, and it is why it is a decision
+rather than an upgrade.
+
+`proofCutoffMonth` defaults to January. Employers accept declarations through
+the year and call proofs in near its end, so before the cutoff the declaration
+stands on its own. The month is compared in financial-year order: January is the
+tenth month of the year, not the first.
+
+Two heads have no proof and never will. Section 80CCD(2) is the employer's own
+contribution, which the employer already knows, and declared other income raises
+tax rather than reducing it. Nobody needs evidence to be taxed more.
+
+One consequence is worth stating because it is the least obvious. Tax deducted
+by a previous employer is a proof-backed head, so under verification it too
+falls to what has been evidenced. An employee who has not produced their
+previous employer's Form 16 loses that credit until they do.
+
+The stored `taxComputation` records whether verified amounts were used and what
+was allowed under each head, so a January jump in someone's TDS can be explained
+from the payslip rather than guessed at.
+
+**A declaration is still not a proof.** Evidence is now collected and reviewed,
+but a declaration on its own remains a claim, and no statutory ceiling is
+enforced on either a declared or an accepted amount. The form warns when a
+figure exceeds the ceiling it is subject to and still saves it, because the
+system genuinely accepts it and the employee should know it will not help them.
+Under the new regime the entries the regime ignores are marked rather than
+silently accepted.
 
 Payroll and settlement pages are gated to HR administrators in the browser as
 well as at the API. The gate is not the security boundary, since the API already
@@ -217,10 +253,11 @@ Known and deliberate, so nobody assumes otherwise:
 - **Slab editing.** Professional tax and income tax slabs are seeded, not
   edited through the interface. Rates and thresholds are editable; the slab
   tables themselves are not.
-- **Investment proof workflow.** Declarations are taken at face value. Nothing
-  collects, verifies or approves evidence, and no limit is enforced on a
-  declared amount, so section 80C above ₹1,50,000 will be accepted as declared.
-  Validate before it reaches payroll.
+- **Statutory ceilings on a declared amount.** Section 80C above ₹1,50,000 is
+  still accepted as declared. The forms warn but do not block, and a reviewer
+  accepting a proof is not checking it against the ceiling either.
+- **Automatic proof checking.** A person reads every document. Nothing extracts
+  figures from a PDF or validates a policy number.
 - **Section 10 exemptions other than HRA.** Leave travel allowance, children's
   education and similar are not tracked, because nothing records them.
 - **Section 10(10AA) leave encashment exemption.** Encashment on exit is

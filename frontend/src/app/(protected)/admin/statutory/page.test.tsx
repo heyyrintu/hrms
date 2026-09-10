@@ -126,6 +126,8 @@ const config: StatutoryConfig = {
   leaveEncashmentEnabled: true,
   encashmentMonthDays: '30.00',
 
+  proofVerificationRequired: false,
+  proofCutoffMonth: 1,
   tdsEnabled: true,
   defaultTaxRegime: 'NEW',
 
@@ -532,5 +534,35 @@ describe('StatutoryConfigPage — no income tax slabs', () => {
       expect(screen.getByText(/no TDS is deducted/i)).toBeInTheDocument();
     });
     expect(screen.getByText(/rather than a figure being guessed/i)).toBeInTheDocument();
+  });
+});
+
+describe('StatutoryConfigPage — investment proofs', () => {
+  it('offers the verification switch off, and says what turning it on does', async () => {
+    render(<StatutoryConfigPage />);
+
+    const toggle = await screen.findByLabelText(/Require verified proofs/i);
+    expect(toggle).not.toBeChecked();
+    // Turning this on raises the TDS of every employee without approved
+    // proofs. Somebody has to decide that; it must not read like a tidy-up.
+    expect(screen.getByText(/allows nothing under that head/i)).toBeInTheDocument();
+  });
+
+  it('sends the proof settings only when they change', async () => {
+    render(<StatutoryConfigPage />);
+
+    const toggle = await screen.findByLabelText(/Require verified proofs/i);
+    fireEvent.click(toggle);
+    fireEvent.change(screen.getByLabelText(/Month verified amounts take over/i), {
+      target: { value: '2' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateConfig).toHaveBeenCalledWith({
+        proofVerificationRequired: true,
+        proofCutoffMonth: 2,
+      });
+    });
   });
 });

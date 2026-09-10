@@ -44,6 +44,7 @@ import {
     Scale,
     ShieldCheck,
     Sun,
+    FolderCheck,
 } from 'lucide-react';
 
 // ---------------------------------------------------------------------------
@@ -88,6 +89,9 @@ interface Draft {
     leaveEncashmentEnabled: boolean;
     encashmentMonthDays: string;
 
+    proofVerificationRequired: boolean;
+    proofCutoffMonth: number;
+
     tdsEnabled: boolean;
     defaultTaxRegime: TaxRegimeName;
 }
@@ -119,6 +123,7 @@ type BooleanKey =
     | 'lwfEnabled'
     | 'gratuityEnabled'
     | 'leaveEncashmentEnabled'
+    | 'proofVerificationRequired'
     | 'tdsEnabled';
 
 interface NumericField {
@@ -160,7 +165,24 @@ const BOOLEAN_KEYS: BooleanKey[] = [
     'lwfEnabled',
     'gratuityEnabled',
     'leaveEncashmentEnabled',
+    'proofVerificationRequired',
     'tdsEnabled',
+];
+
+/** The months a proof cutoff can fall on, in financial-year order. */
+const CUTOFF_MONTHS = [
+    { value: '4', label: 'April' },
+    { value: '5', label: 'May' },
+    { value: '6', label: 'June' },
+    { value: '7', label: 'July' },
+    { value: '8', label: 'August' },
+    { value: '9', label: 'September' },
+    { value: '10', label: 'October' },
+    { value: '11', label: 'November' },
+    { value: '12', label: 'December' },
+    { value: '1', label: 'January' },
+    { value: '2', label: 'February' },
+    { value: '3', label: 'March' },
 ];
 
 /** The states whose professional tax slabs the seed ships. */
@@ -228,6 +250,9 @@ const STATUTORY_DEFAULTS: Draft = {
     leaveEncashmentEnabled: true,
     encashmentMonthDays: '30',
 
+    proofVerificationRequired: false,
+    proofCutoffMonth: 1,
+
     tdsEnabled: true,
     defaultTaxRegime: 'NEW',
 };
@@ -266,6 +291,9 @@ function draftFromConfig(config: StatutoryConfig): Draft {
         leaveEncashmentEnabled: config.leaveEncashmentEnabled,
         encashmentMonthDays: config.encashmentMonthDays,
 
+        proofVerificationRequired: config.proofVerificationRequired,
+        proofCutoffMonth: config.proofCutoffMonth,
+
         tdsEnabled: config.tdsEnabled,
         defaultTaxRegime: config.defaultTaxRegime,
     };
@@ -300,6 +328,10 @@ function buildPayload(baseline: Draft | null, draft: Draft): UpdateStatutoryConf
 
     if (!baseline || draft.defaultTaxRegime !== baseline.defaultTaxRegime) {
         payload.defaultTaxRegime = draft.defaultTaxRegime;
+    }
+
+    if (!baseline || draft.proofCutoffMonth !== baseline.proofCutoffMonth) {
+        payload.proofCutoffMonth = draft.proofCutoffMonth;
     }
 
     const months = [...draft.lwfMonths].sort((a, b) => a - b);
@@ -939,6 +971,47 @@ export default function StatutoryConfigPage() {
                         "Divides monthly wages into a day's wages for the encashment figure.",
                     )}
                 </div>
+            </SectionCard>
+
+            {/* Investment proofs ----------------------------------------------- */}
+            <SectionCard
+                icon={<FolderCheck className="h-5 w-5 text-primary-600" aria-hidden="true" />}
+                title="Investment proofs"
+                statute="Whether evidence is required before a declared deduction reduces TDS."
+                enabled={draft.proofVerificationRequired}
+                onToggle={(value) => setField('proofVerificationRequired', value)}
+                toggleLabel="Require verified proofs"
+            >
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div>
+                        <Select
+                            label="Month verified amounts take over"
+                            aria-label="Month verified amounts take over"
+                            value={String(draft.proofCutoffMonth)}
+                            onChange={(event) =>
+                                setDraft((prev) => ({
+                                    ...prev,
+                                    proofCutoffMonth: Number(event.target.value),
+                                }))
+                            }
+                            disabled={saving || !draft.proofVerificationRequired}
+                            options={CUTOFF_MONTHS}
+                        />
+                        <p className="mt-1 text-xs text-warm-500">
+                            Declarations stand on their own until this month, which is how
+                            employers usually run the year: proofs are called in near its end.
+                        </p>
+                    </div>
+                </div>
+                <Note>
+                    <p>
+                        From the cutoff month, a head with no approved proof allows nothing
+                        under that head, rather than the declared figure. That will raise the
+                        tax deducted from every employee who has not had proofs approved,
+                        which is the point of switching this on. It is off by default so that
+                        nothing changes for anyone until somebody decides it should.
+                    </p>
+                </Note>
             </SectionCard>
 
             {/* TDS ------------------------------------------------------------- */}
