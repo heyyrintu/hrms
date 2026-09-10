@@ -79,6 +79,7 @@ interface Draft {
     lwfEmployeeAmount: string;
     lwfEmployerAmount: string;
     lwfMonths: number[];
+    ptMonths: number[];
 
     gratuityEnabled: boolean;
     gratuityDaysPerYear: string;
@@ -88,6 +89,10 @@ interface Draft {
 
     leaveEncashmentEnabled: boolean;
     encashmentMonthDays: string;
+    encashmentExemptionCap: string;
+    encashmentExemptDaysPerYear: string;
+    encashmentExemptMonths: string;
+    encashmentGovernmentEmployer: boolean;
 
     proofVerificationRequired: boolean;
     proofCutoffMonth: number;
@@ -113,7 +118,10 @@ type NumericKey =
     | 'gratuityMonthDays'
     | 'gratuityMinYears'
     | 'gratuityExemptionCap'
-    | 'encashmentMonthDays';
+    | 'encashmentMonthDays'
+    | 'encashmentExemptionCap'
+    | 'encashmentExemptDaysPerYear'
+    | 'encashmentExemptMonths';
 
 type BooleanKey =
     | 'pfEnabled'
@@ -123,6 +131,7 @@ type BooleanKey =
     | 'lwfEnabled'
     | 'gratuityEnabled'
     | 'leaveEncashmentEnabled'
+    | 'encashmentGovernmentEmployer'
     | 'proofVerificationRequired'
     | 'tdsEnabled';
 
@@ -155,6 +164,21 @@ const NUMERIC_FIELDS: NumericField[] = [
         label: "Days treated as a month's wages for encashment",
         kind: 'count',
     },
+    {
+        key: 'encashmentExemptionCap',
+        label: 'Encashment exemption cap (₹)',
+        kind: 'amount',
+    },
+    {
+        key: 'encashmentExemptDaysPerYear',
+        label: 'Exempt leave days per completed year',
+        kind: 'count',
+    },
+    {
+        key: 'encashmentExemptMonths',
+        label: "Months of average salary the exemption allows",
+        kind: 'count',
+    },
 ];
 
 const BOOLEAN_KEYS: BooleanKey[] = [
@@ -165,6 +189,7 @@ const BOOLEAN_KEYS: BooleanKey[] = [
     'lwfEnabled',
     'gratuityEnabled',
     'leaveEncashmentEnabled',
+    'encashmentGovernmentEmployer',
     'proofVerificationRequired',
     'tdsEnabled',
 ];
@@ -240,6 +265,7 @@ const STATUTORY_DEFAULTS: Draft = {
     lwfEmployeeAmount: '0',
     lwfEmployerAmount: '0',
     lwfMonths: [],
+    ptMonths: [],
 
     gratuityEnabled: true,
     gratuityDaysPerYear: '15',
@@ -249,6 +275,11 @@ const STATUTORY_DEFAULTS: Draft = {
 
     leaveEncashmentEnabled: true,
     encashmentMonthDays: '30',
+    // Section 10(10AA): twenty-five lakh, thirty days a year, ten months.
+    encashmentExemptionCap: '2500000',
+    encashmentExemptDaysPerYear: '30',
+    encashmentExemptMonths: '10',
+    encashmentGovernmentEmployer: false,
 
     proofVerificationRequired: false,
     proofCutoffMonth: 1,
@@ -281,6 +312,7 @@ function draftFromConfig(config: StatutoryConfig): Draft {
         lwfEmployeeAmount: config.lwfEmployeeAmount,
         lwfEmployerAmount: config.lwfEmployerAmount,
         lwfMonths: [...config.lwfMonths].sort((a, b) => a - b),
+        ptMonths: [...(config.ptMonths ?? [])].sort((a, b) => a - b),
 
         gratuityEnabled: config.gratuityEnabled,
         gratuityDaysPerYear: config.gratuityDaysPerYear,
@@ -290,6 +322,10 @@ function draftFromConfig(config: StatutoryConfig): Draft {
 
         leaveEncashmentEnabled: config.leaveEncashmentEnabled,
         encashmentMonthDays: config.encashmentMonthDays,
+        encashmentExemptionCap: config.encashmentExemptionCap,
+        encashmentExemptDaysPerYear: config.encashmentExemptDaysPerYear,
+        encashmentExemptMonths: config.encashmentExemptMonths,
+        encashmentGovernmentEmployer: config.encashmentGovernmentEmployer,
 
         proofVerificationRequired: config.proofVerificationRequired,
         proofCutoffMonth: config.proofCutoffMonth,
@@ -332,6 +368,14 @@ function buildPayload(baseline: Draft | null, draft: Draft): UpdateStatutoryConf
 
     if (!baseline || draft.proofCutoffMonth !== baseline.proofCutoffMonth) {
         payload.proofCutoffMonth = draft.proofCutoffMonth;
+    }
+
+    const ptMonths = [...draft.ptMonths].sort((a, b) => a - b);
+    if (
+        !baseline ||
+        ptMonths.join(',') !== [...baseline.ptMonths].sort((a, b) => a - b).join(',')
+    ) {
+        payload.ptMonths = ptMonths;
     }
 
     const months = [...draft.lwfMonths].sort((a, b) => a - b);
@@ -516,12 +560,12 @@ export default function StatutoryConfigPage() {
         });
     };
 
-    const toggleMonth = (month: number) => {
+    const toggleMonth = (field: 'lwfMonths' | 'ptMonths', month: number) => {
         setDraft((current) => ({
             ...current,
-            lwfMonths: current.lwfMonths.includes(month)
-                ? current.lwfMonths.filter((m) => m !== month)
-                : [...current.lwfMonths, month].sort((a, b) => a - b),
+            [field]: current[field].includes(month)
+                ? current[field].filter((m) => m !== month)
+                : [...current[field], month].sort((a, b) => a - b),
         }));
     };
 
@@ -891,6 +935,44 @@ export default function StatutoryConfigPage() {
 
                 <fieldset className="rounded-lg border border-warm-200 p-3">
                     <legend className="px-1 text-sm font-medium text-warm-700">
+                        Months this state collects professional tax in
+                    </legend>
+                    <p className="mb-2 text-xs text-warm-500">
+                        Leave every month unticked if the state collects monthly, which most
+                        do. Tick only the collection months for a half-yearly state, whose
+                        slab amounts are period amounts rather than monthly ones.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                        {MONTHS.map((name, index) => {
+                            const month = index + 1;
+                            const checked = draft.ptMonths.includes(month);
+                            return (
+                                <label
+                                    key={name}
+                                    className={cn(
+                                        'flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs transition-colors',
+                                        checked
+                                            ? 'border-primary-300 bg-primary-50 text-primary-700'
+                                            : 'border-warm-200 bg-white text-warm-600',
+                                    )}
+                                >
+                                    <input
+                                        type="checkbox"
+                                        aria-label={`Professional tax collected in ${name}`}
+                                        checked={checked}
+                                        onChange={() => toggleMonth('ptMonths', month)}
+                                        disabled={saving}
+                                        className="h-3.5 w-3.5 rounded border-warm-300 text-primary-600 focus:ring-2 focus:ring-primary-500"
+                                    />
+                                    {name.slice(0, 3)}
+                                </label>
+                            );
+                        })}
+                    </div>
+                </fieldset>
+
+                <fieldset className="rounded-lg border border-warm-200 p-3">
+                    <legend className="px-1 text-sm font-medium text-warm-700">
                         Months the state collects in
                     </legend>
                     <p className="mb-2 text-xs text-warm-500">
@@ -913,9 +995,9 @@ export default function StatutoryConfigPage() {
                                 >
                                     <input
                                         type="checkbox"
-                                        aria-label={name}
+                                        aria-label={`Labour welfare fund collected in ${name}`}
                                         checked={checked}
-                                        onChange={() => toggleMonth(month)}
+                                        onChange={() => toggleMonth('lwfMonths', month)}
                                         disabled={saving}
                                         className="h-3.5 w-3.5 rounded border-warm-300 text-primary-600 focus:ring-2 focus:ring-primary-500"
                                     />
@@ -971,6 +1053,40 @@ export default function StatutoryConfigPage() {
                         "Divides monthly wages into a day's wages for the encashment figure.",
                     )}
                 </div>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                    {numericInput('encashmentExemptionCap')}
+                    {numericInput('encashmentExemptDaysPerYear', 'The Act says 30.')}
+                    {numericInput('encashmentExemptMonths', 'The Act says 10.')}
+                </div>
+
+                <label className="flex items-start gap-2 text-sm text-warm-700">
+                    <input
+                        type="checkbox"
+                        aria-label="Government employer"
+                        checked={draft.encashmentGovernmentEmployer}
+                        onChange={(event) =>
+                            setField('encashmentGovernmentEmployer', event.target.checked)
+                        }
+                        disabled={saving}
+                        className="mt-0.5 h-4 w-4 rounded border-warm-300 text-primary-600 focus:ring-2 focus:ring-primary-500"
+                    />
+                    <span>
+                        Government employer
+                        <span className="block text-xs text-warm-500">
+                            Encashment paid by a government employer is exempt in full.
+                        </span>
+                    </span>
+                </label>
+
+                <Note>
+                    <p>
+                        The exemption is the least of four: what is received, this lifetime
+                        ceiling less what earlier employers exempted, the months of average
+                        salary above, and the days per completed year above. The cap here
+                        caps the exempt part, not what is paid.
+                    </p>
+                </Note>
             </SectionCard>
 
             {/* Investment proofs ----------------------------------------------- */}

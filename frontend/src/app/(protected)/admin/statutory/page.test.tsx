@@ -126,6 +126,11 @@ const config: StatutoryConfig = {
   leaveEncashmentEnabled: true,
   encashmentMonthDays: '30.00',
 
+  ptMonths: [],
+  encashmentExemptionCap: '2500000.00',
+  encashmentExemptDaysPerYear: '30.00',
+  encashmentExemptMonths: '10.00',
+  encashmentGovernmentEmployer: false,
   proofVerificationRequired: false,
   proofCutoffMonth: 1,
   tdsEnabled: true,
@@ -161,6 +166,14 @@ const incomeTaxConfigs: IncomeTaxConfig[] = [
     id: 'itc-1',
     financialYear: 2026,
     regime: 'NEW',
+    ageBand: 'GENERAL',
+    // Nil under the new regime: section 115BAC withdraws these deductions, so
+    // inheriting the old regime's limits would suggest an eligibility that
+    // does not exist.
+    section80CLimit: '0.00',
+    section80DLimit: '0.00',
+    section80CCD1BLimit: '0.00',
+    marginalReliefEnabled: true,
     standardDeduction: '75000.00',
     rebateIncomeLimit: '700000.00',
     rebateMaxAmount: '25000.00',
@@ -428,12 +441,12 @@ describe('StatutoryConfigPage — labour welfare fund months', () => {
     render(<StatutoryConfigPage />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('January')).toBeInTheDocument();
+      expect(screen.getByLabelText('Labour welfare fund collected in January')).toBeInTheDocument();
     });
 
-    expect(screen.getByLabelText('January')).toBeChecked();
-    expect(screen.getByLabelText('July')).toBeChecked();
-    expect(screen.getByLabelText('March')).not.toBeChecked();
+    expect(screen.getByLabelText('Labour welfare fund collected in January')).toBeChecked();
+    expect(screen.getByLabelText('Labour welfare fund collected in July')).toBeChecked();
+    expect(screen.getByLabelText('Labour welfare fund collected in March')).not.toBeChecked();
     expect(screen.queryByLabelText(/lwf months/i)).not.toBeInTheDocument();
   });
 
@@ -441,10 +454,10 @@ describe('StatutoryConfigPage — labour welfare fund months', () => {
     render(<StatutoryConfigPage />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('March')).toBeInTheDocument();
+      expect(screen.getByLabelText('Labour welfare fund collected in March')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByLabelText('March'));
+    fireEvent.click(screen.getByLabelText('Labour welfare fund collected in March'));
     fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
 
     await waitFor(() => {
@@ -564,5 +577,47 @@ describe('StatutoryConfigPage — investment proofs', () => {
         proofCutoffMonth: 2,
       });
     });
+  });
+});
+
+describe('StatutoryConfigPage — months a state collects professional tax in', () => {
+  it('sends only the months that were ticked', async () => {
+    // Empty means every month, which is what most states do. A half-yearly
+    // state's slab amounts are period amounts, so deducting twelve times would
+    // take six times what it levies.
+    render(<StatutoryConfigPage />);
+
+    fireEvent.click(await screen.findByLabelText('Professional tax collected in April'));
+    fireEvent.click(screen.getByLabelText('Professional tax collected in October'));
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateConfig).toHaveBeenCalledWith({ ptMonths: [4, 10] });
+    });
+  });
+});
+
+describe('StatutoryConfigPage — section 10(10AA)', () => {
+  it('lets the encashment exemption parameters be set', async () => {
+    render(<StatutoryConfigPage />);
+
+    // A figure different from the seeded one, or nothing is sent: the page
+    // deliberately patches only what changed.
+    fireEvent.change(await screen.findByLabelText(/Encashment exemption cap/i), {
+      target: { value: '3000000' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(mockUpdateConfig).toHaveBeenCalledWith({ encashmentExemptionCap: 3000000 });
+    });
+  });
+
+  it('says the cap limits the exemption and not the amount paid', async () => {
+    render(<StatutoryConfigPage />);
+
+    expect(
+      await screen.findByText(/caps the exempt part, not what is paid/i),
+    ).toBeInTheDocument();
   });
 });

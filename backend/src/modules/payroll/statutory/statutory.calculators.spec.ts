@@ -1,10 +1,12 @@
 import { Decimal } from '@prisma/client/runtime/library';
+import { TaxAgeBand } from '@prisma/client';
 import {
   calculatePf,
   calculateEsi,
   calculateProfessionalTax,
   calculateLwf,
   calculateIncomeTax,
+  calculateSurcharge,
   monthlyTdsInstalment,
 } from './statutory.calculators';
 
@@ -311,5 +313,363 @@ describe('monthlyTdsInstalment', () => {
 
   it('takes the whole balance in the final month', () => {
     expect(monthlyTdsInstalment(d(97500), d(90000), 1).toString()).toBe('7500');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Defect 1: marginal relief on surcharge
+// ---------------------------------------------------------------------------
+
+describe('calculateIncomeTax: marginal relief on surcharge', () => {
+  it('charges one more rupee of tax for one more rupee of income at the 50 lakh threshold', () => {
+    // Two runs a rupee apart. The whole point of marginal relief is that the
+    // second may not cost more than the first plus the rupee that was earned.
+    //
+    // Taxable exactly 50,00,000 (gross 50,75,000 less the 75,000 standard
+    // deduction). New-regime slabs: 20,000 + 40,000 + 60,000 + 80,000 +
+    // 1,00,000 for the bands up to 24,00,000, then 30% of 26,00,000 =
+    // 7,80,000. Tax = 10,80,000. Income is not *above* 50,00,000, so no
+    // surcharge. Cess 4% = 43,200. Total 11,23,200.
+    const at = calculateIncomeTax(d(5075000), newRegime, noDeclarations, d(0));
+
+    expect(at.taxableIncome.toString()).toBe('5000000');
+    expect(at.surcharge.toString()).toBe('0');
+    expect(at.totalTax.toString()).toBe('1123200');
+
+    // One rupee more. Tax on the extra rupee is 30 paise, which rounds away,
+    // so tax is still 10,80,000 and surcharge before relief is 10% = 1,08,000.
+    // Relief caps tax-plus-surcharge at the threshold figure plus the extra
+    // income: 10,80,000 + 1 = 10,80,001. So relief is
+    // (10,80,000 + 1,08,000) - 10,80,001 = 1,07,999 and the surcharge left
+    // standing is 1,08,000 - 1,07,999 = 1 rupee.
+    // Cess 4% of (10,80,000 + 1) = 43,200.04, rounded to 43,200.
+    const above = calculateIncomeTax(d(5075001), newRegime, noDeclarations, d(0));
+
+    expect(above.taxableIncome.toString()).toBe('5000001');
+    expect(above.surchargeBeforeRelief.toString()).toBe('108000');
+    expect(above.marginalRelief.toString()).toBe('107999');
+    expect(above.surcharge.toString()).toBe('1');
+    expect(above.reliefThreshold?.toString()).toBe('5000000');
+    expect(above.totalTax.toString()).toBe('1123201');
+  });
+});
+
+describe('calculateSurcharge', () => {
+  // Every figure below uses the new-regime slabs above. Tax on any taxable
+  // income at or above 24,00,000 is 3,00,000 for the bands beneath it
+  // (20,000 + 40,000 + 60,000 + 80,000 + 1,00,000) plus 30% of the rest.
+
+  it('charges nothing below the first threshold', () => {
+    // 49,99,999 has not crossed 50,00,000, so there is no surcharge to relieve.
+    const r = calculateSurcharge(d(4999999), d(1080000), newRegime);
+
+    expect(r.surcharge.toString()).toBe('0');
+    expect(r.surchargeBeforeRelief.toString()).toBe('0');
+    expect(r.marginalRelief.toString()).toBe('0');
+    expect(r.reliefThreshold).toBeNull();
+  });
+
+  it('charges nothing sitting exactly on a threshold', () => {
+    // Above, not at: 50,00,000 is not more than 50,00,000.
+    const r = calculateSurcharge(d(5000000), d(1080000), newRegime);
+
+    expect(r.surcharge.toString()).toBe('0');
+    expect(r.reliefThreshold).toBeNull();
+  });
+
+  it('relieves all but the extra rupee one rupee above the 50 lakh threshold', () => {
+    // Tax at 50,00,000: 3,00,000 + 30% of 26,00,000 = 10,80,000, and no
+    // surcharge, since 50,00,000 is not above 50,00,000.
+    // At 50,00,001 the tax is the same 10,80,000 once the 30 paise round away.
+    // Surcharge before relief: 10% of 10,80,000 = 1,08,000.
+    // Cap: 10,80,000 + 1 = 10,80,001. Actual: 10,80,000 + 1,08,000 = 11,88,000.
+    // Relief: 11,88,000 - 10,80,001 = 1,07,999. Surcharge left: 1 rupee.
+    const r = calculateSurcharge(d(5000001), d(1080000), newRegime);
+
+    expect(r.surchargeBeforeRelief.toString()).toBe('108000');
+    expect(r.marginalRelief.toString()).toBe('107999');
+    expect(r.surcharge.toString()).toBe('1');
+    expect(r.reliefThreshold?.toString()).toBe('5000000');
+  });
+
+  it('measures the second threshold against the 10% surcharge below it', () => {
+    // Tax at 1,00,00,000: 3,00,000 + 30% of 76,00,000 = 25,80,000.
+    // Surcharge there is the band below, 10% of 25,80,000 = 2,58,000, so the
+    // liability at the threshold is 28,38,000.
+    // At 1,00,00,001 the tax is still 25,80,000 and surcharge before relief is
+    // 15% = 3,87,000, giving 29,67,000 against a cap of 28,38,001.
+    // Relief 1,28,999, leaving 3,87,000 - 1,28,999 = 2,58,001 of surcharge:
+    // the 10% figure from the threshold, plus the rupee that was earned.
+    const r = calculateSurcharge(d(10000001), d(2580000), newRegime);
+
+    expect(r.surchargeBeforeRelief.toString()).toBe('387000');
+    expect(r.marginalRelief.toString()).toBe('128999');
+    expect(r.surcharge.toString()).toBe('258001');
+    expect(r.reliefThreshold?.toString()).toBe('10000000');
+  });
+
+  it('measures the third threshold against the 15% surcharge below it', () => {
+    // Tax at 2,00,00,000: 3,00,000 + 30% of 1,76,00,000 = 55,80,000.
+    // Surcharge there is 15% = 8,37,000, so the threshold liability is
+    // 64,17,000. At 2,00,00,001, surcharge before relief is 25% = 13,95,000
+    // and the liability 69,75,000 against a cap of 64,17,001.
+    // Relief 5,57,999, leaving 8,37,001 — the 15% figure plus the extra rupee.
+    const r = calculateSurcharge(d(20000001), d(5580000), newRegime);
+
+    expect(r.surchargeBeforeRelief.toString()).toBe('1395000');
+    expect(r.marginalRelief.toString()).toBe('557999');
+    expect(r.surcharge.toString()).toBe('837001');
+  });
+
+  it('does not bite well above a threshold', () => {
+    // Taxable 80,00,000: tax 3,00,000 + 30% of 56,00,000 = 19,80,000, and
+    // surcharge 10% = 1,98,000, so 21,78,000 in all. The cap is the threshold
+    // liability of 10,80,000 plus the 30,00,000 of income above it, which is
+    // 40,80,000 — far more than the liability, so relief is nil and the full
+    // flat surcharge stands.
+    const r = calculateSurcharge(d(8000000), d(1980000), newRegime);
+
+    expect(r.surchargeBeforeRelief.toString()).toBe('198000');
+    expect(r.marginalRelief.toString()).toBe('0');
+    expect(r.surcharge.toString()).toBe('198000');
+  });
+
+  it('charges the flat rate when the year is configured without relief', () => {
+    // Same rupee-above-the-threshold case as before, with relief switched off:
+    // the full 1,08,000 stands, which is exactly what this did before relief
+    // was implemented.
+    const r = calculateSurcharge(d(5000001), d(1080000), {
+      ...newRegime,
+      marginalReliefEnabled: false,
+    });
+
+    expect(r.surcharge.toString()).toBe('108000');
+    expect(r.surchargeBeforeRelief.toString()).toBe('108000');
+    expect(r.marginalRelief.toString()).toBe('0');
+    expect(r.reliefThreshold).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Defect 2: chapter VI-A ceilings
+// ---------------------------------------------------------------------------
+
+// FY 2025-26 ceilings, as held on the year's configuration row.
+const limits = {
+  section80C: d(150000),
+  section80D: d(25000),
+  section80CCD1B: d(50000),
+};
+
+const oldRegimeWithLimits = { ...oldRegime, limits };
+
+describe('calculateIncomeTax: chapter VI-A ceilings', () => {
+  // Gross 12,00,000, old regime. Over-claimed on all three capped heads:
+  // 80C 2,00,000 against a ceiling of 1,50,000; 80D 40,000 against 25,000;
+  // 80CCD(1B) 75,000 against 50,000.
+  const overClaimed = {
+    ...noDeclarations,
+    section80C: d(200000),
+    section80D: d(40000),
+    section80CCD1B: d(75000),
+  };
+
+  it('allows only the statutory maximum under each capped head', () => {
+    // Allowed: 1,50,000 + 25,000 + 50,000 = 2,25,000, plus the 50,000
+    // standard deduction, so 2,75,000 comes off and 9,25,000 is taxable.
+    // Old slabs: 5% of 2,50,000 = 12,500, then 20% of 4,25,000 = 85,000,
+    // so 97,500 of tax. Cess 4% = 3,900. Total 1,01,400.
+    //
+    // Taken as declared it would have been 3,65,000 of deductions, 8,35,000
+    // taxable and 82,680 of tax: 18,720 less than the statute allows.
+    const r = calculateIncomeTax(d(1200000), oldRegimeWithLimits, overClaimed, d(0));
+
+    expect(r.totalDeductions.toString()).toBe('275000');
+    expect(r.taxableIncome.toString()).toBe('925000');
+    expect(r.taxBeforeRebate.toString()).toBe('97500');
+    expect(r.totalTax.toString()).toBe('101400');
+  });
+
+  it('shows what was declared against what was allowed under each head', () => {
+    const r = calculateIncomeTax(d(1200000), oldRegimeWithLimits, overClaimed, d(0));
+
+    expect(r.chapterVIACaps.map((c) => c.section)).toEqual(['80C', '80D', '80CCD(1B)']);
+
+    const [c80C, c80D, c80CCD1B] = r.chapterVIACaps;
+
+    expect(c80C.declared.toString()).toBe('200000');
+    expect(c80C.limit.toString()).toBe('150000');
+    expect(c80C.allowed.toString()).toBe('150000');
+    expect(c80C.disallowed.toString()).toBe('50000');
+
+    expect(c80D.allowed.toString()).toBe('25000');
+    expect(c80D.disallowed.toString()).toBe('15000');
+
+    expect(c80CCD1B.allowed.toString()).toBe('50000');
+    expect(c80CCD1B.disallowed.toString()).toBe('25000');
+  });
+
+  it('caps an approved figure exactly as it caps a declared one', () => {
+    // Verified proofs reach the calculation through the same field, so this is
+    // the same arithmetic. It is asserted anyway because the reasoning matters:
+    // a reviewer who accepted evidence for 2,00,000 of 80C investment
+    // confirmed the investment. They did not raise the limit.
+    const approved = { ...noDeclarations, section80C: d(200000) };
+    const r = calculateIncomeTax(d(1200000), oldRegimeWithLimits, approved, d(0));
+
+    // 50,000 standard + 1,50,000 allowed, not the 2,00,000 that was proved.
+    expect(r.totalDeductions.toString()).toBe('200000');
+    expect(r.chapterVIACaps[0].disallowed.toString()).toBe('50000');
+  });
+
+  it('leaves a claim within the ceiling alone', () => {
+    const within = {
+      ...noDeclarations,
+      section80C: d(120000),
+      section80D: d(20000),
+      section80CCD1B: d(50000),
+    };
+
+    const r = calculateIncomeTax(d(1200000), oldRegimeWithLimits, within, d(0));
+
+    // 50,000 + 1,20,000 + 20,000 + 50,000
+    expect(r.totalDeductions.toString()).toBe('240000');
+    expect(r.chapterVIACaps.every((c) => c.disallowed.isZero())).toBe(true);
+    expect(r.chapterVIACaps[2].allowed.toString()).toBe('50000');
+  });
+
+  it('falls back to the statutory ceilings when the year supplies none', () => {
+    // A caller that has not been updated to pass the year's row still gets the
+    // cap, because capping is the correct behaviour and 1,50,000 / 25,000 /
+    // 50,000 are both the statute and the schema's defaults.
+    const r = calculateIncomeTax(d(1200000), oldRegime, overClaimed, d(0));
+
+    expect(r.totalDeductions.toString()).toBe('275000');
+    expect(r.totalTax.toString()).toBe('101400');
+  });
+
+  it('lists no capped heads under the new regime, where none is available', () => {
+    const r = calculateIncomeTax(d(1200000), { ...newRegime, limits }, overClaimed, d(0));
+
+    expect(r.chapterVIACaps).toEqual([]);
+    // Only the 75,000 standard deduction comes off.
+    expect(r.taxableIncome.toString()).toBe('1125000');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Defect 3: age-banded basic exemption
+// ---------------------------------------------------------------------------
+
+// The old regime's basic exemption rises with age. The rows are seeded per
+// band and the caller loads the one that matches; the slabs themselves are the
+// only thing that differs.
+const seniorRegime = {
+  ...oldRegime,
+  limits,
+  ageBand: TaxAgeBand.SENIOR,
+  slabs: [
+    { fromAmount: d(0), toAmount: d(300000), rate: d(0) },
+    { fromAmount: d(300000), toAmount: d(500000), rate: d(5) },
+    { fromAmount: d(500000), toAmount: d(1000000), rate: d(20) },
+    { fromAmount: d(1000000), toAmount: null, rate: d(30) },
+  ],
+};
+
+const superSeniorRegime = {
+  ...oldRegime,
+  limits,
+  ageBand: TaxAgeBand.SUPER_SENIOR,
+  slabs: [
+    { fromAmount: d(0), toAmount: d(500000), rate: d(0) },
+    { fromAmount: d(500000), toAmount: d(1000000), rate: d(20) },
+    { fromAmount: d(1000000), toAmount: null, rate: d(30) },
+  ],
+};
+
+describe('calculateIncomeTax: age-banded basic exemption', () => {
+  // The same 10,00,000 salary in all three, less the 50,000 standard
+  // deduction, so 9,50,000 is taxable every time and only the exemption moves.
+  const gross = d(1000000);
+
+  it('taxes an individual below 60 from 2,50,000', () => {
+    // 5% of 2,50,000 = 12,500, then 20% of 4,50,000 = 90,000. Tax 1,02,500,
+    // cess 4,100, total 1,06,600.
+    const r = calculateIncomeTax(gross, { ...oldRegime, limits }, noDeclarations, d(0));
+
+    expect(r.taxableIncome.toString()).toBe('950000');
+    expect(r.taxBeforeRebate.toString()).toBe('102500');
+    expect(r.totalTax.toString()).toBe('106600');
+    // Absent on the configuration means the general band, which is what an
+    // employee with no recorded date of birth is treated as.
+    expect(r.ageBand).toBe(TaxAgeBand.GENERAL);
+  });
+
+  it('exempts the first 3,00,000 for a senior citizen', () => {
+    // 5% of 2,00,000 = 10,000, then 20% of 4,50,000 = 90,000. Tax 1,00,000,
+    // cess 4,000, total 1,04,000 — 2,600 less than the general band, being 5%
+    // of the extra 50,000 of exemption and the cess on it.
+    const r = calculateIncomeTax(gross, seniorRegime, noDeclarations, d(0));
+
+    expect(r.taxableIncome.toString()).toBe('950000');
+    expect(r.taxBeforeRebate.toString()).toBe('100000');
+    expect(r.totalTax.toString()).toBe('104000');
+    expect(r.ageBand).toBe(TaxAgeBand.SENIOR);
+  });
+
+  it('exempts the first 5,00,000 for a super senior citizen', () => {
+    // Nothing to 5,00,000, then 20% of 4,50,000 = 90,000. Cess 3,600,
+    // total 93,600.
+    const r = calculateIncomeTax(gross, superSeniorRegime, noDeclarations, d(0));
+
+    expect(r.taxBeforeRebate.toString()).toBe('90000');
+    expect(r.totalTax.toString()).toBe('93600');
+    expect(r.ageBand).toBe(TaxAgeBand.SUPER_SENIOR);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Defect 4: half-yearly professional tax
+// ---------------------------------------------------------------------------
+
+describe('calculateProfessionalTax: collection months', () => {
+  // A half-yearly state. The slab amount is the figure for the period, not for
+  // a month, so deducting it every month would take six times the levy.
+  const halfYearly = [
+    { fromAmount: d(75001), toAmount: null, amount: d(1250), februaryAmount: null, gender: null },
+  ];
+
+  it('deducts the period amount only in the months the state collects', () => {
+    // Configured to collect in April and October. Over the year that is
+    // 1,250 twice, which is the 2,500 the state levies — not the 15,000 that
+    // twelve monthly deductions would have taken.
+    const months = [4, 10];
+
+    expect(calculateProfessionalTax(d(90000), halfYearly, 4, null, months).toString()).toBe('1250');
+    expect(calculateProfessionalTax(d(90000), halfYearly, 10, null, months).toString()).toBe('1250');
+    expect(calculateProfessionalTax(d(90000), halfYearly, 5, null, months).toString()).toBe('0');
+    expect(calculateProfessionalTax(d(90000), halfYearly, 3, null, months).toString()).toBe('0');
+
+    const year = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].reduce(
+      (total, m) => total.add(calculateProfessionalTax(d(90000), halfYearly, m, null, months)),
+      d(0),
+    );
+    expect(year.toString()).toBe('2500');
+  });
+
+  it('collects every month when the state lists none, as most states do', () => {
+    // An empty list is what the column defaults to, so every tenant that
+    // existed before it did keeps deducting monthly exactly as it did.
+    expect(calculateProfessionalTax(d(30000), karnatakaSlabs, 5, null, []).toString()).toBe('200');
+    expect(calculateProfessionalTax(d(30000), karnatakaSlabs, 5, null).toString()).toBe('200');
+  });
+
+  it('still applies the February override where February is a collection month', () => {
+    const maharashtra = [
+      { fromAmount: d(10001), toAmount: null, amount: d(200), februaryAmount: d(300), gender: null },
+    ];
+
+    expect(calculateProfessionalTax(d(50000), maharashtra, 2, null, [2, 8]).toString()).toBe('300');
+    expect(calculateProfessionalTax(d(50000), maharashtra, 3, null, [2, 8]).toString()).toBe('0');
   });
 });

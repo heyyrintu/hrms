@@ -245,6 +245,43 @@ refuses the calls; without it a non-admin who types the URL sees the full shell
 and a wall of failed requests, which reads as a broken app rather than a page
 they should not be on.
 
+## Getting the numbers right
+
+Five corrections, each of which had been putting a wrong figure on a payslip.
+
+**Marginal relief on surcharge.** Surcharge starts at a threshold, so crossing
+it by a rupee used to add far more tax than the rupee earned. Relief now caps
+the extra tax at the extra income: one rupee over fifty lakh costs one rupee of
+tax, not ₹1,08,000. The working keeps the surcharge before relief and the relief
+itself, so the figure can be explained.
+
+**Chapter VI-A ceilings.** Section 80C above ₹1,50,000, 80D above its limit and
+80CCD(1B) above ₹50,000 no longer reduce tax. The cap lives in the calculation
+rather than the form, because it applies whatever the figure's provenance: a
+reviewer who approved evidence for ₹2,00,000 confirmed an investment, they did
+not raise a statutory limit. What was declared and what was allowed both appear
+in the working, so nothing shrinks silently. The limits are per year and regime,
+since the Finance Act moves them, and are nil under the new regime because
+section 115BAC withdraws those deductions.
+
+**The basic exemption by age.** Slabs are now held per age band, and the band is
+read from the employee's date of birth **as at 31 March**. Somebody who turns 60
+in February is a senior citizen for that whole year, and reading their age on
+the payroll date would under-exempt them for eleven months and then jump. No
+date of birth means the general band, which withholds the higher exemption
+rather than granting one the employee may not be entitled to.
+
+**Professional tax where the state does not collect monthly.** A state's
+collection months are configuration. Empty means every month, which is what most
+states do and what this did before, so no existing tenant's deduction moves.
+
+**Section 10(10AA) on leave encashment.** The exemption is the least of four:
+what was received, the lifetime ceiling less what earlier employers exempted,
+ten months' average salary, and thirty days of leave per completed year. The
+settlement records all four limbs and which one bound, because an employee taxed
+on part of their encashment is owed the figure that limited it. The amount
+payable is unchanged; only its taxable portion is now known.
+
 ## Not implemented
 
 Known and deliberate, so nobody assumes otherwise:
@@ -253,23 +290,26 @@ Known and deliberate, so nobody assumes otherwise:
 - **Slab editing.** Professional tax and income tax slabs are seeded, not
   edited through the interface. Rates and thresholds are editable; the slab
   tables themselves are not.
-- **Statutory ceilings on a declared amount.** Section 80C above ₹1,50,000 is
-  still accepted as declared. The forms warn but do not block, and a reviewer
-  accepting a proof is not checking it against the ceiling either.
 - **Automatic proof checking.** A person reads every document. Nothing extracts
   figures from a PDF or validates a policy number.
+- **Half-yearly professional tax rates.** The mechanism is there; Tamil Nadu is
+  not seeded. Its published rates are half-yearly lump sums, and somebody who
+  files for that state must confirm the current figures and collection months
+  before the levy is switched on there.
+- **The basis for a surcharge threshold.** Thresholds are compared against
+  taxable income, which is what this did before age bands existed. The statute
+  decides surcharge on total income, and for a salaried employee the two differ
+  by the standard deduction. It matters for income between roughly ₹49.25 lakh
+  and ₹50 lakh, and wants a decision from somebody qualified.
+- **Encashment exemption used at an earlier employer.** The ceiling is a
+  lifetime one, but nothing records what a previous employer exempted, so a
+  leaver who has used part of it elsewhere is over-exempted here.
+- **Average salary for the encashment exemption** is the last drawn basic and
+  dearness allowance, not the average of the final ten months the section asks
+  for. Only the current salary is on record.
 - **Section 10 exemptions other than HRA.** Leave travel allowance, children's
   education and similar are not tracked, because nothing records them.
-- **Section 10(10AA) leave encashment exemption.** Encashment on exit is
-  computed and paid; its exempt portion is not worked out.
 - **TDS on a settlement.** Taken as supplied rather than computed from the
   year's position.
-- **Marginal relief on surcharge.** Surcharge is applied at the flat slab rate.
-  For income just above a threshold this overstates the liability.
-- **Senior citizen exemptions.** The old regime uses the basic exemption for an
-  individual below 60.
-- **Half-yearly professional tax states.** Tamil Nadu and others that levy
-  half-yearly are not modelled; configure a monthly equivalent or leave the levy
-  off for those states.
 - **Retrospective recalculation.** Changing a rate affects the next run. Runs
   already computed are not recalculated.

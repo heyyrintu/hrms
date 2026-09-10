@@ -3,6 +3,7 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/library';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { createMockPrismaService, mockEmployee, mockHrAdmin } from '../../../test/helpers';
+import * as calculators from '../statutory/statutory.calculators';
 import { Form16Service, financialYearLabel, assessmentYearLabel, quarterOfFy } from './form16.service';
 
 // ---------------------------------------------------------------------------
@@ -312,13 +313,16 @@ describe('Form16Service.computePartB', () => {
         },
       }),
     );
+    // The unique key gained an age band; this employee has no date of birth
+    // on record, so it reads as GENERAL — the safe default.
     expect(prisma.incomeTaxConfig.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
-          tenantId_financialYear_regime: {
+          tenantId_financialYear_regime_ageBand: {
             tenantId: TENANT,
             financialYear: FY,
             regime: 'OLD',
+            ageBand: 'GENERAL',
           },
         },
       }),
@@ -488,6 +492,88 @@ describe('Form16Service.computePartB', () => {
   it('always states that this is not the TRACES-issued certificate', async () => {
     const result = await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
     expect(result.notes.join(' ')).toMatch(/TRACES/);
+  });
+
+  // -------------------------------------------------------------------------
+  // Age band: must select the same slabs the monthly TDS engine would, so the
+  // certificate cannot disagree with the year's payslips.
+  // -------------------------------------------------------------------------
+
+  it('reports GENERAL as the age band when the employee has no date of birth on record', async () => {
+    const result = await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
+
+    expect(result.ageBand).toBe('GENERAL');
+    expect(result.ageBandFallbackApplied).toBe(false);
+  });
+
+  it('selects the age band from date of birth as at 31 March, matching the monthly TDS engine', async () => {
+    // Born 20 February 1966: 60 on 31 March 2026, the last day of FY 2025-26.
+    prisma.employee.findFirst.mockResolvedValue({
+      ...employeeRow,
+      dateOfBirth: new Date(Date.UTC(1966, 1, 20)),
+    });
+
+    const result = await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
+
+    expect(result.ageBand).toBe('SENIOR');
+    expect(prisma.incomeTaxConfig.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          tenantId_financialYear_regime_ageBand: {
+            tenantId: TENANT,
+            financialYear: FY,
+            regime: 'OLD',
+            ageBand: 'SENIOR',
+          },
+        },
+      }),
+    );
+  });
+
+  it('falls back to GENERAL, and notes it, when the SENIOR row is missing — the liability is not left nil', async () => {
+    prisma.employee.findFirst.mockResolvedValue({
+      ...employeeRow,
+      dateOfBirth: new Date(Date.UTC(1966, 1, 20)), // senior for FY 2025-26
+    });
+    prisma.incomeTaxConfig.findUnique
+      .mockResolvedValueOnce(null) // the SENIOR lookup
+      .mockResolvedValueOnce(oldRegimeTaxConfig); // the GENERAL fallback
+
+    const result = await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
+
+    expect(result.ageBand).toBe('GENERAL');
+    expect(result.ageBandFallbackApplied).toBe(true);
+    expect(result.notes.join(' ')).toMatch(/GENERAL slabs were used/);
+    // Same figure as the ordinary GENERAL-band computation above: the
+    // liability is computed on the fallback slabs, not left nil.
+    expect(result.totalTaxPayable.toFixed(2)).toBe('75941.00');
+  });
+
+  it('passes the Chapter VI-A ceilings and marginal relief flag to the calculator', async () => {
+    prisma.incomeTaxConfig.findUnique.mockResolvedValue({
+      ...oldRegimeTaxConfig,
+      section80CLimit: new Decimal(120000),
+      section80DLimit: new Decimal(20000),
+      section80CCD1BLimit: new Decimal(40000),
+      marginalReliefEnabled: false,
+    });
+
+    const spy = jest.spyOn(calculators, 'calculateIncomeTax');
+
+    await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
+
+    expect(spy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ marginalReliefEnabled: false }),
+      expect.anything(),
+      expect.anything(),
+    );
+    const passedLimits = (spy.mock.calls[0][1] as any).limits;
+    expect(passedLimits.section80C.toString()).toBe('120000');
+    expect(passedLimits.section80D.toString()).toBe('20000');
+    expect(passedLimits.section80CCD1B.toString()).toBe('40000');
+
+    spy.mockRestore();
   });
 });
 

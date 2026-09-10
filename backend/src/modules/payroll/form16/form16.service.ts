@@ -1,9 +1,11 @@
 import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/library';
-import { TaxRegime, UserRole } from '@prisma/client';
+import { TaxAgeBand, TaxRegime, UserRole } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuthenticatedUser } from '../../../common/types/jwt-payload.type';
-import { calculateIncomeTax } from '../statutory/statutory.calculators';
+import { calculateIncomeTax, IncomeTaxResult } from '../statutory/statutory.calculators';
+import { resolveIncomeTaxConfig } from '../statutory/statutory.service';
+import { ageBandOn31March, DeductionLimits } from '../statutory/tax-correctness.types';
 
 /**
  * Form 16 support.
@@ -142,6 +144,17 @@ export interface Form16PartB {
   periodFrom: string;
   periodTo: string;
   regime: TaxRegime;
+  /**
+   * The old regime's basic-exemption band, read from date of birth as at 31
+   * March of the financial year. GENERAL for every new-regime certificate.
+   *
+   * Optional only so that a `Partial<Form16PartB>`-built fixture elsewhere
+   * (this file always sets it) still type-checks; every certificate this
+   * service actually returns carries it.
+   */
+  ageBand?: TaxAgeBand;
+  /** True when the employee's own band had no seeded slabs and GENERAL was used instead. */
+  ageBandFallbackApplied?: boolean;
   employer: Form16Employer;
   employee: Form16Employee;
 
@@ -299,12 +312,32 @@ export class Form16Service {
       previousEmployerTds: new Decimal(declaration?.previousEmployerTds ?? 0),
     };
 
-    const taxConfig = await this.prisma.incomeTaxConfig.findUnique({
-      where: {
-        tenantId_financialYear_regime: { tenantId, financialYear, regime },
+    // Age is read as at 31 March of the financial year, matching the monthly
+    // TDS engine exactly, so a certificate cannot disagree with the payslips
+    // it is meant to summarise over which band applied.
+    const ageBandRequested = ageBandOn31March(employee.dateOfBirth, financialYear);
+
+    const resolvedTaxConfig = await resolveIncomeTaxConfig(
+      this.prisma,
+      tenantId,
+      financialYear,
+      regime,
+      ageBandRequested,
+      (requestedBand) => {
+        this.logger.warn(
+          `No ${requestedBand} income tax configuration for tenant ${tenantId}, FY ${financialYear}, ` +
+            `${regime} regime; Form 16 falling back to GENERAL slabs.`,
+        );
+        notes.push(
+          `No ${requestedBand} income tax configuration is seeded for FY ${financialYearLabel(financialYear)} ` +
+            `under the ${regime} regime, so GENERAL slabs were used for this certificate instead. That may ` +
+            'deduct more than a band-specific slab would have; it is not a shortfall in the employee\'s favour.',
+        );
       },
-      include: { slabs: { orderBy: { fromAmount: 'asc' } } },
-    });
+    );
+    const taxConfig = resolvedTaxConfig?.taxConfig ?? null;
+    const ageBand = resolvedTaxConfig?.ageBandUsed ?? ageBandRequested;
+    const ageBandFallbackApplied = resolvedTaxConfig?.ageBandFallback ?? false;
 
     // ---- Line 4: deductions under section 16 --------------------------------
     // Entertainment allowance under 16(ii) is not modelled: it is available
@@ -323,12 +356,81 @@ export class Form16Service {
     // negative income rather than as a Chapter VI-A deduction.
     const incomeFromHouseProperty = isOldRegime ? declared.homeLoanInterest.neg() : ZERO;
 
+    // ---- Lines 10 to 14: the liability ---------------------------------------
+    // Computed before lines 2-9 are laid out, not after: line 8's chapter
+    // VI-A figures must be what the calculator actually allowed (capped at
+    // the year's ceilings), not the raw declaration, or this certificate
+    // could show a total income the payslips' own TDS was never computed
+    // against. See the module note on why one calculation feeds both.
+    let computed: IncomeTaxResult | null = null;
+
+    if (!taxConfig || taxConfig.slabs.length === 0) {
+      // Without slabs there is no defensible liability to state. The salary and
+      // the tax actually deducted are still reported; only the liability is
+      // unknown, and the reader is told why.
+      this.logger.warn(
+        `No income tax configuration for tenant ${tenantId}, FY ${financialYear}, ${regime} regime; Form 16 Part B liability left nil.`,
+      );
+      notes.push(
+        `No income tax slabs are configured for FY ${financialYearLabel(financialYear)} under the ` +
+          `${regime} regime, so the tax on total income could not be computed and lines 10 to 14 ` +
+          'are shown as nil. Configure the year\'s income tax configuration and regenerate.',
+      );
+    } else {
+      // Same vocabulary as the monthly TDS engine: the ceilings cap what the
+      // calculator allows, not what this file computes, so a certificate and
+      // its payslips cannot disagree over where a ceiling bound.
+      const limits: DeductionLimits = {
+        section80C: new Decimal(taxConfig.section80CLimit ?? 150000),
+        section80D: new Decimal(taxConfig.section80DLimit ?? 25000),
+        section80CCD1B: new Decimal(taxConfig.section80CCD1BLimit ?? 50000),
+      };
+      const marginalReliefEnabled = taxConfig.marginalReliefEnabled ?? true;
+
+      // A plain variable, not a fresh object literal at the call site, so
+      // this keeps compiling while the calculator's own parameter shape is
+      // still being extended to read `limits` and `marginalReliefEnabled`.
+      const taxConfigInput = {
+        regime,
+        standardDeduction,
+        rebateIncomeLimit: new Decimal(taxConfig.rebateIncomeLimit),
+        rebateMaxAmount: new Decimal(taxConfig.rebateMaxAmount),
+        cessRate: new Decimal(taxConfig.cessRate),
+        surchargeSlabs:
+          (taxConfig.surchargeSlabs as unknown as { threshold: number; rate: number }[]) ?? [],
+        slabs: taxConfig.slabs.map((s) => ({
+          fromAmount: new Decimal(s.fromAmount),
+          toAmount: s.toAmount === null ? null : new Decimal(s.toAmount),
+          rate: new Decimal(s.rate),
+        })),
+        ageBand,
+        limits,
+        marginalReliefEnabled,
+      };
+
+      computed = calculateIncomeTax(totals.gross, taxConfigInput, declared, totals.professionalTax);
+    }
+
     // ---- Line 8: Chapter VI-A ------------------------------------------------
+    // 80C, 80D and 80CCD(1B) come from what the calculator actually allowed
+    // after capping at the year's ceilings, not the raw declaration — the sum
+    // of lines 2, 4 and 8 must be exactly the deduction total the calculator
+    // applied, or this certificate could disagree with the payslips it
+    // summarises. Without a computation to draw on (no slabs configured) the
+    // raw declared figures are shown instead, uncapped, matching what the
+    // nil-liability certificate has always presented.
+    const capByStatute = new Map(computed?.chapterVIACaps.map((c) => [c.section, c]) ?? []);
     const chapterVIA: Form16ChapterVIA = {
-      section80C: isOldRegime ? declared.section80C : ZERO,
-      section80D: isOldRegime ? declared.section80D : ZERO,
-      section80CCD1B: isOldRegime ? declared.section80CCD1B : ZERO,
-      // Allowed under both regimes.
+      section80C: computed
+        ? (capByStatute.get('80C')?.allowed ?? ZERO)
+        : isOldRegime ? declared.section80C : ZERO,
+      section80D: computed
+        ? (capByStatute.get('80D')?.allowed ?? ZERO)
+        : isOldRegime ? declared.section80D : ZERO,
+      section80CCD1B: computed
+        ? (capByStatute.get('80CCD(1B)')?.allowed ?? ZERO)
+        : isOldRegime ? declared.section80CCD1B : ZERO,
+      // Allowed under both regimes, and has no statutory ceiling of its own.
       section80CCD2: declared.section80CCD2,
       otherDeductions: isOldRegime ? declared.otherDeductions : ZERO,
       total: ZERO,
@@ -346,66 +448,26 @@ export class Form16Service {
       .add(incomeFromHouseProperty);
     const totalIncome = Decimal.max(grossTotalIncome.sub(chapterVIA.total), ZERO);
 
-    // ---- Lines 10 to 14: the liability --------------------------------------
-    let taxOnTotalIncome = ZERO;
-    let rebate = ZERO;
-    let surcharge = ZERO;
-    let cess = ZERO;
-    let totalTaxPayable = ZERO;
-
-    if (!taxConfig || taxConfig.slabs.length === 0) {
-      // Without slabs there is no defensible liability to state. The salary and
-      // the tax actually deducted are still reported; only the liability is
-      // unknown, and the reader is told why.
+    // The two routes to taxable income must agree by construction now that
+    // line 8 is built from the same capped figures the calculator used. Kept
+    // as a check anyway: it is a cheap regression guard if that ever stops
+    // being true, and the certificate says so rather than printing silently.
+    if (computed && !computed.taxableIncome.equals(totalIncome)) {
       this.logger.warn(
-        `No income tax configuration for tenant ${tenantId}, FY ${financialYear}, ${regime} regime; Form 16 Part B liability left nil.`,
+        `Form 16 Part B line 9 (${totalIncome.toFixed(2)}) differs from the computed taxable ` +
+          `income (${computed.taxableIncome.toFixed(2)}) for employee ${employeeId}, FY ${financialYear}.`,
       );
       notes.push(
-        `No income tax slabs are configured for FY ${financialYearLabel(financialYear)} under the ` +
-          `${regime} regime, so the tax on total income could not be computed and lines 10 to 14 ` +
-          'are shown as nil. Configure the year\'s income tax configuration and regenerate.',
+        `Line 9 (${totalIncome.toFixed(2)}) does not reconcile with the taxable income the tax ` +
+          `engine used (${computed.taxableIncome.toFixed(2)}). Have this checked before issuing.`,
       );
-    } else {
-      const computed = calculateIncomeTax(
-        totals.gross,
-        {
-          regime,
-          standardDeduction,
-          rebateIncomeLimit: new Decimal(taxConfig.rebateIncomeLimit),
-          rebateMaxAmount: new Decimal(taxConfig.rebateMaxAmount),
-          cessRate: new Decimal(taxConfig.cessRate),
-          surchargeSlabs:
-            (taxConfig.surchargeSlabs as unknown as { threshold: number; rate: number }[]) ?? [],
-          slabs: taxConfig.slabs.map((s) => ({
-            fromAmount: new Decimal(s.fromAmount),
-            toAmount: s.toAmount === null ? null : new Decimal(s.toAmount),
-            rate: new Decimal(s.rate),
-          })),
-        },
-        declared,
-        totals.professionalTax,
-      );
-
-      taxOnTotalIncome = computed.taxBeforeRebate;
-      rebate = computed.rebate;
-      surcharge = computed.surcharge;
-      cess = computed.cess;
-      totalTaxPayable = computed.totalTax;
-
-      // The two routes to taxable income must agree. If they ever do not, the
-      // presentation has drifted from the calculation and the certificate would
-      // be internally inconsistent, so say so rather than print it silently.
-      if (!computed.taxableIncome.equals(totalIncome)) {
-        this.logger.warn(
-          `Form 16 Part B line 9 (${totalIncome.toFixed(2)}) differs from the computed taxable ` +
-            `income (${computed.taxableIncome.toFixed(2)}) for employee ${employeeId}, FY ${financialYear}.`,
-        );
-        notes.push(
-          `Line 9 (${totalIncome.toFixed(2)}) does not reconcile with the taxable income the tax ` +
-            `engine used (${computed.taxableIncome.toFixed(2)}). Have this checked before issuing.`,
-        );
-      }
     }
+
+    const taxOnTotalIncome = computed?.taxBeforeRebate ?? ZERO;
+    const rebate = computed?.rebate ?? ZERO;
+    const surcharge = computed?.surcharge ?? ZERO;
+    const cess = computed?.cess ?? ZERO;
+    const totalTaxPayable = computed?.totalTax ?? ZERO;
 
     const totalTaxDeducted = totals.tds.add(declared.previousEmployerTds);
     const shortfall = totalTaxPayable.sub(totalTaxDeducted);
@@ -452,9 +514,9 @@ export class Form16Service {
       );
     }
     notes.push(
-      'Declared amounts are taken as given. Statutory ceilings (section 80C at 1,50,000, and the ' +
-        'rest) are not enforced here, marginal relief on surcharge is not applied, and exemptions ' +
-        'other than HRA are not tracked.',
+      'Declared amounts are passed to the same tax calculator the monthly TDS engine uses, which ' +
+        "applies the year's Chapter VI-A ceilings and any marginal relief on surcharge; this " +
+        'certificate does not compute either itself. Exemptions other than HRA are not tracked.',
     );
 
     return {
@@ -463,6 +525,8 @@ export class Form16Service {
       assessmentYear: assessmentYearLabel(financialYear),
       ...this.certificatePeriod(financialYear, employee.joinDate),
       regime,
+      ageBand,
+      ageBandFallbackApplied,
       employer: {
         name: tenant?.legalName ?? tenant?.name ?? '',
         address: this.formatAddress(tenant),
@@ -590,6 +654,7 @@ export class Form16Service {
         designation: { select: { name: true } },
         taxRegime: true,
         joinDate: true,
+        dateOfBirth: true,
       },
     });
 

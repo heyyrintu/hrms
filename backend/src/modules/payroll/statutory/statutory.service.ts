@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/library';
-import { InvestmentProofStatus, TaxRegime } from '@prisma/client';
+import { InvestmentProofStatus, TaxAgeBand, TaxRegime } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import {
   PROOF_SECTION_TO_DECLARATION_FIELD,
@@ -22,6 +22,7 @@ import {
   IncomeTaxResult,
   PtSlab,
 } from './statutory.calculators';
+import { ageBandOn31March, collectsProfessionalTaxIn, DeductionLimits } from './tax-correctness.types';
 
 export interface StatutoryInput {
   tenantId: string;
@@ -37,6 +38,13 @@ export interface StatutoryInput {
   gender: string | null;
   /** The employee's own choice, if they have made one. */
   employeeRegime: TaxRegime | null;
+  /**
+   * Used to select the old regime's basic-exemption band via
+   * `ageBandOn31March`. Optional because not every caller has wired it
+   * through yet; a missing value is read the same as a missing date of birth
+   * and lands on the safe GENERAL band rather than failing the run.
+   */
+  dateOfBirth?: Date | null;
 }
 
 export interface StatutoryResult {
@@ -120,6 +128,91 @@ export function esiContributionPeriod(
     return { startMonth: 10, startYear: year, endMonth: 3, endYear: year + 1 };
   }
   return { startMonth: 10, startYear: year - 1, endMonth: 3, endYear: year };
+}
+
+/** What resolving an income tax configuration by age band found. */
+export interface ResolvedIncomeTaxConfig {
+  taxConfig: {
+    standardDeduction: Decimal;
+    rebateIncomeLimit: Decimal;
+    rebateMaxAmount: Decimal;
+    cessRate: Decimal;
+    surchargeSlabs: unknown;
+    section80CLimit: Decimal;
+    section80DLimit: Decimal;
+    section80CCD1BLimit: Decimal;
+    marginalReliefEnabled: boolean;
+    slabs: { fromAmount: Decimal; toAmount: Decimal | null; rate: Decimal }[];
+  };
+  /** The band whose slabs were actually used. */
+  ageBandUsed: TaxAgeBand;
+  /** The band selected by the employee's age, before any fallback. */
+  ageBandRequested: TaxAgeBand;
+  /** True when the requested band had no seeded row and GENERAL was used instead. */
+  ageBandFallback: boolean;
+}
+
+/**
+ * Loads the income tax configuration for a tenant, year and regime, banded by
+ * age.
+ *
+ * A missing band must not mean no tax: if a tenant has seeded only GENERAL
+ * rows and the employee is a senior citizen, the SENIOR lookup finds nothing.
+ * Falling through to "no slabs configured" would silently stop deducting tax
+ * from that employee, which is worse than taxing them on the general slabs
+ * (the general slabs have a lower basic exemption, so this over-collects
+ * rather than under-collects; the difference is settled on assessment). So a
+ * missing non-GENERAL row falls back to GENERAL, and the caller is told that
+ * happened via `ageBandFallback` so it can be recorded in the working.
+ *
+ * Shared between `StatutoryService` (monthly TDS) and `Form16Service` (the
+ * year-end certificate) so the two cannot select different configurations for
+ * the same employee and year.
+ */
+export async function resolveIncomeTaxConfig(
+  prisma: PrismaService,
+  tenantId: string,
+  financialYear: number,
+  regime: TaxRegime,
+  ageBand: TaxAgeBand,
+  onFallback?: (requestedBand: TaxAgeBand) => void,
+): Promise<ResolvedIncomeTaxConfig | null> {
+  const primary = await prisma.incomeTaxConfig.findUnique({
+    where: {
+      tenantId_financialYear_regime_ageBand: { tenantId, financialYear, regime, ageBand },
+    },
+    include: { slabs: { orderBy: { fromAmount: 'asc' } } },
+  });
+
+  if (primary && primary.slabs.length > 0) {
+    return { taxConfig: primary, ageBandUsed: ageBand, ageBandRequested: ageBand, ageBandFallback: false };
+  }
+
+  // Nothing to fall back to: GENERAL already was the request.
+  if (ageBand === TaxAgeBand.GENERAL) return null;
+
+  onFallback?.(ageBand);
+
+  const fallback = await prisma.incomeTaxConfig.findUnique({
+    where: {
+      tenantId_financialYear_regime_ageBand: {
+        tenantId,
+        financialYear,
+        regime,
+        ageBand: TaxAgeBand.GENERAL,
+      },
+    },
+    include: { slabs: { orderBy: { fromAmount: 'asc' } } },
+  });
+
+  if (!fallback || fallback.slabs.length === 0) return null;
+
+  return {
+    taxConfig: fallback,
+    ageBandUsed: TaxAgeBand.GENERAL,
+    ageBandRequested: ageBand,
+    ageBandFallback: true,
+  };
 }
 
 /**
@@ -216,14 +309,17 @@ export class StatutoryService {
       await this.wasCoveredEarlierInEsiPeriod(input),
     );
 
-    const professionalTax = config.ptEnabled
-      ? calculateProfessionalTax(
-          input.grossPay,
-          await this.loadPtSlabs(input.tenantId, config.ptState),
-          input.month,
-          input.gender,
-        )
-      : ZERO;
+    // An empty (or unset) ptMonths means every month, which is what every
+    // tenant that predates the column gets, so their deduction cannot move.
+    const professionalTax =
+      config.ptEnabled && collectsProfessionalTaxIn(input.month, config.ptMonths)
+        ? calculateProfessionalTax(
+            input.grossPay,
+            await this.loadPtSlabs(input.tenantId, config.ptState),
+            input.month,
+            input.gender,
+          )
+        : ZERO;
 
     const lwf = calculateLwf(config, input.month);
 
@@ -328,24 +424,35 @@ export class StatutoryService {
 
     const regime = input.employeeRegime ?? declaration?.regime ?? config.defaultTaxRegime;
 
-    const taxConfig = await this.prisma.incomeTaxConfig.findUnique({
-      where: {
-        tenantId_financialYear_regime: {
-          tenantId: input.tenantId,
-          financialYear,
-          regime,
-        },
-      },
-      include: { slabs: { orderBy: { fromAmount: 'asc' } } },
-    });
+    // Age is read as at 31 March of the financial year, not the payroll date;
+    // see ageBandOn31March for why. A missing date of birth reads as GENERAL,
+    // the safe direction.
+    const ageBandRequested = ageBandOn31March(input.dateOfBirth, financialYear);
 
-    // Without slabs for this year there is nothing defensible to deduct.
-    if (!taxConfig || taxConfig.slabs.length === 0) {
+    const resolved = await resolveIncomeTaxConfig(
+      this.prisma,
+      input.tenantId,
+      financialYear,
+      regime,
+      ageBandRequested,
+      (requestedBand) => {
+        this.logger.warn(
+          `No ${requestedBand} income tax configuration for tenant ${input.tenantId}, FY ${financialYear}, ` +
+            `${regime} regime; falling back to GENERAL slabs so TDS is not silently skipped.`,
+        );
+      },
+    );
+
+    // Without slabs for this year (in the requested band or the GENERAL
+    // fallback) there is nothing defensible to deduct.
+    if (!resolved) {
       this.logger.warn(
         `No income tax configuration for tenant ${input.tenantId}, FY ${financialYear}, ${regime} regime; deducting no TDS.`,
       );
       return { tds: ZERO, taxComputation: null };
     }
+
+    const { taxConfig, ageBandUsed, ageBandFallback } = resolved;
 
     const ytd = await this.yearToDateTotals(input, financialYear);
 
@@ -389,6 +496,16 @@ export class StatutoryService {
       }
     }
 
+    // The statutory ceilings for the year and regime. The calculator caps
+    // declared/verified figures against these; capping is not repeated here,
+    // so there is exactly one place the rule lives.
+    const limits: DeductionLimits = {
+      section80C: new Decimal(taxConfig.section80CLimit ?? 150000),
+      section80D: new Decimal(taxConfig.section80DLimit ?? 25000),
+      section80CCD1B: new Decimal(taxConfig.section80CCD1BLimit ?? 50000),
+    };
+    const marginalReliefEnabled = taxConfig.marginalReliefEnabled ?? true;
+
     const computed: IncomeTaxResult = calculateIncomeTax(
       annualGross,
       {
@@ -406,9 +523,28 @@ export class StatutoryService {
           toAmount: s.toAmount === null ? null : new Decimal(s.toAmount),
           rate: new Decimal(s.rate),
         })),
+        ageBand: ageBandUsed,
+        limits,
+        marginalReliefEnabled,
       },
       declarations,
       annualProfessionalTax,
+    );
+
+    // The calculator capped these against `limits`; it is the one place that
+    // rule lives, so the working reports back what it did rather than
+    // recomputing "allowed" here. Keyed by the calculator's own section
+    // labels ('80C', '80D', '80CCD(1B)') and empty under the new regime.
+    const chapterVIACaps = Object.fromEntries(
+      computed.chapterVIACaps.map((cap) => [
+        cap.section,
+        {
+          declared: cap.declared.toFixed(2),
+          limit: cap.limit.toFixed(2),
+          allowed: cap.allowed.toFixed(2),
+          disallowed: cap.disallowed.toFixed(2),
+        },
+      ]),
     );
 
     // Tax already collected this year, whether by us or a previous employer.
@@ -420,6 +556,12 @@ export class StatutoryService {
       taxComputation: {
         financialYear,
         regime,
+        // Which age band's slabs were actually used, whether that required
+        // falling back to GENERAL, and what was requested before the
+        // fallback — the answer to "why did this employee's exemption change".
+        ageBand: ageBandUsed,
+        ageBandRequested,
+        ageBandFallbackApplied: ageBandFallback,
         projectedAnnualGross: annualGross.toFixed(2),
         taxableIncome: computed.taxableIncome.toFixed(2),
         totalDeductions: computed.totalDeductions.toFixed(2),
@@ -430,6 +572,20 @@ export class StatutoryService {
         annualTax: computed.totalTax.toFixed(2),
         alreadyDeducted: alreadyDeducted.toFixed(2),
         remainingMonths,
+        // The Chapter VI-A ceilings applied for the year, and — from the
+        // calculator, which is the one place capping happens — what was
+        // declared against what was actually allowed for each capped head.
+        deductionLimits: {
+          section80C: limits.section80C.toFixed(2),
+          section80D: limits.section80D.toFixed(2),
+          section80CCD1B: limits.section80CCD1B.toFixed(2),
+        },
+        chapterVIACaps,
+        marginalReliefEnabled,
+        marginalReliefApplied: computed.marginalRelief.gt(0),
+        marginalRelief: computed.marginalRelief.toFixed(2),
+        surchargeBeforeRelief: computed.surchargeBeforeRelief.toFixed(2),
+        reliefThreshold: computed.reliefThreshold ? computed.reliefThreshold.toFixed(2) : null,
         // Whoever has to explain why this employee's TDS jumped in January
         // needs the answer here rather than in someone's memory.
         verifiedAmountsUsed: useVerified,

@@ -56,6 +56,12 @@ export interface StatutoryConfig {
   // Professional tax, a state levy. Slabs live in their own table.
   ptEnabled: boolean;
   ptState: string | null;
+  /**
+   * Calendar months the state collects in. Empty means every month, which is
+   * what most states do. Tamil Nadu and others collect half-yearly, and their
+   * slab amounts are period amounts rather than monthly ones.
+   */
+  ptMonths: number[];
 
   // Labour welfare fund, a state levy.
   lwfEnabled: boolean;
@@ -78,6 +84,14 @@ export interface StatutoryConfig {
   // Leave encashment on exit.
   leaveEncashmentEnabled: boolean;
   encashmentMonthDays: string;
+  /** Section 10(10AA) lifetime ceiling. Caps the exempt part, not what is paid. */
+  encashmentExemptionCap: string;
+  /** Days per completed year the section recognises. The Act says 30. */
+  encashmentExemptDaysPerYear: string;
+  /** Months of average salary the exemption is capped at. The Act says 10. */
+  encashmentExemptMonths: string;
+  /** Encashment paid by a government employer is exempt in full. */
+  encashmentGovernmentEmployer: boolean;
 
   /**
    * Whether a verified proof is required before a declared deduction reduces
@@ -122,6 +136,7 @@ export interface UpdateStatutoryConfigPayload {
 
   ptEnabled?: boolean;
   ptState?: string;
+  ptMonths?: number[];
 
   lwfEnabled?: boolean;
   lwfEmployeeAmount?: number;
@@ -136,6 +151,10 @@ export interface UpdateStatutoryConfigPayload {
 
   leaveEncashmentEnabled?: boolean;
   encashmentMonthDays?: number;
+  encashmentExemptionCap?: number;
+  encashmentExemptDaysPerYear?: number;
+  encashmentExemptMonths?: number;
+  encashmentGovernmentEmployer?: boolean;
 
   proofVerificationRequired?: boolean;
   proofCutoffMonth?: number;
@@ -176,11 +195,20 @@ export interface IncomeTaxConfig {
   financialYear: number;
   regime: TaxRegimeName;
   standardDeduction: string;
+  /** Which basic-exemption band these slabs are for. */
+  ageBand: 'GENERAL' | 'SENIOR' | 'SUPER_SENIOR';
   /** Income at or below which the section 87A rebate applies. */
   rebateIncomeLimit: string;
   rebateMaxAmount: string;
   /** Health and education cess, percent. */
   cessRate: string;
+  /** Statutory maxima. A figure above these does not reduce tax, whatever its
+   * provenance: approving evidence confirms an investment, it does not raise a
+   * limit. */
+  section80CLimit: string;
+  section80DLimit: string;
+  section80CCD1BLimit: string;
+  marginalReliefEnabled: boolean;
   surchargeSlabs: unknown;
   slabs: IncomeTaxSlab[];
 }

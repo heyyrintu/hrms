@@ -88,4 +88,28 @@ describe('UpdateStatutoryConfigDto', () => {
       BadRequestException,
     );
   });
+
+  it('accepts the months a state actually collects professional tax in', async () => {
+    // Empty means every month, which is what most states do. Tamil Nadu and
+    // others collect half-yearly, and their slab amounts are period amounts.
+    await expect(parse({ ptMonths: [3, 9] })).resolves.toMatchObject({
+      ptMonths: [3, 9],
+    });
+  });
+
+  it('refuses a professional tax month that is not a month', async () => {
+    await expect(parse({ ptMonths: [0] })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(parse({ ptMonths: [13] })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('accepts the section 10(10AA) parameters', async () => {
+    await expect(
+      parse({
+        encashmentExemptionCap: 2500000,
+        encashmentExemptDaysPerYear: 30,
+        encashmentExemptMonths: 10,
+        encashmentGovernmentEmployer: false,
+      }),
+    ).resolves.toMatchObject({ encashmentExemptionCap: 2500000 });
+  });
 });

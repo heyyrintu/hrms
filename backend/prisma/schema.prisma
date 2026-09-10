@@ -1815,6 +1815,10 @@ model StatutoryConfig {
   ptEnabled Boolean @default(true)
   /// Which state's slab table applies. Slabs live in ProfessionalTaxSlab.
   ptState   String? @db.VarChar(50)
+  /// Calendar months in which the state collects professional tax. Empty means
+  /// every month, which is what most states do and what this did before the
+  /// column existed. Tamil Nadu and others collect half-yearly.
+  ptMonths  Int[]   @default([])
 
   // ---- Labour Welfare Fund (state levy) ----
   lwfEnabled        Boolean @default(false)
@@ -1839,6 +1843,16 @@ model StatutoryConfig {
   leaveEncashmentEnabled Boolean @default(true)
   /// Days treated as a month for valuing an encashed day.
   encashmentMonthDays Decimal @default(30) @db.Decimal(5, 2)
+  /// Lifetime ceiling on the section 10(10AA) exemption for a non-government
+  /// employee. Raised to twenty-five lakh with effect from FY 2023-24.
+  encashmentExemptionCap Decimal @default(2500000) @db.Decimal(12, 2)
+  /// Days of leave per completed year the exemption recognises. The section
+  /// says 30, whatever the employer's own leave rules allow.
+  encashmentExemptDaysPerYear Decimal @default(30) @db.Decimal(5, 2)
+  /// Months of average salary the exemption is capped at. The section says 10.
+  encashmentExemptMonths Decimal @default(10) @db.Decimal(5, 2)
+  /// Encashment paid to a government employee is exempt in full.
+  encashmentGovernmentEmployer Boolean @default(false)
 
   // ---- Investment proofs ----
   /// Whether a verified proof is required before a declared deduction reduces
@@ -1896,6 +1910,9 @@ model IncomeTaxConfig {
   tenantId      String
   financialYear Int
   regime        TaxRegime
+  /// Which basic-exemption band these slabs are for. The new regime does not
+  /// vary by age; seed GENERAL for it.
+  ageBand       TaxAgeBand @default(GENERAL)
 
   standardDeduction Decimal @default(0) @db.Decimal(12, 2)
   /// Section 87A: taxable income at or below which the rebate applies.
@@ -1907,13 +1924,24 @@ model IncomeTaxConfig {
   /// [{ "threshold": 5000000, "rate": 10 }, ...], applied to tax before cess.
   surchargeSlabs    Json    @default("[]")
 
+  // ---- Chapter VI-A ceilings ----
+  /// Statutory maxima. Held per year and regime because the Finance Act moves
+  /// them. A declared, or even an approved, figure above these does not reduce
+  /// tax, so the calculation caps rather than trusting what was entered.
+  section80CLimit       Decimal @default(150000) @db.Decimal(12, 2)
+  section80DLimit       Decimal @default(25000) @db.Decimal(12, 2)
+  section80CCD1BLimit   Decimal @default(50000) @db.Decimal(12, 2)
+  /// Whether marginal relief applies to surcharge. True in practice; held as
+  /// data so a year that worked differently can still be seeded.
+  marginalReliefEnabled Boolean @default(true)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   tenant Tenant          @relation(fields: [tenantId], references: [id])
   slabs  IncomeTaxSlab[]
 
-  @@unique([tenantId, financialYear, regime])
+  @@unique([tenantId, financialYear, regime, ageBand])
   @@index([tenantId])
   @@map("income_tax_configs")
 }
@@ -1996,9 +2024,12 @@ model Settlement {
   // ---- Payable ----
   /// Salary for the part-month worked up to the last working day.
   proRataSalary       Decimal @default(0) @db.Decimal(12, 2)
-  /// Unused leave being encashed, and its value.
-  leaveEncashmentDays Decimal @default(0) @db.Decimal(6, 2)
-  leaveEncashment     Decimal @default(0) @db.Decimal(12, 2)
+  /// Unused leave being encashed, its value, and the portion exempt under
+  /// section 10(10AA). Exempt is a column rather than only a figure inside the
+  /// breakdown so it can be totalled across settlements the way gratuity's is.
+  leaveEncashmentDays   Decimal @default(0) @db.Decimal(6, 2)
+  leaveEncashment       Decimal @default(0) @db.Decimal(12, 2)
+  leaveEncashmentExempt Decimal @default(0) @db.Decimal(12, 2)
   /// Gratuity earned, and the portion exempt from tax.
   gratuity            Decimal @default(0) @db.Decimal(12, 2)
   gratuityExempt      Decimal @default(0) @db.Decimal(12, 2)
@@ -2043,6 +2074,20 @@ model Settlement {
 // ============================================
 // INVESTMENT PROOFS
 // ============================================
+
+/// Which basic-exemption band an individual falls in under the old regime.
+///
+/// Age is taken as at 31 March, the last day of the financial year, which is
+/// how the Act reads. The new regime does not vary by age, so a tenant seeds
+/// GENERAL rows for it and nothing else.
+enum TaxAgeBand {
+  /// Below 60.
+  GENERAL
+  /// 60 or above and below 80.
+  SENIOR
+  /// 80 or above.
+  SUPER_SENIOR
+}
 
 enum InvestmentProofStatus {
   PENDING
