@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react';
 import ProofReviewPage from './page';
 import { employeesApi, proofsApi } from '@/lib/api';
 import toast from 'react-hot-toast';
@@ -358,7 +358,9 @@ describe('ProofReviewPage — two reviewers at once', () => {
     const message = mockedToast.error.mock.calls[0][0] as string;
     expect(message).toMatch(/someone else/i);
     expect(message).toMatch(/This proof has already been reviewed/);
-    expect(message).toMatch(/reload/i);
+    // The message now names what the reviewer will actually see, rather than
+    // promising a reload that the pending filter would have undone.
+    expect(message).toMatch(/see their decision/i);
 
     await waitFor(() => {
       expect(mockedProofsApi.listForReview).toHaveBeenCalledTimes(2);
@@ -386,5 +388,57 @@ describe('ProofReviewPage — two reviewers at once', () => {
     await waitFor(() => {
       expect(mockedProofsApi.listForReview).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it('ignores a queue response for a filter the reviewer has already changed', async () => {
+    // Two filter changes a click apart leave two requests racing. If the older
+    // one lands last it wins, and the reviewer works a queue that does not
+    // match the filter on screen.
+    let releaseFirst = () => {};
+    mockedProofsApi.listForReview.mockImplementation((params: any) => {
+      if (params?.status === 'APPROVED') {
+        return new Promise((resolve) => {
+          releaseFirst = () => resolve({ data: [decidedProof] });
+        }) as never;
+      }
+      return Promise.resolve({ data: [pendingProof] }) as never;
+    });
+
+    render(<ProofReviewPage />);
+    const statusFilter = await screen.findByLabelText(/status/i);
+    fireEvent.change(statusFilter, { target: { value: 'APPROVED' } });
+    fireEvent.change(statusFilter, { target: { value: 'PENDING' } });
+    await screen.findByText(/Asha Nair/);
+
+    releaseFirst();
+    await act(async () => {
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    });
+
+    // The employee dropdown lists every name, so assert on the reviewer, which
+    // appears only on a decided row.
+    expect(screen.queryByText(/Rita Sen/)).not.toBeInTheDocument();
+  });
+
+  it('actually shows the decision that won after a conflict', async () => {
+    // The default filter is Awaiting review, which excludes a proof the moment
+    // somebody decides it. Reloading under that filter removes the row, so the
+    // toast promising the reviewer can see the winning decision was a lie.
+    mockedProofsApi.approve.mockRejectedValue({
+      response: { status: 409, data: { message: 'it already has a decision' } },
+    } as never);
+    mockedProofsApi.listForReview.mockImplementation((params: any) =>
+      Promise.resolve({
+        data: params?.status === 'PENDING' ? [pendingProof] : [decidedProof],
+      }) as never,
+    );
+
+    render(<ProofReviewPage />);
+    const dialog = await openReview('Approve');
+    fireEvent.click(dialog.getByRole('button', { name: /record approval/i }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    // Rita Sen decided the other proof; the reviewer must be able to see that.
+    expect(await screen.findByText(/Rita Sen/)).toBeInTheDocument();
   });
 });

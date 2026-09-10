@@ -15,6 +15,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import {
   isPrismaError,
   PRISMA_RECORD_NOT_FOUND,
+  PRISMA_UNIQUE_VIOLATION,
 } from '../../../common/utils/prisma-errors';
 import {
   PROOF_SECTION_TO_DECLARATION_FIELD,
@@ -121,11 +122,22 @@ export function currentFinancialYear(now: Date = new Date()): number {
 /** Enough of the upload to render a download, loaded with every proof. */
 const uploadSelect = {
   id: true,
-  key: true,
+  // `key` is deliberately absent. It is the path the bytes sit at in storage,
+  // and a client needs none of it: the id, name, type and size are enough to
+  // render a proof and ask for it back through the download route.
   fileName: true,
   mimeType: true,
   size: true,
 } as const;
+
+/**
+ * The same fields plus the storage key, for the download route only.
+ *
+ * The key never leaves the server: `fileFor` uses it to locate the bytes and
+ * the controller streams them. It is separated from `uploadSelect` so that
+ * adding a field to a list response cannot leak it by accident.
+ */
+const uploadSelectWithKey = { ...uploadSelect, key: true } as const;
 
 /** Enough of the employee to work a review queue without a second round trip. */
 const employeeSelect = {
@@ -181,10 +193,30 @@ export class ProofsService {
       );
     }
 
+    try {
+      return await this.createProof(tenantId, filer, dto, claimedAmount);
+    } catch (err) {
+      if (isPrismaError(err, PRISMA_UNIQUE_VIOLATION)) {
+        // Two proofs pointing at one document under one head are summed twice,
+        // which inflates a deduction and under-deducts tax on a real payslip.
+        throw new ConflictException(
+          'That document has already been filed under this head for this year',
+        );
+      }
+      throw err;
+    }
+  }
+
+  private createProof(
+    tenantId: string,
+    employeeId: string,
+    dto: SubmitProofDto,
+    claimedAmount: Decimal,
+  ) {
     return this.prisma.investmentProof.create({
       data: {
         tenantId,
-        employeeId: filer,
+        employeeId,
         financialYear: dto.financialYear,
         section: dto.section,
         status: InvestmentProofStatus.PENDING,
@@ -275,7 +307,7 @@ export class ProofsService {
 
     const proof = await this.prisma.investmentProof.findFirst({
       where: scope,
-      include: { upload: { select: uploadSelect } },
+      include: { upload: { select: uploadSelectWithKey } },
     });
     if (!proof) throw new NotFoundException('Proof not found');
 

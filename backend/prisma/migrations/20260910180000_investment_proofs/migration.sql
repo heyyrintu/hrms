@@ -52,3 +52,9 @@ CREATE INDEX "investment_proofs_tenantId_status_idx" ON "investment_proofs"("ten
 ALTER TABLE "investment_proofs" ADD CONSTRAINT "investment_proofs_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "tenants"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 ALTER TABLE "investment_proofs" ADD CONSTRAINT "investment_proofs_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "employees"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 ALTER TABLE "investment_proofs" ADD CONSTRAINT "investment_proofs_uploadId_fkey" FOREIGN KEY ("uploadId") REFERENCES "uploads"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- One document per head per year. Two proofs pointing at the same upload under
+-- one head would both be summed once approved, inflating a deduction and
+-- under-deducting tax. The same document may still support a different head.
+CREATE UNIQUE INDEX "investment_proofs_claim_key"
+  ON "investment_proofs"("tenantId", "employeeId", "financialYear", "section", "uploadId");

@@ -231,12 +231,13 @@ The stored `taxComputation` records whether verified amounts were used and what
 was allowed under each head, so a January jump in someone's TDS can be explained
 from the payslip rather than guessed at.
 
-**A declaration is not a proof.** Nothing collects, verifies or approves
-evidence, and no statutory ceiling is enforced on a declared amount. The form
-warns when a figure exceeds the ceiling it is subject to but still saves it,
-because the system genuinely accepts it and the employee should know it will not
-help them. Under the new regime the entries the regime ignores are marked rather
-than silently accepted.
+**A declaration is still not a proof.** Evidence is now collected and reviewed,
+but a declaration on its own remains a claim, and no statutory ceiling is
+enforced on either a declared or an accepted amount. The form warns when a
+figure exceeds the ceiling it is subject to and still saves it, because the
+system genuinely accepts it and the employee should know it will not help them.
+Under the new regime the entries the regime ignores are marked rather than
+silently accepted.
 
 Payroll and settlement pages are gated to HR administrators in the browser as
 well as at the API. The gate is not the security boundary, since the API already

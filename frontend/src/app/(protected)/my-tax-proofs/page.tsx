@@ -306,8 +306,9 @@ export default function MyTaxProofsPage() {
                     You have submitted nothing for {financialYearLabel(financialYear)}
                   </h3>
                   <p className="mx-auto max-w-xl text-sm text-warm-600">
-                    Every head above still rests on your declaration alone. Submit the receipts,
-                    certificates or statements that support each one.
+                    {summary?.verificationInForce
+                      ? 'Your employer is now allowing only what has been evidenced, so every head above allows nothing until a document is filed and accepted. Submit the receipts, certificates or statements that support each one.'
+                      : 'Every head above still rests on your declaration alone. Submit the receipts, certificates or statements that support each one.'}
                   </p>
                 </CardContent>
               </Card>

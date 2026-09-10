@@ -126,6 +126,14 @@ export default function ProofReviewPage() {
   const [summaryFailed, setSummaryFailed] = useState(false);
   /** Generation counter identifying the newest in-flight summary read. */
   const summaryRequest = useRef(0);
+  /**
+   * Generation counter for the newest queue request.
+   *
+   * Two filter changes a click apart leave two requests racing. If the older
+   * one lands last it wins, and the reviewer works a queue that does not match
+   * the filter on screen.
+   */
+  const queueRequest = useRef(0);
 
   const yearOptions = useMemo(() => financialYearOptions(), []);
 
@@ -159,6 +167,10 @@ export default function ProofReviewPage() {
   );
 
   const load = useCallback(async () => {
+    const request = queueRequest.current + 1;
+    queueRequest.current = request;
+    const isCurrent = () => queueRequest.current === request;
+
     setLoading(true);
     try {
       const params: Record<string, unknown> = { financialYear };
@@ -166,13 +178,16 @@ export default function ProofReviewPage() {
       if (employeeId) params.employeeId = employeeId;
 
       const response = await proofsApi.listForReview(params);
+      if (!isCurrent()) return;
       const payload = response.data;
       setProofs((payload?.data ?? payload ?? []) as InvestmentProof[]);
     } catch (error: unknown) {
+      // An error about a filter the reviewer has moved past is noise.
+      if (!isCurrent()) return;
       setProofs([]);
       toast.error(serverMessage(error, 'The proofs could not be loaded.'));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [financialYear, status, employeeId]);
 
@@ -246,10 +261,17 @@ export default function ProofReviewPage() {
       `Someone else reviewed this proof first: ${serverMessage(
         error,
         'it already has a decision',
-      )}. Reloading the queue so you can see their decision.`,
+      )}. Showing every proof so you can see their decision.`,
     );
     closeReview();
-    await load();
+    // The default filter is Awaiting review, which excludes the proof the
+    // moment somebody decides it. Reloading under that filter would remove the
+    // row and make the message above a lie, so widen the filter first.
+    if (status === 'ALL') {
+      await load();
+    } else {
+      setStatus('ALL');
+    }
     return true;
   };
 

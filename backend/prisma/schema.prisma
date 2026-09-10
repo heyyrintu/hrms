@@ -2101,6 +2101,11 @@ model InvestmentProof {
   employee Employee @relation("InvestmentProofEmployee", fields: [employeeId], references: [id])
   upload   Upload   @relation(fields: [uploadId], references: [id])
 
+  /// One document per head per year. Two proofs pointing at the same upload
+  /// under one head would both be summed once approved, inflating a deduction
+  /// and under-deducting tax. The same document may still support a different
+  /// head, which is why the section is part of the identity.
+  @@unique([tenantId, employeeId, financialYear, section, uploadId])
   @@index([tenantId, financialYear])
   @@index([employeeId, financialYear])
   @@index([tenantId, status])

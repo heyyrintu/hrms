@@ -283,7 +283,7 @@ describe('ProofsService', () => {
           where: { id: 'proof-1', tenantId: TENANT, employeeId: EMPLOYEE },
         }),
       );
-      expect(upload.key).toBe('proofs/abc.pdf');
+      expect((upload as { key: string }).key).toBe('proofs/abc.pdf');
     });
 
     it('lets payroll staff read any proof in their own tenant', async () => {
@@ -713,5 +713,33 @@ describe('ProofsService', () => {
 
     expect(summary.verificationRequired).toBe(false);
     expect(summary.verificationInForce).toBe(false);
+  });
+
+  it('never hands the storage key back to a client', async () => {
+    // The key is the path the file sits at in storage. A client needs the id,
+    // the name, the type and the size to render and download a proof; the key
+    // only tells someone where the bytes live.
+    (prisma.investmentProof.findMany as jest.Mock).mockResolvedValue([]);
+
+    await service.listMine(TENANT, EMPLOYEE, 2026);
+
+    const args = (prisma.investmentProof.findMany as jest.Mock).mock.calls[0][0];
+    expect(args.include.upload.select).not.toHaveProperty('key');
+  });
+
+  it('refuses to file the same document twice under one head', async () => {
+    // Two proofs pointing at one document, both approved, are summed twice.
+    // That inflates a deduction and under-deducts tax on a real payslip.
+    (prisma.upload.findFirst as jest.Mock).mockResolvedValue(makeUpload());
+    (prisma.investmentProof.create as jest.Mock).mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      }),
+    );
+
+    await expect(service.submit(TENANT, EMPLOYEE, USER, submitDto())).rejects.toThrow(
+      /already been filed/i,
+    );
   });
 });

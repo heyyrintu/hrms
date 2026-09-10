@@ -453,4 +453,18 @@ describe('MyTaxProofsPage', () => {
 
     expect(mockedStatutoryApi.getConfig).not.toHaveBeenCalled();
   });
+
+  it('does not tell an employee a head rests on their declaration once proofs are in force', async () => {
+    // With verification in force an unproved head allows nothing. Telling
+    // somebody it "rests on your declaration" would be the opposite of true,
+    // and they would leave the evidence unfiled.
+    setup({ summary: { verificationRequired: true, verificationInForce: true }, proofs: [] });
+
+    render(<MyTaxProofsPage />);
+
+    await screen.findByText(/You have submitted nothing/i);
+    expect(screen.queryByText(/rests on your declaration alone/i)).not.toBeInTheDocument();
+    // The notice at the top also says this; the empty state must not contradict it.
+    expect(screen.getAllByText(/allows nothing/i).length).toBeGreaterThan(1);
+  });
 });
