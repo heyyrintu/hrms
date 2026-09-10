@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react';
 import toast from 'react-hot-toast';
 import PayrollForm16Page from './page';
 
@@ -368,5 +368,37 @@ describe('PayrollForm16Page', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(expect.stringMatching(/Part B/i));
     });
+  });
+
+  it('ignores a slow certificate for an employee who is no longer selected', async () => {
+    // Switching employees is a click apart, and one request can easily outlive
+    // the next. If the older one wins, the page shows one colleague's tax
+    // position under another colleague's name.
+    const asha = { ...certificate, employee: { ...certificate.employee, name: 'Asha Rao', employeeCode: 'EMP001' } };
+    const vikram = { ...certificate, employee: { ...certificate.employee, name: 'Vikram Iyer', employeeCode: 'EMP002' } };
+
+    let releaseAsha = () => {};
+    form16Api.getForEmployee.mockImplementation((id: string) =>
+      id === 'e1'
+        ? new Promise((resolve) => {
+            releaseAsha = () => resolve({ data: asha });
+          })
+        : Promise.resolve({ data: vikram }),
+    );
+
+    render(<PayrollForm16Page />);
+    await selectEmployee('e1');
+    await selectEmployee('e2');
+    await screen.findByText(/Vikram Iyer \(EMP002\)/);
+
+    releaseAsha();
+    // Let the stale request's continuation actually run. Without this the test
+    // asserts before the overwrite could have happened and proves nothing.
+    await act(async () => {
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    });
+
+    expect(screen.queryByText(/Asha Rao \(EMP001\)/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Vikram Iyer \(EMP002\)/)).toBeInTheDocument();
   });
 });

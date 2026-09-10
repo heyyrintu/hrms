@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within, act } from '@testing-library/react';
 import SettlementsPage from './page';
 import { settlementApi, exitApi } from '@/lib/api';
 
@@ -245,5 +245,32 @@ describe('SettlementsPage', () => {
     await waitFor(() => {
       expect(screen.getByText(/no separations found/i)).toBeInTheDocument();
     });
+  });
+
+  it('discards rows for a filter the user has already moved past', async () => {
+    // Two filter changes a click apart. If the first reply lands last it wins,
+    // and the table then shows rows that do not match the filter on screen.
+    let releaseFirst = () => {};
+    mockedExitApi.getAll.mockImplementation((params: any) => {
+      if (params?.status === 'NOTICE_PERIOD') {
+        return new Promise((resolve) => {
+          releaseFirst = () => resolve({ data: [asha] });
+        }) as never;
+      }
+      return Promise.resolve({ data: [brij] }) as never;
+    });
+
+    render(<SettlementsPage />);
+    const filter = await screen.findByLabelText(/Separation status/i);
+    fireEvent.change(filter, { target: { value: 'NOTICE_PERIOD' } });
+    fireEvent.change(filter, { target: { value: 'CLEARANCE_PENDING' } });
+    await screen.findByText(/Brij/);
+
+    releaseFirst();
+    await act(async () => {
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    });
+
+    expect(screen.queryByText(/Asha/)).not.toBeInTheDocument();
   });
 });

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -66,8 +66,20 @@ export default function SettlementsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterSeparationStatus, setFilterSeparationStatus] = useState<string>('');
   const [filterState, setFilterState] = useState<string>('');
+  /**
+   * Generation counter for the newest in-flight load.
+   *
+   * Two filter changes a click apart leave two requests racing. If the older
+   * one lands last it wins, and the table then shows rows that do not match the
+   * filter on screen.
+   */
+  const requestRef = useRef(0);
 
   const loadData = useCallback(async () => {
+    const request = requestRef.current + 1;
+    requestRef.current = request;
+    const isCurrent = () => requestRef.current === request;
+
     setLoading(true);
     try {
       const params: Record<string, unknown> = {};
@@ -79,6 +91,8 @@ export default function SettlementsPage() {
         separations.map((s) => settlementApi.getBySeparation(s.id)),
       );
 
+      if (!isCurrent()) return;
+
       setRows(
         separations.map((separation, index) => {
           const result = settled[index];
@@ -89,10 +103,12 @@ export default function SettlementsPage() {
         }),
       );
     } catch (error) {
+      // An error about a filter the user has moved past is noise.
+      if (!isCurrent()) return;
       console.error('Failed to load settlements:', error);
       toast.error('Failed to load settlements');
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [filterSeparationStatus]);
 

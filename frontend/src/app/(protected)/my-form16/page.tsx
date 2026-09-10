@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -25,10 +25,19 @@ export default function MyForm16Page() {
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  /** Generation counter identifying the newest in-flight load. */
+  const requestRef = useRef(0);
 
   const yearOptions = useMemo(() => financialYearOptions(), []);
 
   const load = useCallback(async () => {
+    // Changing year is a click apart and one request can outlive the next.
+    // Without this token a slow reply would land under whichever year is
+    // selected by the time it arrives, labelling one year's tax with another's.
+    const request = requestRef.current + 1;
+    requestRef.current = request;
+    const isCurrent = () => requestRef.current === request;
+
     setLoading(true);
     setLoadFailed(false);
 
@@ -38,6 +47,10 @@ export default function MyForm16Page() {
       form16Api.getMine(financialYear),
       form16Api.getMyQuarters(financialYear),
     ]);
+
+    // A stale reply is discarded whole, error toast included: an error about a
+    // year the user has already moved on from is noise at best.
+    if (!isCurrent()) return;
 
     if (certificateResult.status === 'fulfilled') {
       setCertificate(certificateResult.value.data as Form16PartB);

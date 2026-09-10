@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import toast from 'react-hot-toast';
 
 import StatutoryReturnsPage from './page';
@@ -289,4 +289,50 @@ describe('StatutoryReturnsPage', () => {
       expect(toast.error).toHaveBeenCalledWith('Failed to load payroll runs');
     });
   });
+
+    it('discards a preview that arrives after the user switched run', async () => {
+        // Clearing held previews on switch is not enough on its own: a request
+        // already in flight still lands afterwards, and would show one run's
+        // file under another run's heading. That is a filing hazard, not a
+        // cosmetic one.
+        const secondRun = { ...computedRun, id: 'run-second', month: 5 };
+        getRuns.mockResolvedValue({ data: [computedRun, secondRun] });
+
+        let releaseFirst = () => {};
+        preview.mockImplementation((runId: string) =>
+            runId === 'run-computed'
+                ? new Promise((resolve) => {
+                      releaseFirst = () =>
+                          resolve({
+                              data: {
+                                  filename: 'first.txt',
+                                  contentType: 'text/plain',
+                                  content: 'CONTENT-FROM-MARCH-RUN',
+                                  warnings: [],
+                              },
+                          });
+                  })
+                : Promise.resolve({
+                      data: {
+                          filename: 'second.txt',
+                          contentType: 'text/plain',
+                          content: 'CONTENT-FROM-MAY-RUN',
+                          warnings: [],
+                      },
+                  }),
+        );
+
+        render(<StatutoryReturnsPage />);
+        fireEvent.click(await screen.findByLabelText('Preview EPFO ECR'));
+        fireEvent.change(await screen.findByLabelText(/Payroll run/i), {
+            target: { value: 'run-second' },
+        });
+
+        releaseFirst();
+        await act(async () => {
+            for (let i = 0; i < 5; i += 1) await Promise.resolve();
+        });
+
+        expect(screen.queryByText(/CONTENT-FROM-MARCH-RUN/)).not.toBeInTheDocument();
+    });
 });

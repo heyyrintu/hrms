@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -29,6 +29,8 @@ export default function PayrollForm16Page() {
   const [loading, setLoading] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  /** Generation counter identifying the newest in-flight load. */
+  const requestRef = useRef(0);
 
   const yearOptions = useMemo(() => financialYearOptions(), []);
 
@@ -64,6 +66,14 @@ export default function PayrollForm16Page() {
       return;
     }
 
+    // Switching employee or year is a click apart and one request can outlive
+    // the next. Without this token a slow reply would land under whoever is
+    // selected by the time it arrives, showing one colleague's tax position
+    // under another colleague's name.
+    const request = requestRef.current + 1;
+    requestRef.current = request;
+    const isCurrent = () => requestRef.current === request;
+
     setLoading(true);
     setLoadFailed(false);
 
@@ -73,6 +83,10 @@ export default function PayrollForm16Page() {
       form16Api.getForEmployee(employeeId, financialYear),
       form16Api.getQuartersForEmployee(employeeId, financialYear),
     ]);
+
+    // A stale reply is discarded whole, error toast included: an error about a
+    // selection the user has already moved on from is noise at best.
+    if (!isCurrent()) return;
 
     if (certificateResult.status === 'fulfilled') {
       setCertificate(certificateResult.value.data as Form16PartB);

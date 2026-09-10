@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -113,6 +113,16 @@ export default function StatutoryReturnsPage() {
     const [runs, setRuns] = useState<PayrollRun[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedRunId, setSelectedRunId] = useState('');
+    /**
+     * The run the user is looking at right now.
+     *
+     * A preview already in flight when the selection changes still lands, and
+     * the closure that started it holds the old id. Clearing held previews on
+     * switch does not stop that. Without this the page can show one run's file
+     * under another run's heading, which is a filing hazard rather than a
+     * cosmetic one.
+     */
+    const selectedRunRef = useRef('');
     const [previews, setPreviews] = useState<Record<string, GeneratedReturnFile>>({});
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [busyKind, setBusyKind] = useState<string | null>(null);
@@ -128,6 +138,7 @@ export default function StatutoryReturnsPage() {
             const loaded: PayrollRun[] = res.data ?? [];
             setRuns(loaded);
             const firstReady = loaded.find((run) => READY_STATUSES.includes(run.status));
+            selectedRunRef.current = firstReady ? firstReady.id : '';
             setSelectedRunId(firstReady ? firstReady.id : '');
         } catch {
             toast.error('Failed to load payroll runs');
@@ -141,6 +152,7 @@ export default function StatutoryReturnsPage() {
     const selectedRun = runs.find((run) => run.id === selectedRunId) ?? null;
 
     const selectRun = (id: string) => {
+        selectedRunRef.current = id;
         setSelectedRunId(id);
         // A preview belongs to the run it came from; do not carry it across.
         setPreviews({});
@@ -152,18 +164,22 @@ export default function StatutoryReturnsPage() {
 
     const handlePreview = async (def: ReturnDefinition) => {
         if (!selectedRunId) return;
+        const runAtRequest = selectedRunId;
         setBusyKind(def.kind);
         setErrors((prev) => ({ ...prev, [def.kind]: '' }));
         try {
-            const res = await returnsApi.preview(selectedRunId, def.kind);
+            const res = await returnsApi.preview(runAtRequest, def.kind);
+            if (selectedRunRef.current !== runAtRequest) return;
             const file: GeneratedReturnFile = res.data;
             setPreviews((prev) => ({ ...prev, [def.kind]: file }));
         } catch (error: any) {
+            // A failure for a run the user has moved on from is noise.
+            if (selectedRunRef.current !== runAtRequest) return;
             const message = failureMessage(error);
             setErrors((prev) => ({ ...prev, [def.kind]: message }));
             toast.error(message);
         } finally {
-            setBusyKind(null);
+            if (selectedRunRef.current === runAtRequest) setBusyKind(null);
         }
     };
 

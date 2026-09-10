@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import toast from 'react-hot-toast';
 import MyForm16Page from './page';
 
@@ -348,5 +348,38 @@ describe('MyForm16Page', () => {
     await waitFor(() => {
       expect(form16Api.getMine).toHaveBeenCalledWith(defaultYear - 1);
     });
+  });
+
+  it('ignores a slow certificate for a year that is no longer selected', async () => {
+    // Changing year twice in quick succession must not label one year's tax
+    // figures with another year's heading.
+    const older = { ...certificate, financialYear: 2025, financialYearLabel: 'FY 2025-26', assessmentYear: 'AY 2026-27' };
+
+    let releaseOlder = () => {};
+    form16Api.getMine.mockImplementation((year: number) =>
+      year === 2025
+        ? new Promise((resolve) => {
+            releaseOlder = () => resolve({ data: older });
+          })
+        : Promise.resolve({ data: certificate }),
+    );
+
+    render(<MyForm16Page />);
+    const select = await screen.findByLabelText(/Financial year/i);
+    fireEvent.change(select, { target: { value: '2025' } });
+    fireEvent.change(select, { target: { value: '2026' } });
+    await screen.findByText(/AY 2027-28/);
+
+    releaseOlder();
+    // Let the stale request's continuation actually run, or the assertion
+    // proves nothing.
+    await act(async () => {
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+    });
+
+    // The year dropdown lists every FY label, so assert on the assessment year,
+    // which only the rendered certificate shows.
+    expect(screen.queryByText(/AY 2026-27/)).not.toBeInTheDocument();
+    expect(screen.getByText(/AY 2027-28/)).toBeInTheDocument();
   });
 });
