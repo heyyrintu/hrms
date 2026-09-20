@@ -218,4 +218,27 @@ export class UpsertTaxDeclarationDto {
   @IsNumber()
   @Min(0)
   previousEmployerTds?: number;
+  @ApiPropertyOptional({
+    description:
+      'Section 10(10AA) exemption already used at an earlier employer. The ceiling is a lifetime one.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  previousEmployerEncashmentExemption?: number;
+  @ApiPropertyOptional({
+    description:
+      'Leave travel journeys already exempted in the current block of four calendar years. The Act allows two.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  ltaJourneysUsedInBlock?: number;
+  @ApiPropertyOptional({
+    description:
+      'Whether Form 10E has been furnished. Section 192(2A) lets the employer compute section 89 relief only on those particulars.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  form10EFurnished?: boolean;
 }

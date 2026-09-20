@@ -314,6 +314,69 @@ before it is written: it must start at zero, have no gap and no overlap, and
 have exactly one open-ended band at the top. A ladder with a hole in it taxes
 the income falling in that hole at nothing.
 
+## The limits that span more than one year
+
+Two limits are lifetime or multi-year, and nothing recorded them, so both were
+being granted again every year.
+
+**Leave travel** is allowed for two journeys in a block of four calendar years.
+The blocks are fixed by the Act, 2022-2025 and 2026-2029 and so on, not chosen.
+An employee declares the journeys already used in the current block, including
+any at an earlier employer, and a third exempts nothing however much is
+declared: the limit is on journeys, not on money. The working names the block
+and what remains, because an employee refused the exemption is owed that.
+
+**The section 10(10AA) ceiling** is a lifetime one, so a leaver who used part of
+it at an earlier employer now declares that and gets only the balance.
+
+## An exemption needs an allowance
+
+Section 10 exempts an allowance *received*. Where an employer pays no leave
+travel, children's education or hostel allowance at all, there is nothing to
+exempt, however much is declared and whatever evidence is filed: the exemption
+reduces a receipt, it does not create one. Salary components are marked with the
+head they pay, the same way they are already marked as part of provident fund
+wages, and each exemption is capped at what payroll actually paid. An employer
+who marks no component is unaffected.
+
+## Tax on a settlement
+
+**Section 89 relief** is computed, on two conditions the statute sets.
+
+The first is Form 10E. Section 192(2A) lets an employer compute the relief only
+on particulars the employee furnishes in that form, so without it relief is
+refused rather than assumed. The employee still claims it on their own
+assessment. That is the safe direction: too much deducted comes back, too little
+exposes the employer to interest under section 201(1A).
+
+The second is what the relief may be computed on. Leave encashment is relieved
+by the ordinary spreading method. **Gratuity is not**: rule 21A(3) prescribes an
+average-rate method over two or three preceding years, and those years' incomes
+are not on record. Gratuity is therefore taxed in full and excluded from the
+relief base, with the reason recorded, rather than relieved by a method the Act
+does not prescribe for it. No relief is admissible at all on gratuity for
+service under five years, and that bar is enforced.
+
+Relief is floored at zero, because bunching can only cost a taxpayer, and every
+refusal carries its reason rather than quietly returning nothing.
+
+**The tax is capped at what is actually payable.** Notice recovery may
+legitimately leave a leaver owing the employer, because the employer is owed
+that money either way. Tax may not: an employer cannot deduct from a payment
+that does not exist. The uncollected balance is recorded as the leaver's own
+liability on assessment rather than hidden inside a negative number.
+
+The settlement also consults approved proofs on the same terms the monthly
+engine does.
+
+**A month of exit that payroll has already run is flagged, not silently
+adjusted.** If a payslip covers that month and the settlement also pays pro-rata
+salary for it, both are paid, so both are taxed. The duplication is in what is
+paid, and a tax calculation may not quietly correct that: the working names the
+month and both figures and marks the settlement for review, so a person can fix
+the payment. Excluding the pro-rata from income instead would leave money paid
+and untaxed, which is worse than the double count.
+
 ## Not implemented
 
 Known and deliberate, so nobody assumes otherwise:
@@ -321,30 +384,32 @@ Known and deliberate, so nobody assumes otherwise:
 - **Form 16 Part A.** TRACES issues it. See above.
 - **Automatic proof checking.** A person reads every document. Nothing extracts
   figures from a PDF or validates a policy number.
-- **The leave travel block year.** Section 10(5) allows the exemption for two
-  journeys in a block of four calendar years, and covers fare only. Nothing
-  records block-year usage, so with proof verification switched off an employee
-  can claim it every year running. A reviewer looking at the tickets settles
-  both points; the arithmetic does not.
-- **Section 89 relief.** A settlement bunches several years of gratuity and
-  leave into one year and can push a leaver into a higher band. The relief that
-  exists for exactly that is not computed, so the tax on a settlement can exceed
-  what the leaver finally owes. This is the most likely reason somebody
-  overrides the computed figure, which is why the override is a first-class
-  thing rather than a nicety.
-- **Settlement tax is not capped at the net payable.** A large tax against a
-  small settlement can drive the net negative, as notice recovery already can.
-- **A settlement does not consult approved proofs.** The monthly engine replaces
-  declared figures with verified ones from the cutoff month; the settlement
-  takes the declaration as it stands.
-- **The month of exit can be counted twice.** If payroll has already run for
-  that month and the settlement also pays pro-rata salary, the tax is
-  overstated. The working records the payslip count and the year to date so it
-  is visible. Netting it off needs a rule about which months a settlement
-  supersedes.
-- **The printed Form 16 shows line 2 as one figure.** The breakdown of which
-  section 10 heads made it up is computed and returned, but the PDF does not
-  render it yet.
+- **Whether a leave travel journey happened, and fare only.** The journey count
+  is the employee's own word, and section 10(5) covers fare rather than lodging
+  or food. A reviewer looking at the tickets settles both; the arithmetic does
+  not.
+- **Earlier years' incomes for section 89.** They are not on record, so each
+  year the arrears are spread back over is taxed on the receipt year's income
+  less the arrears. That stand-in is usually too high, so the relief comes out
+  understated, which is the safe direction: too much deducted is recovered on
+  assessment, too little exposes the employer to interest under section 201(1A).
+- **The gratuity variant of rule 21A.** Not modelled, so gratuity is excluded
+  from the relief base rather than relieved by the wrong method. An employee
+  who is entitled to it claims it in their own return, having furnished Form
+  10E to the department; the form supplies the particulars for the claim rather
+  than being the claim.
+- **Which rule leave encashment falls under.** Relief on it is computed by the
+  ordinary spreading method of rule 21A(2), which is framed as salary in arrears
+  or in advance. Encashment on retirement is not one of the heads that sub-rule
+  names, and a reasonable reading puts it under 21A(6), where relief is as the
+  Board allows rather than as of right. Worth a qualified view before this
+  computes anyone's real tax.
+- **A settlement's tax is not recomputed when an entered figure changes.**
+  Editing other earnings or recoveries moves what is payable, so the cap can go
+  stale until somebody recomputes.
+- **Form 16 cannot confirm an allowance was paid.** The certificate does not
+  read payslip earnings, so it applies the statutory ceilings but not the
+  allowance-paid rule, and says so on its face.
 - **Half-yearly professional tax rates.** The mechanism is there; Tamil Nadu is
   not seeded. Its published rates are half-yearly lump sums, and somebody who
   files for that state must confirm the current figures and collection months
@@ -354,9 +419,6 @@ Known and deliberate, so nobody assumes otherwise:
   decides surcharge on total income, and for a salaried employee the two differ
   by the standard deduction. It matters for income between roughly ₹49.25 lakh
   and ₹50 lakh, and wants a decision from somebody qualified.
-- **Encashment exemption used at an earlier employer.** The ceiling is a
-  lifetime one, but nothing records what a previous employer exempted, so a
-  leaver who has used part of it elsewhere is over-exempted here.
 - **Average salary for the encashment exemption** is the last drawn basic and
   dearness allowance, not the average of the final ten months the section asks
   for. Only the current salary is on record.

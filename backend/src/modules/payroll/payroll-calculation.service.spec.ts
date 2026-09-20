@@ -570,3 +570,181 @@ describe('PayrollCalculationService', () => {
     });
   });
 });
+
+describe('PayrollCalculationService - section 10 allowances actually paid', () => {
+  let service: PayrollCalculationService;
+  let prisma: any;
+  let statutory: { compute: jest.Mock };
+
+  const tenantId = 'tenant-1';
+  const employeeId = 'emp-1';
+  const month = 1; // January
+  const year = 2026;
+
+  /** A full month of attendance, so nothing is pro-rated away. */
+  function fullAttendance() {
+    prisma.holiday.findMany.mockResolvedValue([]);
+    prisma.attendanceRecord.findMany.mockResolvedValue(
+      Array.from({ length: 22 }, (_, i) => ({
+        status: 'PRESENT', date: new Date(2026, 0, i + 1),
+        otMinutesApproved: 0, otMinutesCalculated: 0,
+      })),
+    );
+    prisma.leaveRequest.findMany.mockResolvedValue([]);
+  }
+
+  function salaryWith(components: Record<string, unknown>[]) {
+    return {
+      id: 'es-1',
+      tenantId,
+      employeeId,
+      basePay: 20000,
+      isActive: true,
+      salaryStructure: { id: 'ss-1', name: 'Standard', components },
+      employee: { otMultiplier: 1.5, payType: 'MONTHLY', hourlyRate: null },
+    };
+  }
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        PayrollCalculationService,
+        { provide: PrismaService, useValue: createMockPrismaService() },
+        {
+          provide: StatutoryService,
+          useValue: { compute: jest.fn().mockResolvedValue(noStatutory()) },
+        },
+      ],
+    }).compile();
+
+    service = module.get<PayrollCalculationService>(PayrollCalculationService);
+    prisma = module.get(PrismaService);
+    statutory = module.get(StatutoryService);
+  });
+
+  it('tells the statutory engine what it actually paid under each marked head', async () => {
+    // Section 10 exempts an allowance received. The engine cannot know what
+    // was received unless payroll says so, and the structure marks the
+    // components the same way it marks provident fund wages.
+    prisma.employeeSalary.findFirst.mockResolvedValue(
+      salaryWith([
+        {
+          name: 'Leave Travel Allowance', type: 'earning', calcType: 'fixed',
+          value: 2500, section10Head: 'LTA',
+        },
+        {
+          name: 'Education Allowance', type: 'earning', calcType: 'fixed',
+          value: 200, section10Head: 'CHILDREN_EDUCATION',
+        },
+        { name: 'HRA', type: 'earning', calcType: 'fixed', value: 8000 },
+      ]),
+    );
+    fullAttendance();
+
+    await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+    const passed = statutory.compute.mock.calls[0][0].section10Allowances;
+
+    expect(passed.paidThisMonth.lta.toString()).toBe('2500');
+    expect(passed.paidThisMonth.childrenEducation.toString()).toBe('200');
+    // Marked but not paid at all: the head exists in the map at nought, which
+    // exempts nothing, rather than being absent and capping nothing.
+    expect(passed.paidThisMonth.hostel.toString()).toBe('0');
+    expect(passed.componentNames.LTA).toEqual(['Leave Travel Allowance']);
+    expect(passed.componentNames.CHILDREN_EDUCATION).toEqual(['Education Allowance']);
+    expect(passed.componentNames.HOSTEL_ALLOWANCE).toEqual([]);
+  });
+
+  it('adds up several components paid under the same head', async () => {
+    // A structure can pay one head through more than one line; the section
+    // exempts the allowance, not the line.
+    prisma.employeeSalary.findFirst.mockResolvedValue(
+      salaryWith([
+        {
+          name: 'Hostel Allowance', type: 'earning', calcType: 'fixed',
+          value: 300, section10Head: 'HOSTEL_ALLOWANCE',
+        },
+        {
+          name: 'Boarding Allowance', type: 'earning', calcType: 'fixed',
+          value: 450, section10Head: 'HOSTEL_ALLOWANCE',
+        },
+      ]),
+    );
+    fullAttendance();
+
+    await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+    const passed = statutory.compute.mock.calls[0][0].section10Allowances;
+
+    expect(passed.paidThisMonth.hostel.toString()).toBe('750');
+    expect(passed.componentNames.HOSTEL_ALLOWANCE).toEqual([
+      'Hostel Allowance',
+      'Boarding Allowance',
+    ]);
+  });
+
+  it('reports the allowance as the payslip pays it, pro-rated and all', async () => {
+    // Half a month present, so half the allowance is paid. The exemption
+    // cannot exceed what the employee actually received, and what they
+    // received is the line on their payslip.
+    prisma.employeeSalary.findFirst.mockResolvedValue(
+      salaryWith([
+        {
+          name: 'Leave Travel Allowance', type: 'earning', calcType: 'fixed',
+          value: 2500, section10Head: 'LTA',
+        },
+      ]),
+    );
+    prisma.holiday.findMany.mockResolvedValue([]);
+    prisma.attendanceRecord.findMany.mockResolvedValue(
+      Array.from({ length: 11 }, (_, i) => ({
+        status: 'PRESENT', date: new Date(2026, 0, i + 1),
+        otMinutesApproved: 0, otMinutesCalculated: 0,
+      })),
+    );
+    prisma.leaveRequest.findMany.mockResolvedValue([]);
+
+    const result = await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+    const line = result!.earnings.find((e) => e.name === 'Leave Travel Allowance');
+    const passed = statutory.compute.mock.calls[0][0].section10Allowances;
+
+    expect(passed.paidThisMonth.lta.toString()).toBe(line!.amount.toString());
+    expect(line!.amount.lt(new Decimal(2500))).toBe(true);
+  });
+
+  it('passes nothing at all when the structure marks no component', async () => {
+    // The regression that matters: an employer who has marked nothing must be
+    // taxed to exactly the rupee they were before, and the way that is
+    // guaranteed is that the engine is not told about allowances at all.
+    prisma.employeeSalary.findFirst.mockResolvedValue(
+      salaryWith([
+        { name: 'HRA', type: 'earning', calcType: 'fixed', value: 8000 },
+        { name: 'Conveyance', type: 'earning', calcType: 'fixed', value: 1600 },
+      ]),
+    );
+    fullAttendance();
+
+    await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+    expect(statutory.compute.mock.calls[0][0].section10Allowances).toBeUndefined();
+  });
+
+  it('ignores a head marked on a deduction, which pays the employee nothing', async () => {
+    // Section 10 exempts an allowance received. A deduction is not one, and
+    // marking it must not manufacture a receipt to exempt against.
+    prisma.employeeSalary.findFirst.mockResolvedValue(
+      salaryWith([
+        {
+          name: 'LTA Recovery', type: 'deduction', calcType: 'fixed',
+          value: 2500, section10Head: 'LTA',
+        },
+      ]),
+    );
+    fullAttendance();
+
+    await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+    expect(statutory.compute.mock.calls[0][0].section10Allowances).toBeUndefined();
+  });
+});

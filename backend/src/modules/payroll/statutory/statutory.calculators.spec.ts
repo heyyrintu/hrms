@@ -910,3 +910,245 @@ describe('calculateIncomeTax: section 10 exemptions beyond house rent', () => {
     expect(r.totalDeductions.toString()).toBe('51200');
   });
 });
+
+describe('calculateIncomeTax: the leave travel block of four calendar years', () => {
+  // The section allows two journeys in a fixed block of four calendar years.
+  // FY 2026-27 opens in 2026, which falls in the 2026-2029 block.
+  const fy2026 = { ...oldRegimeWithSection10, financialYear: 2026 };
+
+  it('exempts nothing for a third journey in the block, however much was declared', () => {
+    // Two journeys already used in 2026-2029, so none remain. The 45,000
+    // declared exempts nothing: the limit is on journeys, not on money.
+    //
+    // Gross 12,00,000, deductions 50,000 standard only, so 11,50,000 taxable.
+    // Old slabs: 2,50,000 nil, 2,50,000 at 5% = 12,500, 5,00,000 at 20% =
+    // 1,00,000, 1,50,000 at 30% = 45,000. Tax 1,57,500, cess 4% = 6,300,
+    // total 1,63,800 - the same as an employee who declared nothing.
+    //
+    // Allowed, it would have been 11,05,000 taxable and 1,49,760 of tax:
+    // 14,040 too little.
+    const r = calculateIncomeTax(
+      d(1200000),
+      fy2026,
+      { ...noDeclarations, ltaExemption: d(45000), ltaJourneysUsedInBlock: 2 },
+      d(0),
+    );
+
+    const lta = r.section10Exemptions.find((e) => e.head === 'LTA');
+
+    expect(lta?.declared.toString()).toBe('45000');
+    expect(lta?.allowed.toString()).toBe('0');
+    expect(lta?.disallowed.toString()).toBe('45000');
+    expect(lta?.limitedBy).toBe('LTA_BLOCK_EXHAUSTED');
+    expect(r.totalDeductions.toString()).toBe('50000');
+    expect(r.totalTax.toString()).toBe('163800');
+  });
+
+  it('names the block and the journeys left, so a refusal can be explained', () => {
+    const r = calculateIncomeTax(
+      d(1200000),
+      fy2026,
+      { ...noDeclarations, ltaExemption: d(45000), ltaJourneysUsedInBlock: 2 },
+      d(0),
+    );
+
+    const lta = r.section10Exemptions.find((e) => e.head === 'LTA');
+
+    expect(lta?.ltaBlock?.block).toBe('2026-2029');
+    expect(lta?.ltaBlock?.journeysPerBlock).toBe(2);
+    expect(lta?.ltaBlock?.journeysUsedInBlock).toBe(2);
+    expect(lta?.ltaBlock?.journeysRemaining).toBe(0);
+  });
+
+  it('still allows a second journey in the block', () => {
+    // One used, one left. 12,00,000 - 50,000 - 45,000 = 11,05,000 taxable.
+    // 12,500 + 1,00,000 + 30% of 1,05,000 (31,500) = 1,44,000, cess 5,760,
+    // total 1,49,760.
+    const r = calculateIncomeTax(
+      d(1200000),
+      fy2026,
+      { ...noDeclarations, ltaExemption: d(45000), ltaJourneysUsedInBlock: 1 },
+      d(0),
+    );
+
+    const lta = r.section10Exemptions.find((e) => e.head === 'LTA');
+
+    expect(lta?.allowed.toString()).toBe('45000');
+    expect(lta?.ltaBlock?.journeysRemaining).toBe(1);
+    expect(r.totalTax.toString()).toBe('149760');
+  });
+
+  it('restores the allowance once the block turns over', () => {
+    // 2029 is the last year of the 2026-2029 block: two used, nothing left.
+    const lastYearOfBlock = calculateIncomeTax(
+      d(1200000),
+      { ...oldRegimeWithSection10, financialYear: 2029 },
+      { ...noDeclarations, ltaExemption: d(45000), ltaJourneysUsedInBlock: 2 },
+      d(0),
+    );
+    const usedUp = lastYearOfBlock.section10Exemptions.find((e) => e.head === 'LTA');
+
+    expect(usedUp?.ltaBlock?.block).toBe('2026-2029');
+    expect(usedUp?.allowed.toString()).toBe('0');
+    expect(lastYearOfBlock.totalTax.toString()).toBe('163800');
+
+    // 2030 opens the next block, where nothing has been used yet.
+    const nextBlock = calculateIncomeTax(
+      d(1200000),
+      { ...oldRegimeWithSection10, financialYear: 2030 },
+      { ...noDeclarations, ltaExemption: d(45000), ltaJourneysUsedInBlock: 0 },
+      d(0),
+    );
+    const restored = nextBlock.section10Exemptions.find((e) => e.head === 'LTA');
+
+    expect(restored?.ltaBlock?.block).toBe('2030-2033');
+    expect(restored?.ltaBlock?.journeysRemaining).toBe(2);
+    expect(restored?.allowed.toString()).toBe('45000');
+    expect(nextBlock.totalTax.toString()).toBe('149760');
+  });
+
+  it('taxes a declaration that says nothing about journeys exactly as before', () => {
+    // The regression that matters: an employee who has not answered the new
+    // question reads as nought used, two remaining, and is taxed at 1,49,760
+    // exactly as they were before the block was tracked at all.
+    const r = calculateIncomeTax(
+      d(1200000),
+      oldRegimeWithSection10,
+      { ...noDeclarations, ltaExemption: d(45000) },
+      d(0),
+    );
+
+    expect(r.section10Exemptions.find((e) => e.head === 'LTA')?.allowed.toString()).toBe('45000');
+    expect(r.totalTax.toString()).toBe('149760');
+  });
+});
+
+describe('calculateIncomeTax: an exemption is capped at the allowance actually paid', () => {
+  it('exempts nothing under a head the employer does not pay at all', () => {
+    // The structure marks components, but none of them as leave travel, so
+    // the head is absent from the map and the employer pays no such
+    // allowance. Section 10 exempts an allowance received; there is nothing
+    // here to reduce. 11,50,000 taxable, 1,63,800 of tax.
+    const r = calculateIncomeTax(
+      d(1200000),
+      oldRegimeWithSection10,
+      { ...noDeclarations, ltaExemption: d(45000) },
+      d(0),
+      { childrenEducation: d(2400) },
+    );
+
+    const lta = r.section10Exemptions.find((e) => e.head === 'LTA');
+
+    expect(lta?.declared.toString()).toBe('45000');
+    expect(lta?.paidByEmployer?.toString()).toBe('0');
+    expect(lta?.allowed.toString()).toBe('0');
+    expect(lta?.limitedBy).toBe('ALLOWANCE_PAID');
+    expect(r.totalTax.toString()).toBe('163800');
+  });
+
+  it('caps the exemption at what payroll actually paid under the head', () => {
+    // 45,000 declared against 30,000 of leave travel allowance actually paid.
+    // 12,00,000 - 50,000 standard - 30,000 = 11,20,000 taxable.
+    // 12,500 + 1,00,000 + 30% of 1,20,000 (36,000) = 1,48,500, cess 5,940,
+    // total 1,54,440.
+    const r = calculateIncomeTax(
+      d(1200000),
+      oldRegimeWithSection10,
+      { ...noDeclarations, ltaExemption: d(45000) },
+      d(0),
+      { lta: d(30000) },
+    );
+
+    const lta = r.section10Exemptions.find((e) => e.head === 'LTA');
+
+    expect(lta?.paidByEmployer?.toString()).toBe('30000');
+    expect(lta?.allowed.toString()).toBe('30000');
+    expect(lta?.disallowed.toString()).toBe('15000');
+    expect(lta?.limitedBy).toBe('ALLOWANCE_PAID');
+    expect(r.totalTax.toString()).toBe('154440');
+  });
+
+  it('takes the statutory ceiling where that bites first, and says so', () => {
+    // One child, 5,000 declared, ceiling 100 x 12 x 1 = 1,200, and the
+    // employer pays 3,000 of education allowance for the year. The ceiling
+    // binds at 1,200, not the 3,000 paid.
+    const r = calculateIncomeTax(
+      d(1200000),
+      oldRegimeWithSection10,
+      { ...noDeclarations, childrenEducationAllowance: d(5000), childrenCount: 1 },
+      d(0),
+      { childrenEducation: d(3000) },
+    );
+
+    const education = r.section10Exemptions.find((e) => e.head === 'CHILDREN_EDUCATION');
+
+    expect(education?.allowed.toString()).toBe('1200');
+    expect(education?.limitedBy).toBe('STATUTORY_LIMIT');
+    expect(r.totalDeductions.toString()).toBe('51200');
+  });
+
+  it('caps below the statutory ceiling where the employer pays less than it', () => {
+    // One child, 5,000 declared, ceiling 1,200 - but the employer pays only
+    // 600 of education allowance all year, so 600 is all there is to exempt.
+    // 12,00,000 - 50,000 - 600 = 11,49,400 taxable. 12,500 + 1,00,000 +
+    // 30% of 1,49,400 (44,820) = 1,57,320, cess 6,292.80 -> 6,293, total
+    // 1,63,613.
+    const r = calculateIncomeTax(
+      d(1200000),
+      oldRegimeWithSection10,
+      { ...noDeclarations, childrenEducationAllowance: d(5000), childrenCount: 1 },
+      d(0),
+      { childrenEducation: d(600) },
+    );
+
+    const education = r.section10Exemptions.find((e) => e.head === 'CHILDREN_EDUCATION');
+
+    expect(education?.limit?.toString()).toBe('1200');
+    expect(education?.paidByEmployer?.toString()).toBe('600');
+    expect(education?.allowed.toString()).toBe('600');
+    expect(education?.limitedBy).toBe('ALLOWANCE_PAID');
+    expect(r.totalTax.toString()).toBe('163613');
+  });
+
+  it('leaves house rent alone, which is not one of these three heads', () => {
+    // House rent arrives worked out against rent paid and salary. It is not
+    // one of the marked allowance heads, so the map does not touch it.
+    const r = calculateIncomeTax(
+      d(1200000),
+      oldRegimeWithSection10,
+      { ...noDeclarations, hraExemption: d(120000) },
+      d(0),
+      {},
+    );
+
+    const hra = r.section10Exemptions.find((e) => e.head === 'HRA');
+
+    expect(hra?.paidByEmployer).toBeNull();
+    expect(hra?.allowed.toString()).toBe('120000');
+  });
+
+  it('changes nothing at all for an employer who marks no component', () => {
+    // No map passed: the rule is not in force and every head is computed
+    // from exactly the figures it was computed from before. 1,20,000 house
+    // rent + 45,000 leave travel + 2,400 education + 7,200 hostel = 1,74,600.
+    const r = calculateIncomeTax(
+      d(1200000),
+      oldRegimeWithSection10,
+      {
+        ...noDeclarations,
+        hraExemption: d(120000),
+        ltaExemption: d(45000),
+        childrenEducationAllowance: d(5000),
+        hostelAllowance: d(9000),
+        childrenCount: 2,
+      },
+      d(0),
+    );
+
+    expect(r.totalSection10Exemption.toString()).toBe('174600');
+    expect(r.totalDeductions.toString()).toBe('224600');
+    for (const e of r.section10Exemptions) {
+      expect(e.paidByEmployer).toBeNull();
+    }
+  });
+});

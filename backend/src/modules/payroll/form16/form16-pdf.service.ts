@@ -2,6 +2,18 @@ import { Injectable } from '@nestjs/common';
 import * as PDFDocument from 'pdfkit';
 import { Decimal } from '@prisma/client/runtime/library';
 import { Form16PartB } from './form16.service';
+import { Section10ExemptionEntry } from '../statutory/statutory.calculators';
+
+/** Reader-facing label for each section 10 head the breakdown can carry. */
+const SECTION_10_HEAD_LABELS: Record<Section10ExemptionEntry['head'], string> = {
+  HRA: 'House rent allowance — section 10(13A)',
+  LTA: 'Leave travel allowance — section 10(5)',
+  CHILDREN_EDUCATION: "Children's education allowance — section 10(14)",
+  HOSTEL_ALLOWANCE: 'Hostel allowance — section 10(14)',
+};
+
+/** (a), (b), (c) … — matches how the Chapter VI-A breakdown is lettered. */
+const SUB_ITEM_LETTERS = ['a', 'b', 'c', 'd', 'e', 'f'];
 
 /**
  * Renders the Part B annexure as a PDF.
@@ -184,11 +196,62 @@ export class Form16PdfService {
         y += 18;
       };
 
+      /**
+       * A single line of plain text with no amount column, sized to what it
+       * actually renders rather than a fixed row height. Used for the
+       * declared-vs-allowed annotation under a trimmed section 10 head, so a
+       * longer note wrapping to two lines pushes the row after it down
+       * instead of being overwritten by it — the collision this file has had
+       * before.
+       */
+      const annotation = (text: string, indent: number) => {
+        y = ensureRoom(y, 24);
+        doc
+          .font('Helvetica')
+          .fillColor('#6b7280')
+          .fontSize(7.5)
+          .text(text, LEFT + 30 + indent, y, { width: WIDTH - 40 - indent });
+        y = doc.y + 3;
+      };
+
+      /**
+       * The heads behind line 2, the same way the Chapter VI-A breakdown
+       * appears beneath line 8: lettered sub-rows, indented, with the amount
+       * that actually reduced salary. A head with nothing declared and
+       * nothing allowed is left out rather than printed as a row of zeroes —
+       * it adds nothing for a reader to check. Where a head was trimmed to a
+       * statutory ceiling, both the declared and the allowed figure are
+       * shown, because the amount column alone would hide what happened to
+       * the rest of the claim.
+       */
+      const section10Breakdown = (entries: Section10ExemptionEntry[] | undefined) => {
+        if (!entries) return;
+
+        let letterIndex = 0;
+        for (const entry of entries) {
+          if (!entry.declared.gt(0) && !entry.allowed.gt(0)) continue;
+
+          const letter = SUB_ITEM_LETTERS[letterIndex++] ?? '*';
+          const label = SECTION_10_HEAD_LABELS[entry.head] ?? entry.head;
+          line('', `(${letter}) ${label}`, entry.allowed, { indent: 14 });
+
+          if (entry.disallowed.gt(0)) {
+            const ceiling = entry.limit !== null ? money(entry.limit) : null;
+            annotation(
+              `Declared ${money(entry.declared)}, allowed ${money(entry.allowed)}` +
+                (ceiling ? ` — capped at the section 10(14) ceiling of ${ceiling}.` : '.'),
+              28,
+            );
+          }
+        }
+      };
+
       const s16 = form16.deductionsSection16;
       const via = form16.deductionsChapterVIA;
 
       line('1.', 'Gross salary', form16.grossSalary, { bold: true, band: '#f9fafb' });
       line('2.', 'Less: allowances exempt under section 10', form16.allowancesExemptSection10);
+      section10Breakdown(form16.allowancesExemptSection10Breakdown);
       line('3.', 'Balance (1 - 2)', form16.balance, { bold: true, band: '#f9fafb' });
       line('4.', 'Deductions under section 16', s16.total, { bold: true });
       line('', '(a) Standard deduction — section 16(ia)', s16.standardDeduction, { indent: 14 });

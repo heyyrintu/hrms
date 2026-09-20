@@ -5,6 +5,13 @@ import {
   SurchargeResult,
   collectsProfessionalTaxIn,
 } from './tax-correctness.types';
+import {
+  LTA_JOURNEYS_PER_BLOCK,
+  Section10AllowancesPaid,
+  Section10ComponentHead,
+  ltaBlockLabel,
+  ltaJourneysRemaining,
+} from './completion.types';
 
 /**
  * Pure calculations for the Indian statutory payroll deductions.
@@ -303,6 +310,19 @@ export interface IncomeTaxConfigInput {
    * been updated to pass the year's row still gets it.
    */
   section10Limits?: Section10AllowanceLimits;
+  /**
+   * The financial year, used only to name the leave travel block.
+   *
+   * Section 10(5) runs in fixed blocks of four calendar years and the block is
+   * decided by the calendar year the travel falls in; the convention, stated
+   * in `completion.types`, is the financial year's opening calendar year.
+   *
+   * Optional because a caller written before the block was tracked passes
+   * none, and a block that cannot be named still cannot be exceeded: the
+   * journey count is what refuses the exemption, and the label is the part of
+   * the working that goes missing.
+   */
+  financialYear?: number;
 }
 
 /**
@@ -357,6 +377,16 @@ export interface TaxDeclarationInput {
    * existed still type-checks and still computes exactly what it did.
    */
   ltaExemption?: Decimal;
+  /**
+   * Section 10(5): journeys the employee says they have already used in the
+   * current block of four calendar years, including at an earlier employer.
+   *
+   * The Act allows two in a block, so an employee who has used both gets
+   * nothing more until it turns over. Optional, and absent reads as nought
+   * used — which is what every declaration written before the question
+   * existed says, and which leaves their tax exactly where it was.
+   */
+  ltaJourneysUsedInBlock?: number;
   /** Section 10(14): children's education allowance, before the per-child cap. */
   childrenEducationAllowance?: Decimal;
   /** Section 10(14): hostel allowance, before the per-child cap. */
@@ -400,6 +430,40 @@ export interface DeductionCapEntry {
  * "₹100 a month, one child, twelve months" is the arithmetic. A capped figure
  * that arrives on its own looks like a mistake.
  */
+/**
+ * Which rule produced the allowed figure.
+ *
+ * Nothing may shrink silently: an employee whose claim was trimmed is owed
+ * the name of the rule that trimmed it, and three different rules can now
+ * bind the same head.
+ */
+export type Section10LimitedBy =
+  /** Nothing trimmed it; the whole declared figure was exempt. */
+  | 'DECLARED'
+  /** The year's section 10(14) per-child ceiling. */
+  | 'STATUTORY_LIMIT'
+  /** The employer paid less under the head than was declared, or paid none. */
+  | 'ALLOWANCE_PAID'
+  /** Both journeys in the block of four calendar years were already used. */
+  | 'LTA_BLOCK_EXHAUSTED';
+
+/**
+ * Section 10(5)'s block of four calendar years, as it stood for this year.
+ *
+ * Carried on the entry whether or not it bound, because "nil, and here is
+ * why" is an answer and a bare nought is not.
+ */
+export interface LtaBlockWorking {
+  /** "2026-2029", or null where the caller passed no financial year. */
+  block: string | null;
+  /** The journeys the Act allows in a block. Two. */
+  journeysPerBlock: number;
+  /** What the employee declared they had already used in it. */
+  journeysUsedInBlock: number;
+  /** What is left, which is what decides whether anything is exempt at all. */
+  journeysRemaining: number;
+}
+
 export interface Section10ExemptionEntry {
   head: 'HRA' | 'LTA' | 'CHILDREN_EDUCATION' | 'HOSTEL_ALLOWANCE';
   /** What arrived, whether declared by the employee or proved and approved. */
@@ -415,6 +479,19 @@ export interface Section10ExemptionEntry {
   allowed: Decimal;
   /** The remainder, which exempts nothing. Zero when the claim was within the ceiling. */
   disallowed: Decimal;
+  /**
+   * What the employer actually paid under this head for the year.
+   *
+   * Null where the rule is not in force: house rent, which is not one of the
+   * marked allowance heads, and every head when the salary structure marks no
+   * component at all. Null therefore means "not capped against a receipt",
+   * while nought means "the employer pays no such allowance".
+   */
+  paidByEmployer: Decimal | null;
+  /** Section 10(5)'s block of four calendar years. Null on the other heads. */
+  ltaBlock: LtaBlockWorking | null;
+  /** Which rule produced `allowed`. */
+  limitedBy: Section10LimitedBy;
 }
 
 export interface IncomeTaxResult {
@@ -633,6 +710,8 @@ export function calculateSection10Exemptions(
   declarations: TaxDeclarationInput,
   isOldRegime: boolean,
   limits: Section10AllowanceLimits = STATUTORY_SECTION_10_LIMITS,
+  allowancesPaid?: Section10AllowancesPaid,
+  financialYear?: number,
 ): Section10ExemptionEntry[] {
   if (!isOldRegime) return [];
 
@@ -647,34 +726,104 @@ export function calculateSection10Exemptions(
   const perChildYearlyLimit = (monthly: Decimal): Decimal =>
     monthly.mul(MONTHS_IN_YEAR).mul(eligibleChildren);
 
+  // What payroll actually paid under a head this year.
+  //
+  // No map at all means no component in the salary structure is marked, so the
+  // rule is not in force and every head is computed from exactly the figures
+  // it was computed from before. A map that is present but silent about a head
+  // means the employer pays no such allowance, which exempts nothing: the
+  // exemption reduces a receipt, it does not create one.
+  const paidUnder = (key: keyof Section10AllowancesPaid): Decimal | null => {
+    if (allowancesPaid === undefined) return null;
+    return allowancesPaid[key] ?? zero;
+  };
+
+  // Section 10(5) allows two journeys in a fixed block of four calendar years.
+  // An employee who has used both gets nothing more until it turns over,
+  // whatever they declared and whatever the tickets show, because the limit is
+  // on journeys rather than on money.
+  //
+  // What this does not do, and a reviewer looking at the tickets must: it does
+  // not know whether a journey actually happened — the count is the employee's
+  // own word — and it does not restrict the exemption to the fare, which is
+  // all section 10(5) covers. Both are settled by the evidence, not here.
+  const journeysUsed = declarations.ltaJourneysUsedInBlock ?? 0;
+  const ltaBlock: LtaBlockWorking = {
+    block: financialYear === undefined ? null : ltaBlockLabel(financialYear),
+    journeysPerBlock: LTA_JOURNEYS_PER_BLOCK,
+    journeysUsedInBlock: journeysUsed,
+    journeysRemaining: ltaJourneysRemaining(journeysUsed),
+  };
+
   const entry = (
     head: Section10ExemptionEntry['head'],
     declared: Decimal,
     limit: Decimal | null,
+    paidByEmployer: Decimal | null,
+    block: LtaBlockWorking | null = null,
   ): Section10ExemptionEntry => {
-    const allowed = limit === null ? declared : Decimal.min(declared, limit);
-    return { head, declared, limit, allowed, disallowed: declared.sub(allowed) };
+    let allowed = declared;
+    let limitedBy: Section10LimitedBy = 'DECLARED';
+
+    if (limit !== null && limit.lt(allowed)) {
+      allowed = limit;
+      limitedBy = 'STATUTORY_LIMIT';
+    }
+    if (paidByEmployer !== null && paidByEmployer.lt(allowed)) {
+      allowed = paidByEmployer;
+      limitedBy = 'ALLOWANCE_PAID';
+    }
+    if (block !== null && block.journeysRemaining === 0 && allowed.gt(0)) {
+      allowed = zero;
+      limitedBy = 'LTA_BLOCK_EXHAUSTED';
+    }
+
+    return {
+      head,
+      declared,
+      limit,
+      allowed,
+      disallowed: declared.sub(allowed),
+      paidByEmployer,
+      ltaBlock: block,
+      limitedBy,
+    };
   };
 
   return [
     // House rent already arrives worked out against rent paid and salary, so
-    // there is no further ceiling to apply to it here.
-    entry('HRA', declarations.hraExemption, null),
+    // there is no further ceiling to apply to it here, and it is not one of
+    // the three allowance heads a component can be marked with.
+    entry('HRA', declarations.hraExemption, null, null),
     // Section 10(5) is limited to what was actually spent on travel, which is
-    // the declared figure itself. The Act sets no rupee maximum.
-    entry('LTA', declarations.ltaExemption ?? zero, null),
+    // the declared figure itself. The Act sets no rupee maximum — but it does
+    // set a maximum number of journeys, and the exemption cannot exceed the
+    // leave travel allowance the employer actually paid.
+    entry('LTA', declarations.ltaExemption ?? zero, null, paidUnder('lta'), ltaBlock),
     entry(
       'CHILDREN_EDUCATION',
       declarations.childrenEducationAllowance ?? zero,
       perChildYearlyLimit(limits.childrenEducationMonthlyLimit),
+      paidUnder('childrenEducation'),
     ),
     entry(
       'HOSTEL_ALLOWANCE',
       declarations.hostelAllowance ?? zero,
       perChildYearlyLimit(limits.hostelAllowanceMonthlyLimit),
+      paidUnder('hostel'),
     ),
   ];
 }
+
+/** The map key each markable component head is summed under. */
+export const SECTION_10_HEAD_TO_ALLOWANCE_KEY: Record<
+  Section10ComponentHead,
+  keyof Section10AllowancesPaid
+> = {
+  LTA: 'lta',
+  CHILDREN_EDUCATION: 'childrenEducation',
+  HOSTEL_ALLOWANCE: 'hostel',
+};
 
 /**
  * Annual income tax liability for one employee.
@@ -711,6 +860,14 @@ export function calculateIncomeTax(
   config: IncomeTaxConfigInput,
   declarations: TaxDeclarationInput,
   professionalTaxPaid: Decimal,
+  /**
+   * What payroll actually paid under each section 10 head for the year.
+   *
+   * Absent means no component in the salary structure is marked with a head,
+   * so the rule is not in force and the exemptions come out exactly as they
+   * did before. See `calculateSection10Exemptions`.
+   */
+  allowancesPaid?: Section10AllowancesPaid,
 ): IncomeTaxResult {
   const isOldRegime = config.regime === 'OLD';
   const limits = config.limits ?? STATUTORY_DEDUCTION_LIMITS;
@@ -728,6 +885,8 @@ export function calculateIncomeTax(
     declarations,
     isOldRegime,
     config.section10Limits ?? STATUTORY_SECTION_10_LIMITS,
+    allowancesPaid,
+    config.financialYear,
   );
   const totalSection10Exemption = section10Exemptions.reduce(
     (sum, e) => sum.add(e.allowed),

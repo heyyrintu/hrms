@@ -33,10 +33,16 @@ import {
   NoDeclarationNotice,
 } from '@/components/declaration/DeclarationNotices';
 import {
+  ReadOnlyBooleanField,
+  ReadOnlyCountField,
   ReadOnlyDeclarationField,
   ignoredForRegime,
 } from '@/components/declaration/DeclarationFieldRow';
-import { DECLARATION_FIELDS } from '@/components/declaration/fields';
+import {
+  DECLARATION_FIELDS,
+  FORM_10E_FURNISHED_FIELD,
+  LTA_JOURNEYS_FIELD,
+} from '@/components/declaration/fields';
 
 export default function PayrollDeclarationsPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -200,6 +206,16 @@ export default function PayrollDeclarationsPage() {
                     ignored={ignoredForRegime(field.key, declaration.regime)}
                   />
                 ))}
+                <ReadOnlyCountField
+                  fieldKey={LTA_JOURNEYS_FIELD.key}
+                  label={LTA_JOURNEYS_FIELD.label}
+                  value={declaration.ltaJourneysUsedInBlock}
+                />
+                <ReadOnlyBooleanField
+                  fieldKey={FORM_10E_FURNISHED_FIELD.key}
+                  label={FORM_10E_FURNISHED_FIELD.label}
+                  value={Boolean(declaration.form10EFurnished)}
+                />
               </dl>
 
               <p className="pt-2 text-xs text-warm-500">

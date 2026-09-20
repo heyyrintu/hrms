@@ -152,4 +152,16 @@ describe('UpsertTaxDeclarationDto', () => {
       section80C: 150000,
     });
   });
+
+  it('accepts the two lifetime limits nothing else records', async () => {
+    await expect(
+      parse({ previousEmployerEncashmentExemption: 1000000, ltaJourneysUsedInBlock: 1 }),
+    ).resolves.toMatchObject({ ltaJourneysUsedInBlock: 1 });
+  });
+
+  it('refuses a negative journey count', async () => {
+    await expect(parse({ ltaJourneysUsedInBlock: -1 })).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+  });
 });
