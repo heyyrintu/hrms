@@ -73,6 +73,9 @@ const prismaModels = [
   'deviceAttendanceLog',
   'feedback',
   'improvementPlan',
+  'improvementPlanGoal',
+  'webhook',
+  'webhookLog',
 ];
 
 function createModelMock() {

@@ -766,3 +766,62 @@ export const slabsApi = {
     api.put('/payroll/slabs/income-tax', data),
   deleteIncomeTax: (id: string) => api.delete(`/payroll/slabs/income-tax/${id}`),
 };
+
+// ============================================
+// CONTINUOUS FEEDBACK
+// ============================================
+export const feedbackApi = {
+  give: (data: Record<string, unknown>) => api.post('/feedback', data),
+  getReceived: (params?: Record<string, unknown>) =>
+    api.get('/feedback/received', { params }),
+  getSent: (params?: Record<string, unknown>) =>
+    api.get('/feedback/sent', { params }),
+  /** Manager view: feedback on direct reports they are allowed to see. */
+  getTeam: (params?: Record<string, unknown>) =>
+    api.get('/feedback/team', { params }),
+  getById: (id: string) => api.get(`/feedback/${id}`),
+  delete: (id: string) => api.delete(`/feedback/${id}`),
+};
+
+// ============================================
+// PERFORMANCE IMPROVEMENT PLANS
+// ============================================
+export const improvementPlansApi = {
+  create: (data: Record<string, unknown>) => api.post('/improvement-plans', data),
+  /** HR/admin listing across the tenant. */
+  getAll: (params?: Record<string, unknown>) =>
+    api.get('/improvement-plans', { params }),
+  /** Plans raised against the signed-in employee. */
+  getMine: (params?: Record<string, unknown>) =>
+    api.get('/improvement-plans/me', { params }),
+  /** Plans the signed-in user owns as the manager. */
+  getTeam: (params?: Record<string, unknown>) =>
+    api.get('/improvement-plans/team', { params }),
+  getById: (id: string) => api.get(`/improvement-plans/${id}`),
+  update: (id: string, data: Record<string, unknown>) =>
+    api.put(`/improvement-plans/${id}`, data),
+  addGoal: (id: string, data: Record<string, unknown>) =>
+    api.post(`/improvement-plans/${id}/goals`, data),
+  updateGoal: (id: string, goalId: string, data: Record<string, unknown>) =>
+    api.put(`/improvement-plans/${id}/goals/${goalId}`, data),
+  deleteGoal: (id: string, goalId: string) =>
+    api.delete(`/improvement-plans/${id}/goals/${goalId}`),
+};
+
+// ============================================
+// WEBHOOKS
+// ============================================
+export const webhooksApi = {
+  /** The event names a webhook may subscribe to. */
+  getEvents: () => api.get('/webhooks/events'),
+  list: () => api.get('/webhooks'),
+  getById: (id: string) => api.get(`/webhooks/${id}`),
+  create: (data: Record<string, unknown>) => api.post('/webhooks', data),
+  update: (id: string, data: Record<string, unknown>) =>
+    api.put(`/webhooks/${id}`, data),
+  delete: (id: string) => api.delete(`/webhooks/${id}`),
+  /** Fires a signed sample delivery so an endpoint can be checked before it is relied on. */
+  test: (id: string) => api.post(`/webhooks/${id}/test`),
+  getLogs: (id: string, params?: Record<string, unknown>) =>
+    api.get(`/webhooks/${id}/logs`, { params }),
+};
