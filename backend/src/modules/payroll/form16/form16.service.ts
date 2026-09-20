@@ -339,6 +339,10 @@ export class Form16Service {
       otherDeductions: new Decimal(declaration?.otherDeductions ?? 0),
       otherIncome: new Decimal(declaration?.otherIncome ?? 0),
       previousEmployerTds: new Decimal(declaration?.previousEmployerTds ?? 0),
+      // Section 10(5) allows two journeys in a block of four calendar years.
+      // Without this the certificate would exempt a third that the year's
+      // payslips refused.
+      ltaJourneysUsedInBlock: declaration?.ltaJourneysUsedInBlock ?? 0,
     };
 
     // Once the employer requires proofs, the year's TDS was computed from what
@@ -437,8 +441,28 @@ export class Form16Service {
       declared,
       isOldRegime,
       section10Limits,
+      // The certificate does not know what payroll actually paid under each
+      // head, so it cannot apply the allowance-paid rule. It says so in the
+      // notes rather than certifying a figure it cannot stand behind.
+      undefined,
+      financialYear,
     );
     const allowancesExempt = section10Exemptions.reduce((sum, e) => sum.add(e.allowed), ZERO);
+
+    // The monthly engine caps leave travel and the section 10(14) allowances at
+    // what payroll actually paid under each head, because section 10 exempts an
+    // allowance received rather than creating one. This certificate does not
+    // read the payslip earnings, so it cannot apply that rule, and a reader
+    // must not take a figure here as confirmation that the allowance was ever
+    // received.
+    const unconfirmedHeads = section10Exemptions.filter(
+      (entry) => entry.head !== 'HRA' && entry.allowed.gt(0),
+    );
+    if (unconfirmedHeads.length > 0) {
+      notes.push(
+        'The leave travel and section 10(14) figures here are what was declared and allowed under the statutory ceilings. This certificate does not check what your employer actually paid under each of those heads, so they are not confirmation that the allowance was paid.',
+      );
+    }
 
     // ---- Line 6: other heads -------------------------------------------------
     // Home loan interest is a loss from house property, so it enters as a

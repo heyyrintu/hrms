@@ -111,6 +111,8 @@ function declaration(overrides: Record<string, unknown> = {}) {
     otherDeductions: '0.00',
     otherIncome: '0.00',
     previousEmployerTds: '0.00',
+    previousEmployerEncashmentExemption: '0.00',
+    ltaJourneysUsedInBlock: 0,
     createdAt: '2026-04-02T00:00:00.000Z',
     updatedAt: '2026-04-02T00:00:00.000Z',
     ...overrides,
@@ -169,6 +171,7 @@ describe('MyTaxDeclarationPage', () => {
       'hostelAllowance',
       'homeLoanInterest',
       'otherDeductions',
+      'previousEmployerEncashmentExemption',
     ]) {
       expect(
         within(fieldRow(key)).getByText(/ignored under the new regime/i),
@@ -201,14 +204,51 @@ describe('MyTaxDeclarationPage', () => {
     expect(screen.getByLabelText('Section 80C')).toHaveValue('80000');
   });
 
-  it('warns above the section 80C ceiling but still saves the figure as declared', async () => {
+  it("warns using the employer's configured section 80C ceiling, not the statutory default, and still saves the figure as declared", async () => {
+    // Configured well above the ₹1,50,000 statutory default, so a figure
+    // between the two proves which one actually drove the warning.
+    mockedApi.getMyDeclaration.mockResolvedValue({
+      data: declaration({ limits: { section80CLimit: '200000.00' } }),
+    } as any);
+    render(<MyTaxDeclarationPage />);
+    await screen.findByLabelText('Section 80C');
+
+    // Above the old default but below the configured limit: no warning.
+    fireEvent.change(screen.getByLabelText('Section 80C'), { target: { value: '180000' } });
+    expect(
+      within(fieldRow('section80C')).queryByText(/will not reduce your tax/i),
+    ).not.toBeInTheDocument();
+
+    // Above the configured limit: warns, and names that figure, not the default.
+    fireEvent.change(screen.getByLabelText('Section 80C'), { target: { value: '250000' } });
+    expect(within(fieldRow('section80C')).getByText(/2,00,000/)).toBeInTheDocument();
+    expect(within(fieldRow('section80C')).queryByText(/1,50,000/)).not.toBeInTheDocument();
+    expect(
+      within(fieldRow('section80C')).getByText(/will not reduce your tax/i),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /save declaration/i }));
+
+    await waitFor(() => expect(mockedApi.saveMyDeclaration).toHaveBeenCalled());
+    expect(mockedApi.saveMyDeclaration.mock.calls[0][0]).toMatchObject({
+      section80C: 250000,
+    });
+  });
+
+  it('warns about the section 80C ceiling without naming a figure when the employer has not configured one, and still saves the entry', async () => {
+    // `renderWithNoDeclaration` means no declaration and so no `limits` at
+    // all — exactly the "server has not supplied a limit" case.
     await renderWithNoDeclaration();
 
     fireEvent.change(screen.getByLabelText('Section 80C'), { target: { value: '200000' } });
 
-    expect(within(fieldRow('section80C')).getByText(/1,50,000/)).toBeInTheDocument();
     expect(
       within(fieldRow('section80C')).getByText(/will not reduce your tax/i),
+    ).toBeInTheDocument();
+    // The statutory default must not appear as though it were confirmed.
+    expect(within(fieldRow('section80C')).queryByText(/1,50,000/)).not.toBeInTheDocument();
+    expect(
+      within(fieldRow('section80C')).getByText(/could not be confirmed/i),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /save declaration/i }));
@@ -331,25 +371,60 @@ describe('MyTaxDeclarationPage — the section 10 fields', () => {
     expect(screen.getByLabelText('Number of children')).toBeInTheDocument();
   });
 
-  it('warns above the per-child cap for the children\'s education allowance, scaled to the declared count', async () => {
-    await renderWithNoDeclaration();
+  it("scales the children's education allowance ceiling to the configured monthly limit and the declared children, not the statutory default", async () => {
+    // Configured at 200 a month, not the 100 default, so the figure shown
+    // proves which one is actually driving the ceiling.
+    mockedApi.getMyDeclaration.mockResolvedValue({
+      data: declaration({ limits: { childrenEducationMonthlyLimit: '200.00' } }),
+    } as any);
+    render(<MyTaxDeclarationPage />);
+    await screen.findByLabelText('Number of children');
 
     fireEvent.change(screen.getByLabelText('Number of children'), { target: { value: '1' } });
-    // One child: 100 a month, twelve months, one child — a 1,200 ceiling.
+    // One child: 200 a month, twelve months, one child — a 2,400 ceiling.
     fireEvent.change(screen.getByLabelText("Children's education allowance"), {
       target: { value: '5000' },
     });
 
     expect(
-      within(fieldRow('childrenEducationAllowance')).getByText(/1,200/),
+      within(fieldRow('childrenEducationAllowance')).getByText(/2,400/),
     ).toBeInTheDocument();
+    // Not the figure the statutory default (100/month) would have produced.
+    expect(
+      within(fieldRow('childrenEducationAllowance')).queryByText(/1,200/),
+    ).not.toBeInTheDocument();
     expect(
       within(fieldRow('childrenEducationAllowance')).getByText(/will not reduce your tax/i),
     ).toBeInTheDocument();
   });
 
-  it('caps the hostel allowance ceiling at two children even when more are declared', async () => {
+  it("falls back to the statutory default for the children's allowance without naming a figure when no limit is configured", async () => {
     await renderWithNoDeclaration();
+
+    fireEvent.change(screen.getByLabelText('Number of children'), { target: { value: '1' } });
+    fireEvent.change(screen.getByLabelText("Children's education allowance"), {
+      target: { value: '5000' },
+    });
+
+    expect(
+      within(fieldRow('childrenEducationAllowance')).getByText(/will not reduce your tax/i),
+    ).toBeInTheDocument();
+    // The 100/month default's resulting figure (1,200) must not be shown as
+    // though the employer had confirmed it.
+    expect(
+      within(fieldRow('childrenEducationAllowance')).queryByText(/1,200/),
+    ).not.toBeInTheDocument();
+    expect(
+      within(fieldRow('childrenEducationAllowance')).getByText(/could not be confirmed/i),
+    ).toBeInTheDocument();
+  });
+
+  it('caps the hostel allowance ceiling at two children even when more are declared, using the configured monthly limit', async () => {
+    mockedApi.getMyDeclaration.mockResolvedValue({
+      data: declaration({ limits: { hostelAllowanceMonthlyLimit: '300.00' } }),
+    } as any);
+    render(<MyTaxDeclarationPage />);
+    await screen.findByLabelText('Number of children');
 
     fireEvent.change(screen.getByLabelText('Number of children'), { target: { value: '5' } });
     // 300 a month, twelve months, capped at two children — a 7,200 ceiling,
@@ -456,5 +531,149 @@ describe('MyTaxDeclarationPage — the section 10 fields', () => {
     expect(screen.getByLabelText('Number of children')).toHaveValue('2');
     expect(screen.getByLabelText("Children's education allowance")).toHaveValue('1200.00');
     expect(screen.getByLabelText('Hostel allowance')).toHaveValue('3600.00');
+  });
+});
+
+describe('MyTaxDeclarationPage — the two new declaration fields', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedApi.getMyDeclaration.mockResolvedValue({ data: null } as any);
+    mockedApi.saveMyDeclaration.mockResolvedValue({ data: declaration() } as any);
+  });
+
+  it('renders the previous-employer encashment exemption and the LTA journeys already used in this block', async () => {
+    await renderWithNoDeclaration();
+
+    expect(
+      screen.getByLabelText('Leave encashment exemption used at a previous employer'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText('LTA journeys already used in this block'),
+    ).toBeInTheDocument();
+  });
+
+  it('explains the leave travel block in plain language: two journeys, a four-year block, declared to avoid a third by accident', async () => {
+    await renderWithNoDeclaration();
+
+    expect(
+      within(fieldRow('ltaJourneysUsedInBlock')).getByText(
+        /allows 2 journeys in a block of 4 calendar years/i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(fieldRow('ltaJourneysUsedInBlock')).getByText(/so a third is not claimed by accident/i),
+    ).toBeInTheDocument();
+  });
+
+  it('explains that the section 10(10AA) ceiling is a lifetime one, not one per employer', async () => {
+    await renderWithNoDeclaration();
+
+    expect(
+      within(fieldRow('previousEmployerEncashmentExemption')).getByText(
+        /lifetime ceiling, not one per employer/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('warns when more than two LTA journeys are declared as already used in this block, but still saves it', async () => {
+    await renderWithNoDeclaration();
+
+    fireEvent.change(screen.getByLabelText('LTA journeys already used in this block'), {
+      target: { value: '3' },
+    });
+
+    expect(
+      within(fieldRow('ltaJourneysUsedInBlock')).getByText(/will not reduce your tax/i),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /save declaration/i }));
+
+    await waitFor(() => expect(mockedApi.saveMyDeclaration).toHaveBeenCalled());
+    expect(mockedApi.saveMyDeclaration.mock.calls[0][0]).toMatchObject({
+      ltaJourneysUsedInBlock: 3,
+    });
+  });
+
+  it('does not warn at exactly two journeys used', async () => {
+    await renderWithNoDeclaration();
+
+    fireEvent.change(screen.getByLabelText('LTA journeys already used in this block'), {
+      target: { value: '2' },
+    });
+
+    expect(
+      within(fieldRow('ltaJourneysUsedInBlock')).queryByText(/will not reduce your tax/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it('saves the leave encashment exemption as a number and the LTA journey count as a number', async () => {
+    await renderWithNoDeclaration();
+
+    fireEvent.change(
+      screen.getByLabelText('Leave encashment exemption used at a previous employer'),
+      { target: { value: '400000' } },
+    );
+    fireEvent.change(screen.getByLabelText('LTA journeys already used in this block'), {
+      target: { value: '1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save declaration/i }));
+
+    await waitFor(() => expect(mockedApi.saveMyDeclaration).toHaveBeenCalled());
+    expect(mockedApi.saveMyDeclaration.mock.calls[0][0]).toMatchObject({
+      previousEmployerEncashmentExemption: 400000,
+      ltaJourneysUsedInBlock: 1,
+    });
+  });
+
+  it('refuses an unreadable leave encashment figure before any request, naming the field', async () => {
+    await renderWithNoDeclaration();
+
+    fireEvent.change(
+      screen.getByLabelText('Leave encashment exemption used at a previous employer'),
+      { target: { value: 'lots' } },
+    );
+    fireEvent.click(screen.getByRole('button', { name: /save declaration/i }));
+
+    await waitFor(() =>
+      expect(
+        within(fieldRow('previousEmployerEncashmentExemption')).getByText(
+          /Leave encashment exemption used at a previous employer.*amount in rupees/i,
+        ),
+      ).toBeInTheDocument(),
+    );
+    expect(mockedApi.saveMyDeclaration).not.toHaveBeenCalled();
+  });
+
+  it('refuses a non-whole LTA journeys count before any request, naming the field', async () => {
+    await renderWithNoDeclaration();
+
+    fireEvent.change(screen.getByLabelText('LTA journeys already used in this block'), {
+      target: { value: '1.5' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /save declaration/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/LTA journeys already used in this block must be a whole number/i),
+      ).toBeInTheDocument(),
+    );
+    expect(mockedApi.saveMyDeclaration).not.toHaveBeenCalled();
+  });
+
+  it('fills the new fields from what is on record', async () => {
+    mockedApi.getMyDeclaration.mockResolvedValue({
+      data: declaration({
+        previousEmployerEncashmentExemption: '250000.00',
+        ltaJourneysUsedInBlock: 1,
+      }),
+    } as any);
+    render(<MyTaxDeclarationPage />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByLabelText('Leave encashment exemption used at a previous employer'),
+      ).toHaveValue('250000.00'),
+    );
+    expect(screen.getByLabelText('LTA journeys already used in this block')).toHaveValue('1');
   });
 });

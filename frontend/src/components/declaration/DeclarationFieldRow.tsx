@@ -54,6 +54,8 @@ export function EditableDeclarationField({
   const entered = readableAmount(value);
   const overCeiling =
     field.ceiling !== undefined && entered !== null && entered > field.ceiling;
+  const resolved = field.resolvedCeiling;
+  const overResolvedCeiling = resolved !== undefined && entered !== null && entered > resolved.amount;
 
   return (
     <div data-testid={`field-${field.key}`} className="space-y-1.5">
@@ -80,6 +82,88 @@ export function EditableDeclarationField({
           {`Above the ${formatCeiling(field.ceiling)} ceiling for ${field.label}. It is saved exactly as you declared it, but the part above the ceiling will not reduce your tax.`}
         </p>
       ) : null}
+      {overResolvedCeiling && resolved ? (
+        <p className="text-xs font-medium text-amber-700">
+          {resolved.confirmed
+            ? `Above the ${formatCeiling(resolved.amount)} ceiling your employer has configured for ${field.label}. It is saved exactly as you declared it, but the part above the ceiling will not reduce your tax.`
+            : `This looks like it is above the ceiling for ${field.label}, but your employer's configured limit for this year could not be confirmed, so no figure is shown here. It is saved exactly as you declared it, and any part beyond the real ceiling will not reduce your tax.`}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+interface EditableCountProps {
+  /** Used for the input id and the `field-{id}` test id, matching the
+   * `field-{key}` convention every other field row uses. */
+  id: string;
+  label: string;
+  hint: string;
+  value: string;
+  onChange: (value: string) => void;
+  error?: string;
+  disabled?: boolean;
+  /** A warning to show beneath the hint, or undefined for none. Computed by
+   * the caller (see `ltaJourneysWarning` in `./fields`) rather than here, so
+   * this component stays as generic as `childrenCount` needs it to be. */
+  warning?: string;
+}
+
+/**
+ * An editable count — of children, of journeys, of anything this form counts
+ * rather than sums as money. Deliberately plainer than
+ * `EditableDeclarationField`: a count has no "ignored under the new regime"
+ * marker of its own, because it is not itself a deduction, only context for
+ * one.
+ */
+export function EditableCountField({
+  id,
+  label,
+  hint,
+  value,
+  onChange,
+  error,
+  disabled,
+  warning,
+}: EditableCountProps) {
+  const inputId = `declaration-${id}`;
+  return (
+    <div data-testid={`field-${id}`} className="space-y-1.5">
+      <label htmlFor={inputId} className="text-sm font-medium text-warm-700">
+        {label}
+      </label>
+      <Input
+        id={inputId}
+        type="text"
+        inputMode="numeric"
+        autoComplete="off"
+        placeholder="0"
+        value={value}
+        disabled={disabled}
+        error={error}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <p className="text-xs text-warm-500">{hint}</p>
+      {warning ? <p className="text-xs font-medium text-amber-700">{warning}</p> : null}
+    </div>
+  );
+}
+
+interface ReadOnlyCountProps {
+  fieldKey: string;
+  label: string;
+  value: number;
+}
+
+/** The read-only counterpart of `EditableCountField`, for payroll's view. */
+export function ReadOnlyCountField({ fieldKey, label, value }: ReadOnlyCountProps) {
+  return (
+    <div
+      data-testid={`field-${fieldKey}`}
+      className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-warm-100 py-2.5 last:border-0"
+    >
+      <dt className="text-sm font-medium text-warm-700">{label}</dt>
+      <dd className="text-sm font-semibold tabular-nums text-warm-900">{value}</dd>
     </div>
   );
 }

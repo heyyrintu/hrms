@@ -19,7 +19,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Select';
 import { employeesApi, statutoryApi } from '@/lib/api';
-import type { Employee, EmployeeTaxDeclaration } from '@/types';
+import type { Employee } from '@/types';
 
 import {
   currentFinancialYear,
@@ -33,16 +33,21 @@ import {
   NoDeclarationNotice,
 } from '@/components/declaration/DeclarationNotices';
 import {
+  ReadOnlyCountField,
   ReadOnlyDeclarationField,
   ignoredForRegime,
 } from '@/components/declaration/DeclarationFieldRow';
-import { DECLARATION_FIELDS } from '@/components/declaration/fields';
+import {
+  DECLARATION_FIELDS,
+  DeclarationWithNewFields,
+  LTA_JOURNEYS_FIELD,
+} from '@/components/declaration/fields';
 
 export default function PayrollDeclarationsPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [employeeId, setEmployeeId] = useState('');
   const [financialYear, setFinancialYear] = useState<number>(() => currentFinancialYear());
-  const [declaration, setDeclaration] = useState<EmployeeTaxDeclaration | null>(null);
+  const [declaration, setDeclaration] = useState<DeclarationWithNewFields | null>(null);
   const [loading, setLoading] = useState(false);
   /** True once a read for the current selection has come back. */
   const [read, setRead] = useState(false);
@@ -98,7 +103,7 @@ export default function PayrollDeclarationsPage() {
     try {
       const response = await statutoryApi.getDeclarationFor(employeeId, financialYear);
       if (requestRef.current !== request) return;
-      setDeclaration((response.data ?? null) as EmployeeTaxDeclaration | null);
+      setDeclaration((response.data ?? null) as DeclarationWithNewFields | null);
       setRead(true);
     } catch {
       if (requestRef.current !== request) return;
@@ -200,6 +205,11 @@ export default function PayrollDeclarationsPage() {
                     ignored={ignoredForRegime(field.key, declaration.regime)}
                   />
                 ))}
+                <ReadOnlyCountField
+                  fieldKey={LTA_JOURNEYS_FIELD.key}
+                  label={LTA_JOURNEYS_FIELD.label}
+                  value={declaration.ltaJourneysUsedInBlock}
+                />
               </dl>
 
               <p className="pt-2 text-xs text-warm-500">

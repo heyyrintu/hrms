@@ -22,8 +22,34 @@ import {
   IncomeTaxResult,
   PtSlab,
   Section10AllowanceLimits,
+  SECTION_10_HEAD_TO_ALLOWANCE_KEY,
 } from './statutory.calculators';
 import { ageBandOn31March, collectsProfessionalTaxIn, DeductionLimits } from './tax-correctness.types';
+import { Section10AllowancesPaid, Section10ComponentHead } from './completion.types';
+
+/**
+ * What the employer actually pays under each section 10 head.
+ *
+ * The month's figures come from the month's earning lines; the names are
+ * carried alongside them so the year to date can be summed from the payslips
+ * already run, which is how the gross is projected too.
+ *
+ * Present only when the salary structure marks at least one component with a
+ * head. An employer who marks none passes nothing, the rule is not in force,
+ * and their employees are taxed to exactly the rupee they were before.
+ */
+export interface Section10AllowancesInput {
+  /** Paid this month under each head, after pro-rating, as on the payslip. */
+  paidThisMonth: Section10AllowancesPaid;
+  /** The earning line names each head is paid through. */
+  componentNames: Record<Section10ComponentHead, string[]>;
+}
+
+/** One earning line as a payslip stores it. */
+interface PayslipEarningLine {
+  name?: unknown;
+  amount?: unknown;
+}
 
 export interface StatutoryInput {
   tenantId: string;
@@ -46,6 +72,15 @@ export interface StatutoryInput {
    * and lands on the safe GENERAL band rather than failing the run.
    */
   dateOfBirth?: Date | null;
+  /**
+   * What the employer actually pays under the three section 10 allowance
+   * heads, and through which earning lines.
+   *
+   * Absent when the salary structure marks no component, which is every
+   * installation that has not opted in: the exemptions are then computed from
+   * exactly the figures they were computed from before.
+   */
+  section10Allowances?: Section10AllowancesInput;
 }
 
 export interface StatutoryResult {
@@ -276,15 +311,108 @@ export class StatutoryService {
     });
   }
 
+  /**
+   * An employee's declaration, together with the ceilings that will actually
+   * be applied to it.
+   *
+   * The form has to warn somebody that ₹2,00,000 of section 80C will not all
+   * come off, and the figure it warns against must be the figure the
+   * calculation uses: the tenant's own row for that financial year, regime
+   * and age band, not a constant compiled into a page. An administrator who
+   * raises a ceiling and then reads a warning that disagrees with the payslip
+   * has been told two different things by the same system.
+   *
+   * The ceilings are nested under `limits` rather than merged into the
+   * declaration, so every field of the declaration stays exactly where it was
+   * and a caller that does not know about `limits` is unaffected.
+   *
+   * `limits` is absent where the year has no configuration, and each figure
+   * inside it is absent where the row does not carry it. Sending the statutory
+   * default instead would present it as something the employer had confirmed,
+   * which is the one thing the page must not do: it has its own defaults to
+   * fall back on and knows they are only defaults.
+   *
+   * Nothing else from the configuration row goes out. `my-declaration` carries
+   * no role guard, because an employee reaches their own record through it, so
+   * whatever is returned here is readable by every employee. The ceilings that
+   * bind their own claim are theirs to know; the tenant's slabs, rebate and
+   * surcharge bands are not theirs to read from here.
+   */
   async getDeclaration(tenantId: string, employeeId: string, financialYear?: number) {
     const now = new Date();
     const fy = financialYear ?? financialYearOf(now.getMonth() + 1, now.getFullYear());
 
-    return this.prisma.employeeTaxDeclaration.findUnique({
+    const declaration = await this.prisma.employeeTaxDeclaration.findUnique({
       where: {
         tenantId_employeeId_financialYear: { tenantId, employeeId, financialYear: fy },
       },
     });
+
+    // Nothing to attach ceilings to, and no reason to read the configuration.
+    if (!declaration) return null;
+
+    const limits = await this.declarationLimits(tenantId, employeeId, fy, declaration.regime);
+
+    return limits ? { ...declaration, limits } : declaration;
+  }
+
+  /**
+   * The ceilings for a declaration's year, regime and the employee's age band.
+   *
+   * Resolved through the same `resolveIncomeTaxConfig` the tax calculation
+   * uses, and by the same age rule — read as at 31 March — so the form cannot
+   * quote a figure from a row the payslip never loads. Null where that
+   * resolution finds nothing.
+   */
+  private async declarationLimits(
+    tenantId: string,
+    employeeId: string,
+    financialYear: number,
+    regime: TaxRegime,
+  ): Promise<Record<string, string | number> | null> {
+    const employee = await this.prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: { dateOfBirth: true },
+    });
+
+    const resolved = await resolveIncomeTaxConfig(
+      this.prisma,
+      tenantId,
+      financialYear,
+      regime,
+      ageBandOn31March(employee?.dateOfBirth, financialYear),
+    );
+
+    if (!resolved) return null;
+
+    const { taxConfig } = resolved;
+    const limits: Record<string, string | number> = {};
+
+    // Each is stated only where the row carries it. An absent figure is an
+    // absent figure, not a default dressed up as a decision.
+    const money: [string, Decimal | null | undefined][] = [
+      ['section80CLimit', taxConfig.section80CLimit],
+      ['section80DLimit', taxConfig.section80DLimit],
+      ['section80CCD1BLimit', taxConfig.section80CCD1BLimit],
+      ['childrenEducationMonthlyLimit', taxConfig.childrenEducationMonthlyLimit],
+      ['hostelAllowanceMonthlyLimit', taxConfig.hostelAllowanceMonthlyLimit],
+    ];
+
+    for (const [name, value] of money) {
+      if (value !== null && value !== undefined) {
+        limits[name] = new Decimal(value).toFixed(2);
+      }
+    }
+
+    // A count of children, not an amount, so it goes out as the number it is.
+    if (
+      taxConfig.childrenAllowanceMaxChildren !== null &&
+      taxConfig.childrenAllowanceMaxChildren !== undefined
+    ) {
+      limits.childrenAllowanceMaxChildren = taxConfig.childrenAllowanceMaxChildren;
+    }
+
+    return limits;
   }
 
   async upsertDeclaration(
@@ -479,6 +607,20 @@ export class StatutoryService {
       professionalTaxThisMonth.mul(remainingMonths),
     );
 
+    // What the employer will have paid under each section 10 head by the end
+    // of the year, projected exactly as the gross is: what has actually been
+    // paid so far, plus this month repeated across the months that remain.
+    // Comparing a year's declaration against one month's allowance would
+    // refuse eleven twelfths of an exemption the employee is owed.
+    //
+    // Null when no component is marked, which leaves the calculation to
+    // exempt what was declared, exactly as it did before.
+    const annualAllowancesPaid = this.projectSection10Allowances(
+      input.section10Allowances,
+      ytd.section10,
+      remainingMonths,
+    );
+
     const declared = {
       section80C: new Decimal(declaration?.section80C ?? 0),
       section80D: new Decimal(declaration?.section80D ?? 0),
@@ -501,6 +643,17 @@ export class StatutoryService {
     // declaration whatever the verification setting says, and the calculation
     // caps it at the year's maximum.
     const childrenCount = declaration?.childrenCount ?? 0;
+
+    // Not a money figure either, and not one a proof settles: a ticket shows a
+    // journey was taken, not how many have been taken in the block — including
+    // at an earlier employer, where this employer has no record at all. So it
+    // comes from the declaration whatever the verification setting says.
+    //
+    // Read off the row defensively because the column arrives with the
+    // completion migration: a declaration written before it reads as nought
+    // used, which is two journeys remaining and so no change to anyone's tax.
+    const ltaJourneysUsedInBlock =
+      (declaration as { ltaJourneysUsedInBlock?: number } | null)?.ltaJourneysUsedInBlock ?? 0;
 
     // Off by default, so a tenant that has not opted in is answered without a
     // query and computed from exactly the figures it was computed from before.
@@ -547,7 +700,7 @@ export class StatutoryService {
       maxChildren: taxConfig.childrenAllowanceMaxChildren ?? 2,
     };
 
-    const computed: IncomeTaxResult = calculateIncomeTax(
+    const taxArgs = [
       annualGross,
       {
         regime,
@@ -568,10 +721,21 @@ export class StatutoryService {
         limits,
         section10Limits,
         marginalReliefEnabled,
+        // Names the leave travel block in the working. The block is decided by
+        // the financial year's opening calendar year; see `completion.types`.
+        financialYear,
       },
-      { ...declarations, childrenCount },
+      { ...declarations, childrenCount, ltaJourneysUsedInBlock },
       annualProfessionalTax,
-    );
+    ] as const;
+
+    // The allowance map is passed only when the structure marks a component.
+    // An employer who marks none calls the calculator with exactly the four
+    // arguments it has always been called with, so nothing about their
+    // computation changes — not even the shape of the call.
+    const computed: IncomeTaxResult = annualAllowancesPaid
+      ? calculateIncomeTax(...taxArgs, annualAllowancesPaid)
+      : calculateIncomeTax(...taxArgs);
 
     // The calculator capped these against `limits`; it is the one place that
     // rule lives, so the working reports back what it did rather than
@@ -601,9 +765,21 @@ export class StatutoryService {
           limit: e.limit === null ? null : e.limit.toFixed(2),
           allowed: e.allowed.toFixed(2),
           disallowed: e.disallowed.toFixed(2),
+          // What payroll actually paid under the head for the year, and which
+          // of the three rules produced the allowed figure. Null where no
+          // component is marked, so "not capped against a receipt" reads
+          // differently from "the employer pays no such allowance".
+          paidByEmployer: e.paidByEmployer === null ? null : e.paidByEmployer.toFixed(2),
+          limitedBy: e.limitedBy,
         },
       ]),
     );
+
+    // Section 10(5) runs in blocks of four calendar years and allows two
+    // journeys in each. An employee refused their leave travel exemption is
+    // owed the block and the count, not a bare nought.
+    const ltaWorking =
+      computed.section10Exemptions.find((e) => e.head === 'LTA')?.ltaBlock ?? null;
 
     // Tax already collected this year, whether by us or a previous employer.
     const alreadyDeducted = ytd.tds.add(declarations.previousEmployerTds);
@@ -654,6 +830,19 @@ export class StatutoryService {
         childrenAllowed: Math.max(0, Math.min(childrenCount, section10Limits.maxChildren)),
         section10Exemptions,
         totalSection10Exemption: computed.totalSection10Exemption.toFixed(2),
+        // Which block of four calendar years applied and how many journeys
+        // are left in it. Null under the new regime, which exempts none of
+        // these heads at all.
+        ltaBlock: ltaWorking,
+        // What the year is projected to pay under each head, from the marked
+        // components. Null where the structure marks none, which is the
+        // answer to "why was nothing capped".
+        section10AllowancesPaid:
+          annualAllowancesPaid === null
+            ? null
+            : Object.fromEntries(
+                Object.entries(annualAllowancesPaid).map(([k, v]) => [k, v.toFixed(2)]),
+              ),
         marginalReliefEnabled,
         marginalReliefApplied: computed.marginalRelief.gt(0),
         marginalRelief: computed.marginalRelief.toFixed(2),
@@ -697,11 +886,54 @@ export class StatutoryService {
       financialYear,
     );
   }
-  /** Gross, professional tax and TDS already recorded this financial year. */
+  /**
+   * The year's allowance under each section 10 head, from the months already
+   * run plus the current one repeated across the months that remain.
+   *
+   * The same projection the gross uses, and deliberately so: the declaration
+   * is a year's figure, so the receipt it is capped against must be a year's
+   * figure too. A head the structure marks but pays nothing under comes out
+   * at nought, which exempts nothing — that is the rule, not an omission.
+   */
+  private projectSection10Allowances(
+    allowances: Section10AllowancesInput | undefined,
+    yearToDate: Section10AllowancesPaid | null,
+    remainingMonths: number,
+  ): Section10AllowancesPaid | null {
+    if (!allowances) return null;
+
+    const projected: Section10AllowancesPaid = {};
+
+    for (const head of Object.keys(allowances.componentNames) as Section10ComponentHead[]) {
+      const key = SECTION_10_HEAD_TO_ALLOWANCE_KEY[head];
+      const thisMonth = allowances.paidThisMonth[key] ?? ZERO;
+      projected[key] = (yearToDate?.[key] ?? ZERO).add(thisMonth.mul(remainingMonths));
+    }
+
+    return projected;
+  }
+
+  /**
+   * Gross, professional tax and TDS already recorded this financial year, and
+   * — where the structure marks components — what has already been paid under
+   * each section 10 allowance head.
+   *
+   * The allowance totals come off the payslips' own earning lines, matched by
+   * name against the components currently marked, which is how provident fund
+   * wages are matched on the payslip being built. One query answers all four,
+   * so switching the allowance rule on costs no extra round trip.
+   */
   private async yearToDateTotals(
     input: StatutoryInput,
     financialYear: number,
-  ): Promise<{ gross: Decimal; professionalTax: Decimal; tds: Decimal }> {
+  ): Promise<{
+    gross: Decimal;
+    professionalTax: Decimal;
+    tds: Decimal;
+    section10: Section10AllowancesPaid | null;
+  }> {
+    const names = input.section10Allowances?.componentNames;
+
     const payslips = await this.prisma.payslip.findMany({
       where: {
         tenantId: input.tenantId,
@@ -713,10 +945,15 @@ export class StatutoryService {
           ],
         },
       },
-      select: { grossPay: true, professionalTax: true, tds: true },
+      select: {
+        grossPay: true,
+        professionalTax: true,
+        tds: true,
+        ...(names ? { earnings: true } : {}),
+      },
     });
 
-    return payslips.reduce(
+    const totals = payslips.reduce(
       (acc, p) => ({
         gross: acc.gross.add(new Decimal(p.grossPay)),
         professionalTax: acc.professionalTax.add(new Decimal(p.professionalTax)),
@@ -724,6 +961,33 @@ export class StatutoryService {
       }),
       { gross: ZERO, professionalTax: ZERO, tds: ZERO },
     );
+
+    if (!names) return { ...totals, section10: null };
+
+    const section10: Section10AllowancesPaid = {};
+
+    for (const head of Object.keys(names) as Section10ComponentHead[]) {
+      const key = SECTION_10_HEAD_TO_ALLOWANCE_KEY[head];
+      let paid = ZERO;
+
+      for (const slip of payslips) {
+        const lines = ((slip as { earnings?: unknown }).earnings ??
+          []) as PayslipEarningLine[];
+        if (!Array.isArray(lines)) continue;
+
+        for (const line of lines) {
+          if (typeof line?.name !== 'string' || !names[head].includes(line.name)) continue;
+          // Payslip earnings are stored as JSON, so the amount comes back as
+          // whatever was written: a string, or a number on an older row. Both
+          // go through Decimal rather than parseFloat.
+          paid = paid.add(new Decimal((line.amount ?? 0) as Decimal.Value));
+        }
+      }
+
+      section10[key] = paid;
+    }
+
+    return { ...totals, section10 };
   }
 }
 

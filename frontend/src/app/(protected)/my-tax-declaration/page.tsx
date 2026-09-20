@@ -15,14 +15,9 @@ import { FileText, Save } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
-import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { statutoryApi } from '@/lib/api';
-import type {
-  EmployeeTaxDeclaration,
-  TaxRegimeName,
-  UpsertTaxDeclarationPayload,
-} from '@/types';
+import type { TaxRegimeName } from '@/types';
 
 import {
   currentFinancialYear,
@@ -37,6 +32,7 @@ import {
   NoDeclarationNotice,
 } from '@/components/declaration/DeclarationNotices';
 import {
+  EditableCountField,
   EditableDeclarationField,
   ignoredForRegime,
 } from '@/components/declaration/DeclarationFieldRow';
@@ -46,9 +42,16 @@ import {
   DECLARATION_FIELDS,
   DeclarationAmountKey,
   DeclarationFieldSpec,
+  DeclarationWithNewFields,
   HOSTEL_ALLOWANCE_MONTHLY_CEILING,
-  childrenAllowanceCeiling,
+  LTA_JOURNEYS_FIELD,
+  SECTION_80C_DEFAULT_CEILING,
+  UpsertPayloadWithNewFields,
+  ltaJourneysWarning,
   parseChildrenCount,
+  parseLtaJourneysUsedInBlock,
+  resolveChildrenAllowanceCeiling,
+  resolveFlatCeiling,
 } from '@/components/declaration/fields';
 import { parseDeclaredAmount } from '@/components/declaration/parseAmount';
 
@@ -66,7 +69,7 @@ const EMPTY_AMOUNTS: AmountMap = DECLARATION_FIELDS.reduce((acc, field) => {
  * Not parsed: the input carries the string, and only the save path turns it
  * into a number.
  */
-function amountsFrom(declaration: EmployeeTaxDeclaration): AmountMap {
+function amountsFrom(declaration: DeclarationWithNewFields): AmountMap {
   return DECLARATION_FIELDS.reduce((acc, field) => {
     acc[field.key] = declaration[field.key] ?? '';
     return acc;
@@ -80,14 +83,17 @@ const REGIME_OPTIONS = [
 
 export default function MyTaxDeclarationPage() {
   const [financialYear, setFinancialYear] = useState<number>(() => currentFinancialYear());
-  const [declaration, setDeclaration] = useState<EmployeeTaxDeclaration | null>(null);
+  const [declaration, setDeclaration] = useState<DeclarationWithNewFields | null>(null);
   const [regime, setRegime] = useState<TaxRegimeName>('NEW');
   const [amounts, setAmounts] = useState<AmountMap>(EMPTY_AMOUNTS);
   const [errors, setErrors] = useState<ErrorMap>({});
-  // `childrenCount` is a count, not one of the rupee figures in `amounts`, so
-  // it is tracked separately and parsed with its own, integer-only rule.
+  // `childrenCount` and `ltaJourneysUsedInBlock` are counts, not rupee figures
+  // in `amounts`, so each is tracked separately and parsed with its own,
+  // integer-only rule.
   const [childrenCount, setChildrenCountValue] = useState('');
   const [childrenCountError, setChildrenCountError] = useState<string | undefined>();
+  const [ltaJourneysUsedInBlock, setLtaJourneysUsedInBlockValue] = useState('');
+  const [ltaJourneysError, setLtaJourneysError] = useState<string | undefined>();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   /** Generation counter identifying the newest in-flight load. */
@@ -109,20 +115,23 @@ export default function MyTaxDeclarationPage() {
       const response = await statutoryApi.getMyDeclaration(financialYear);
       if (requestRef.current !== request) return;
 
-      const data = (response.data ?? null) as EmployeeTaxDeclaration | null;
+      const data = (response.data ?? null) as DeclarationWithNewFields | null;
       setDeclaration(data);
       setErrors({});
       setChildrenCountError(undefined);
+      setLtaJourneysError(undefined);
       if (data) {
         setRegime(data.regime);
         setAmounts(amountsFrom(data));
         setChildrenCountValue(String(data.childrenCount ?? 0));
+        setLtaJourneysUsedInBlockValue(String(data.ltaJourneysUsedInBlock ?? 0));
       } else {
         // No row yet. The form starts empty rather than at zero: an employee
         // has declared nothing, which is not the same as declaring nil.
         setRegime('NEW');
         setAmounts(EMPTY_AMOUNTS);
         setChildrenCountValue('');
+        setLtaJourneysUsedInBlockValue('');
       }
     } catch {
       if (requestRef.current !== request) return;
@@ -154,6 +163,11 @@ export default function MyTaxDeclarationPage() {
     setChildrenCountError(undefined);
   };
 
+  const setLtaJourneysUsedInBlock = (value: string) => {
+    setLtaJourneysUsedInBlockValue(value);
+    setLtaJourneysError(undefined);
+  };
+
   // A best-effort read of the children count for the two allowance ceilings
   // below, while the user is still typing. An unreadable entry shows a
   // ceiling of nil rather than crashing the ceiling display; the actual save
@@ -163,9 +177,15 @@ export default function MyTaxDeclarationPage() {
     return parsed.ok ? parsed.value : 0;
   })();
 
+  // Same best-effort reading, for the "too many journeys" warning below.
+  const ltaJourneysForWarning = (() => {
+    const parsed = parseLtaJourneysUsedInBlock(ltaJourneysUsedInBlock);
+    return parsed.ok ? parsed.value : 0;
+  })();
+
   const handleSave = async () => {
     const nextErrors: ErrorMap = {};
-    const payload: UpsertTaxDeclarationPayload = { financialYear, regime };
+    const payload: UpsertPayloadWithNewFields = { financialYear, regime };
 
     for (const field of DECLARATION_FIELDS) {
       const parsed = parseDeclaredAmount(amounts[field.key], field.label);
@@ -185,10 +205,19 @@ export default function MyTaxDeclarationPage() {
     }
     setChildrenCountError(nextChildrenCountError);
 
+    const parsedLtaJourneys = parseLtaJourneysUsedInBlock(ltaJourneysUsedInBlock);
+    let nextLtaJourneysError: string | undefined;
+    if (parsedLtaJourneys.ok) {
+      payload.ltaJourneysUsedInBlock = parsedLtaJourneys.value;
+    } else {
+      nextLtaJourneysError = parsedLtaJourneys.message;
+    }
+    setLtaJourneysError(nextLtaJourneysError);
+
     setErrors(nextErrors);
     // Nothing is sent while any entry is unreadable. Dropping the bad entry and
     // saving the rest would write a zero nobody typed into the basis for tax.
-    if (Object.keys(nextErrors).length > 0 || nextChildrenCountError) {
+    if (Object.keys(nextErrors).length > 0 || nextChildrenCountError || nextLtaJourneysError) {
       toast.error('Nothing was saved. Check the entries marked below.');
       return;
     }
@@ -196,7 +225,7 @@ export default function MyTaxDeclarationPage() {
     setSaving(true);
     try {
       const response = await statutoryApi.saveMyDeclaration(payload);
-      setDeclaration((response.data ?? null) as EmployeeTaxDeclaration | null);
+      setDeclaration((response.data ?? null) as DeclarationWithNewFields | null);
       toast.success('Your declaration was saved. It applies from the next payroll run.');
     } catch {
       toast.error('Your declaration could not be saved. Nothing on your record was changed.');
@@ -274,6 +303,12 @@ export default function MyTaxDeclarationPage() {
                       {declaration.childrenCount}
                     </dd>
                   </div>
+                  <div className="flex items-baseline justify-between gap-4">
+                    <dt className="text-xs text-warm-500">{LTA_JOURNEYS_FIELD.label}</dt>
+                    <dd className="text-xs font-medium tabular-nums text-warm-800">
+                      {declaration.ltaJourneysUsedInBlock}
+                    </dd>
+                  </div>
                 </dl>
               </CardContent>
               </Card>
@@ -288,56 +323,70 @@ export default function MyTaxDeclarationPage() {
             <CardContent className="space-y-5">
               <div className="grid gap-5 sm:grid-cols-2">
                 {DECLARATION_FIELDS.map((field) => {
-                  // The count that drives the two allowances below has to be
-                  // entered somewhere, and it belongs right before the first
-                  // figure it caps rather than off on its own.
+                  // The counts that drive the allowances below have to be
+                  // entered somewhere, and each belongs right before the
+                  // figure it gives context to rather than off on its own.
                   const countField =
                     field.key === 'childrenEducationAllowance' ? (
-                      <div key="childrenCount" data-testid="field-childrenCount" className="space-y-1.5">
-                        <label
-                          htmlFor="declaration-childrenCount"
-                          className="text-sm font-medium text-warm-700"
-                        >
-                          {CHILDREN_COUNT_FIELD.label}
-                        </label>
-                        <Input
-                          id="declaration-childrenCount"
-                          type="text"
-                          inputMode="numeric"
-                          autoComplete="off"
-                          placeholder="0"
-                          value={childrenCount}
-                          disabled={saving}
-                          error={childrenCountError}
-                          onChange={(event) => setChildrenCount(event.target.value)}
-                        />
-                        <p className="text-xs text-warm-500">{CHILDREN_COUNT_FIELD.hint}</p>
-                      </div>
+                      <EditableCountField
+                        key="childrenCount"
+                        id="childrenCount"
+                        label={CHILDREN_COUNT_FIELD.label}
+                        hint={CHILDREN_COUNT_FIELD.hint}
+                        value={childrenCount}
+                        onChange={setChildrenCount}
+                        error={childrenCountError}
+                        disabled={saving}
+                      />
+                    ) : field.key === 'ltaExemption' ? (
+                      <EditableCountField
+                        key="ltaJourneysUsedInBlock"
+                        id="ltaJourneysUsedInBlock"
+                        label={LTA_JOURNEYS_FIELD.label}
+                        hint={LTA_JOURNEYS_FIELD.hint}
+                        value={ltaJourneysUsedInBlock}
+                        onChange={setLtaJourneysUsedInBlock}
+                        error={ltaJourneysError}
+                        disabled={saving}
+                        warning={ltaJourneysWarning(ltaJourneysForWarning) ?? undefined}
+                      />
                     ) : null;
 
-                  // The section 10(14) ceiling for these two figures depends on
-                  // how many children were declared, so it cannot sit on the
-                  // shared spec as a constant. It is computed here and laid
-                  // over the field for this render only, reusing the same
-                  // ceiling warning every other figure gets.
+                  // Three ceilings depend on something other than a fixed
+                  // constant — the tenant's own configuration, the declared
+                  // children count, or both — so they cannot sit on the
+                  // shared spec as one. Each is resolved here and laid over
+                  // the field for this render only, reusing the same warning
+                  // every other figure gets; see `resolveFlatCeiling` and
+                  // `resolveChildrenAllowanceCeiling` in `./fields`.
                   const effectiveField: DeclarationFieldSpec =
-                    field.key === 'childrenEducationAllowance'
+                    field.key === 'section80C'
                       ? {
                           ...field,
-                          ceiling: childrenAllowanceCeiling(
-                            CHILDREN_EDUCATION_ALLOWANCE_MONTHLY_CEILING,
-                            childrenCountForCeiling,
+                          resolvedCeiling: resolveFlatCeiling(
+                            declaration?.limits?.section80CLimit,
+                            SECTION_80C_DEFAULT_CEILING,
                           ),
                         }
-                      : field.key === 'hostelAllowance'
+                      : field.key === 'childrenEducationAllowance'
                         ? {
                             ...field,
-                            ceiling: childrenAllowanceCeiling(
-                              HOSTEL_ALLOWANCE_MONTHLY_CEILING,
+                            resolvedCeiling: resolveChildrenAllowanceCeiling(
+                              declaration?.limits?.childrenEducationMonthlyLimit,
+                              CHILDREN_EDUCATION_ALLOWANCE_MONTHLY_CEILING,
                               childrenCountForCeiling,
                             ),
                           }
-                        : field;
+                        : field.key === 'hostelAllowance'
+                          ? {
+                              ...field,
+                              resolvedCeiling: resolveChildrenAllowanceCeiling(
+                                declaration?.limits?.hostelAllowanceMonthlyLimit,
+                                HOSTEL_ALLOWANCE_MONTHLY_CEILING,
+                                childrenCountForCeiling,
+                              ),
+                            }
+                          : field;
 
                   return (
                     <Fragment key={field.key}>

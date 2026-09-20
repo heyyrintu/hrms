@@ -7,6 +7,12 @@ import {
   TaxDeclarationInput,
 } from '../../payroll/statutory/statutory.calculators';
 import type { DeductionLimits } from '../../payroll/statutory/tax-correctness.types';
+import { capTaxAtPayable } from '../../payroll/statutory/completion.types';
+import {
+  calculateSection89Relief,
+  Section89YearBasis,
+  Section89YearWorking,
+} from './section-89-relief';
 
 /**
  * Tax on a full and final settlement.
@@ -42,24 +48,32 @@ import type { DeductionLimits } from '../../payroll/statutory/tax-correctness.ty
  * all its business, and this only decides what income and which deductions to
  * hand it.
  *
+ * Four things the year's liability alone would get wrong are handled on top of
+ * it, each of them visible in the working afterwards:
+ *
+ *  - **Relief under section 89**, where the settlement bunches several years
+ *    of gratuity and leave into one. Computed in `section-89-relief.ts` and
+ *    subtracted from the year's tax; nil with a stated reason where it cannot
+ *    be worked out.
+ *  - **The tax is capped at what the settlement actually pays.** See
+ *    `capTaxAtPayable` in the shared contract for why, and `uncollectedTax` in
+ *    the working for what was left uncollected when it bit.
+ *  - **Approved proofs**, where the tenant requires them and the exit month
+ *    has reached the cutoff. The caller does the replacing, exactly as the
+ *    monthly engine does; what reaches here is the declaration after it, and
+ *    both sets of figures are recorded.
+ *  - **The month of exit is not counted twice.** Where payroll has already run
+ *    that month and the settlement also pays pro-rata salary for it, the
+ *    pro-rata is left out of the year's income — the payslip is the record of
+ *    what was actually paid and taxed for that month. It is still paid: only
+ *    what is taxed changes, and the working says so.
+ *
  * NOT IMPLEMENTED, and material in real cases:
  *
- *  - **Relief under section 89.** A settlement can bunch several years of
- *    gratuity and leave into one year's income and push the leaver into a
- *    higher slab. Relief may be available on Form 10E. It is not computed
- *    anywhere in this codebase, so the figure here can exceed what the
- *    employee finally owes; they recover the difference on assessment.
- *  - **Investment proofs are not consulted.** The monthly engine can be told
- *    to replace declared figures with proved ones from a cutoff month. A
- *    settlement takes the declaration as it stands, so a leaver whose proofs
- *    were never filed keeps the benefit of the declaration here and settles it
- *    on assessment.
- *  - **The final month's payslip is assumed not to exist yet.** Pro-rata
- *    salary for the part-month is treated as income not yet on any payslip.
- *    Where payroll has already run for the month of exit *and* the settlement
- *    also pays pro-rata salary, that month is counted twice and the tax is
- *    overstated. The working shows the payslip count and the year-to-date
- *    gross so this is visible rather than hidden.
+ *  - **Each earlier year's own total income**, for the section 89 spread.
+ *    Nothing records what a leaver earned before this system ran their
+ *    payroll, so the year of receipt's income stands in for it. See
+ *    `section-89-relief.ts` for which way that errs.
  *  - **Perquisites and section 10 exemptions** other than the two the
  *    settlement itself computes are not derived; anything of that kind has to
  *    reach the year's income through the declaration or a payslip.
@@ -104,6 +118,49 @@ export interface SettlementYearToDate {
   professionalTaxPaid: Decimal;
   /** How many payslips those totals came from, for the working. */
   payslips: number;
+  /**
+   * The part of those totals that belongs to the month of exit.
+   *
+   * Payroll may already have run that month, in which case its gross is
+   * inside `grossPaid` above and the settlement's pro-rata salary for the same
+   * month would count it a second time. Absent or zero means payroll has not
+   * run it, and the settlement's pro-rata is the only record of the month.
+   */
+  exitMonthPayslips?: { count: number; grossPaid: Decimal } | null;
+}
+
+/**
+ * What the settlement pays before any tax comes off it.
+ *
+ * Gross payable less the recoveries, which is the money the employer actually
+ * has in hand to deduct from. It may be nil or negative: notice recovery can
+ * legitimately swallow a settlement whole.
+ */
+export type SettlementPayableBeforeTax = Decimal;
+
+/** The years a bunched amount is spread back over, and their slabs. */
+export interface SettlementSection89Input {
+  /**
+   * How many years of service the gratuity and leave encashment were earned
+   * over. Zero or absent means it is not known, and relief is refused with
+   * that as the reason rather than guessed at.
+   */
+  yearsEarnedOver: number;
+  receiptYear: Section89YearBasis;
+  spreadYears: Section89YearBasis[];
+}
+
+/**
+ * Whether approved proofs replaced the declared figures, and both sets.
+ *
+ * The replacing is the caller's, because it needs the database; this records
+ * what was done so the leaver can be shown why their exemption shrank.
+ */
+export interface SettlementProofsApplied {
+  applied: boolean;
+  cutoffMonth: number | null;
+  verified: Record<string, string> | null;
+  declared: Record<string, string> | null;
 }
 
 export interface SettlementTaxInput {
@@ -129,10 +186,46 @@ export interface SettlementTaxInput {
   parts: SettlementTaxableParts;
   yearToDate: SettlementYearToDate;
   /**
+   * Gross payable less recoveries: the ceiling on what can be deducted. The
+   * employer cannot take tax out of a payment that does not exist.
+   */
+  payableBeforeTax: SettlementPayableBeforeTax;
+  /** Absent means nothing is known about the years, and relief is refused. */
+  section89?: SettlementSection89Input;
+  /** Absent means verification was not in force for this exit. */
+  proofs?: SettlementProofsApplied;
+  /**
    * Why no configuration was even looked for, when that is the case. Absent
    * with a null `config` means the year simply has no seeded row.
    */
   unavailable?: { reason: string; note: string };
+}
+
+/** What the exit month contributed twice, and what was done about it. */
+export interface SettlementExitMonthWorking {
+  payslipsAlreadyRun: number;
+  payslipGross: string;
+  proRataExcluded: string;
+  note: string;
+}
+
+/** The section 89 relief and its working, flattened for storage. */
+export interface SettlementSection89Working {
+  relief: string;
+  taxWithArrears: string;
+  taxWithoutArrears: string;
+  taxIfSpread: string;
+  ineligibleReason: string | null;
+  /** The bunched amount: the taxable balances of gratuity and encashment. */
+  arrears: string;
+  /** The year's income with that amount taken back out of it. */
+  incomeWithoutArrears: string;
+  yearsEarnedOver: number;
+  years: Section89YearWorking[];
+  costOfBunching: string;
+  reliefBeforeFloor: string;
+  yearsWithoutConfiguration: number[];
+  note: string;
 }
 
 /**
@@ -151,10 +244,14 @@ export interface SettlementTaxWorking {
   ageBandFallbackApplied: boolean;
   declarationFound: boolean;
   settlementTaxable: {
+    /** What the settlement pays as pro-rata salary, whether taxed here or not. */
     proRataSalary: string;
+    /** The part of it left out because the exit month is already on a payslip. */
+    proRataSalaryExcluded: string;
     gratuityTaxable: string;
     leaveEncashmentTaxable: string;
     otherEarnings: string;
+    /** What actually went into the year's income: the above, less the excluded. */
     total: string;
   };
   yearToDate: {
@@ -163,6 +260,10 @@ export interface SettlementTaxWorking {
     professionalTaxPaid: string;
     payslips: number;
   };
+  /** What was left out of the year's income for the exit month, and why. */
+  exitMonth: SettlementExitMonthWorking | null;
+  /** Whether approved proofs stood in for the declaration, and both sets. */
+  proofs: SettlementProofsApplied;
   previousEmployerTds: string;
   projectedAnnualGross: string;
   taxableIncome: string | null;
@@ -174,8 +275,23 @@ export interface SettlementTaxWorking {
   marginalRelief: string | null;
   reliefThreshold: string | null;
   cess: string | null;
+  /** The year's tax before relief under section 89. */
+  annualTaxBeforeRelief: string | null;
+  /** The relief, and the whole of its working. */
+  section89: SettlementSection89Working;
+  /** The year's tax after that relief. Never negative. */
   annualTax: string | null;
   alreadyDeducted: string;
+  /** What the settlement pays before tax: the ceiling on what can be deducted. */
+  payableBeforeTax: string;
+  /** The balance of the year's tax, before that ceiling was applied. */
+  taxBeforeCap: string;
+  /**
+   * The part of it the settlement could not cover. Not written off: it is the
+   * leaver's own liability when they file, and nobody learns that from a
+   * number that silently shrank.
+   */
+  uncollectedTax: string;
   /** The figure this computation produced, before any human override. */
   computedTds: string;
   deductionLimits: Record<string, string> | null;
@@ -322,13 +438,84 @@ const NO_DECLARATION_NOTE =
 export function computeSettlementTax(input: SettlementTaxInput): SettlementTaxResult {
   const { parts, yearToDate, declaration } = input;
 
+  // The month of exit, where payroll has already run it and the settlement
+  // pays pro-rata salary for it as well. The payslip is the record of what was
+  // actually paid and taxed for that month, so it is the settlement's derived
+  // pro-rata figure that is dropped from the year's income, not the payslip's
+  // hard one. The money is still paid — see the note below.
+  const exitMonthPayslips = yearToDate.exitMonthPayslips ?? null;
+  const countsExitMonthTwice = Boolean(
+    exitMonthPayslips && exitMonthPayslips.count > 0 && parts.proRataSalary.gt(0),
+  );
+  const proRataExcluded = countsExitMonthTwice ? parts.proRataSalary : ZERO;
+  const proRataTaxed = countsExitMonthTwice ? ZERO : parts.proRataSalary;
+
+  const exitMonth: SettlementExitMonthWorking | null =
+    countsExitMonthTwice && exitMonthPayslips
+      ? {
+          payslipsAlreadyRun: exitMonthPayslips.count,
+          payslipGross: money(exitMonthPayslips.grossPaid).toFixed(2),
+          proRataExcluded: money(proRataExcluded).toFixed(2),
+          note:
+            `Payroll has already run for the month of exit — ${exitMonthPayslips.count} ` +
+            `payslip(s) totalling ${money(exitMonthPayslips.grossPaid).toFixed(2)} gross ` +
+            'are already in the year to date above. The settlement also pays ' +
+            `${money(proRataExcluded).toFixed(2)} of pro-rata salary for that same month, ` +
+            'so counting both would tax the month twice. The pro-rata has been left out ' +
+            'of the year\'s income, because the payslip is the record of what was ' +
+            'actually paid and taxed. It is still paid in full: the gross payable and ' +
+            'every earning are unchanged, and only what is taxed differs.',
+        }
+      : null;
+
   const settlementTaxable = money(
-    parts.proRataSalary
+    proRataTaxed
       .add(parts.gratuityTaxable)
       .add(parts.leaveEncashmentTaxable)
       .add(parts.otherEarnings),
   );
   const annualGross = money(yearToDate.grossPaid.add(settlementTaxable));
+
+  // The bunched part of the settlement: gratuity and leave encashment are
+  // earned across the years of service, where pro-rata salary and other
+  // earnings belong to this year alone.
+  const arrears = money(parts.gratuityTaxable.add(parts.leaveEncashmentTaxable));
+  const relief = calculateSection89Relief({
+    totalIncomeWithArrears: annualGross,
+    totalIncomeWithoutArrears: money(annualGross.sub(arrears)),
+    arrears,
+    yearsEarnedOver: input.section89?.yearsEarnedOver ?? 0,
+    receiptYear: input.section89?.receiptYear ?? {
+      financialYear: input.financialYear,
+      config: input.config,
+    },
+    spreadYears: input.section89?.spreadYears ?? [],
+    declaration,
+    professionalTaxPaid: yearToDate.professionalTaxPaid,
+  });
+
+  const section89: SettlementSection89Working = {
+    relief: relief.relief.toFixed(2),
+    taxWithArrears: relief.taxWithArrears.toFixed(2),
+    taxWithoutArrears: relief.taxWithoutArrears.toFixed(2),
+    taxIfSpread: relief.taxIfSpread.toFixed(2),
+    ineligibleReason: relief.ineligibleReason,
+    arrears: arrears.toFixed(2),
+    incomeWithoutArrears: money(annualGross.sub(arrears)).toFixed(2),
+    yearsEarnedOver: relief.working.yearsEarnedOver,
+    years: relief.working.years,
+    costOfBunching: relief.working.costOfBunching,
+    reliefBeforeFloor: relief.working.reliefBeforeFloor,
+    yearsWithoutConfiguration: relief.working.yearsWithoutConfiguration,
+    note: relief.working.note,
+  };
+
+  const proofs: SettlementProofsApplied = input.proofs ?? {
+    applied: false,
+    cutoffMonth: null,
+    verified: null,
+    declared: null,
+  };
 
   // Tax already collected this year, by us and by any previous employer. Both
   // count against the same annual liability.
@@ -345,6 +532,7 @@ export function computeSettlementTax(input: SettlementTaxInput): SettlementTaxRe
     declarationFound: input.declarationFound,
     settlementTaxable: {
       proRataSalary: parts.proRataSalary.toFixed(2),
+      proRataSalaryExcluded: money(proRataExcluded).toFixed(2),
       gratuityTaxable: parts.gratuityTaxable.toFixed(2),
       leaveEncashmentTaxable: parts.leaveEncashmentTaxable.toFixed(2),
       otherEarnings: parts.otherEarnings.toFixed(2),
@@ -356,9 +544,13 @@ export function computeSettlementTax(input: SettlementTaxInput): SettlementTaxRe
       professionalTaxPaid: yearToDate.professionalTaxPaid.toFixed(2),
       payslips: yearToDate.payslips,
     },
+    exitMonth,
+    proofs,
+    section89,
     previousEmployerTds: declaration.previousEmployerTds.toFixed(2),
     projectedAnnualGross: annualGross.toFixed(2),
     alreadyDeducted: alreadyDeducted.toFixed(2),
+    payableBeforeTax: money(input.payableBeforeTax).toFixed(2),
   };
 
   // No slabs for this year, regime and band. There is nothing defensible to
@@ -381,7 +573,10 @@ export function computeSettlementTax(input: SettlementTaxInput): SettlementTaxRe
         marginalRelief: null,
         reliefThreshold: null,
         cess: null,
+        annualTaxBeforeRelief: null,
         annualTax: null,
+        taxBeforeCap: '0.00',
+        uncollectedTax: '0.00',
         computedTds: '0.00',
         deductionLimits: null,
         chapterVIACaps: {},
@@ -407,10 +602,22 @@ export function computeSettlementTax(input: SettlementTaxInput): SettlementTaxRe
     yearToDate.professionalTaxPaid,
   );
 
+  // Relief under section 89 reduces the year's liability, not the settlement's
+  // taxable income: the arrears are taxed, and the extra tax the bunching
+  // caused is then given back. Floored at zero, as the year's tax cannot be
+  // negative however large the relief.
+  const annualTaxBeforeRelief = computed.totalTax;
+  const annualTax = Decimal.max(annualTaxBeforeRelief.sub(relief.relief), ZERO);
+
   // The whole balance, not an instalment: there are no months left to spread it
   // over. Floored at zero — where too much has already been deducted the excess
   // comes back on assessment, and a settlement does not refund tax.
-  const tds = money(Decimal.max(computed.totalTax.sub(alreadyDeducted), ZERO));
+  const taxBeforeCap = money(Decimal.max(annualTax.sub(alreadyDeducted), ZERO));
+
+  // And no more than the settlement actually pays. See `capTaxAtPayable`.
+  const capped = capTaxAtPayable(taxBeforeCap, input.payableBeforeTax);
+  const tds = money(capped.deducted);
+  const uncollected = money(capped.uncollected);
 
   const chapterVIACaps = Object.fromEntries(
     computed.chapterVIACaps.map((cap) => [
@@ -443,7 +650,10 @@ export function computeSettlementTax(input: SettlementTaxInput): SettlementTaxRe
         ? computed.reliefThreshold.toFixed(2)
         : null,
       cess: computed.cess.toFixed(2),
-      annualTax: computed.totalTax.toFixed(2),
+      annualTaxBeforeRelief: money(annualTaxBeforeRelief).toFixed(2),
+      annualTax: money(annualTax).toFixed(2),
+      taxBeforeCap: taxBeforeCap.toFixed(2),
+      uncollectedTax: uncollected.toFixed(2),
       computedTds: tds.toFixed(2),
       deductionLimits: limits
         ? {
@@ -457,7 +667,27 @@ export function computeSettlementTax(input: SettlementTaxInput): SettlementTaxRe
         'The year\'s tax on everything the employee has been paid this year ' +
         'plus the taxable parts of this settlement, less the tax already ' +
         'deducted. The exempt parts of gratuity and leave encashment are not ' +
-        'in the income above.' + (input.declarationFound ? '' : ` ${NO_DECLARATION_NOTE}`),
+        'in the income above.' +
+        (relief.relief.gt(0)
+          ? ` Relief of ${relief.relief.toFixed(2)} under section 89 has been ` +
+            'allowed on the gratuity and leave encashment bunched into this ' +
+            'year; see the section 89 working for how it was reached.'
+          : '') +
+        (exitMonth ? ` ${exitMonth.note}` : '') +
+        (proofs.applied
+          ? ' The figures allowed under every proof-backed head are what the ' +
+            'employee\'s approved proofs prove, not what they declared: this ' +
+            'tenant requires proof and the month of exit is at or past the ' +
+            'cutoff. A head with no approved proof allowed nothing.'
+          : '') +
+        (uncollected.gt(0)
+          ? ` The year's tax leaves ${taxBeforeCap.toFixed(2)} still to collect, but ` +
+            `this settlement only pays ${money(input.payableBeforeTax).toFixed(2)} ` +
+            `before tax, so ${tds.toFixed(2)} has been deducted and ` +
+            `${uncollected.toFixed(2)} could not be. That balance is not written ` +
+            'off: it is the employee\'s own liability when they file their return.'
+          : '') +
+        (input.declarationFound ? '' : ` ${NO_DECLARATION_NOTE}`),
     },
   };
 }

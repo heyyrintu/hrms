@@ -2000,6 +2000,15 @@ model EmployeeTaxDeclaration {
   otherIncome         Decimal @default(0) @db.Decimal(12, 2)
   /// Tax already deducted by a previous employer this financial year.
   previousEmployerTds Decimal @default(0) @db.Decimal(12, 2)
+  /// Section 10(10AA) exemption already used at an earlier employer. The
+  /// ceiling is a lifetime one, so without this a leaver who used part of it
+  /// elsewhere is over-exempted here.
+  previousEmployerEncashmentExemption Decimal @default(0) @db.Decimal(12, 2)
+  /// Section 10(5): journeys already exempted in the current block of four
+  /// calendar years, including any taken at an earlier employer. The Act
+  /// allows two, and nothing else records this, so the employee declares it
+  /// and a reviewer settles it from the tickets.
+  ltaJourneysUsedInBlock Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

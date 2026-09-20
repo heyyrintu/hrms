@@ -862,4 +862,36 @@ describe('Form16Service.computePartB — section 10 exemptions beyond house rent
     // reduces salary on the certificate.
     expect(result.allowancesExemptSection10.toFixed(2)).toBe('0.00');
   });
+
+  it('refuses a third leave travel journey on the certificate, as the payslips did', async () => {
+    // Section 10(5) allows two journeys in a block of four calendar years. A
+    // certificate that exempted a third would certify more than the year's
+    // payslips allowed, and a certificate disagreeing with its own payslips is
+    // worse than either being wrong alone.
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue({
+      regime: 'OLD',
+      ltaExemption: new Decimal(45000),
+      ltaJourneysUsedInBlock: 2,
+    });
+
+    const result = await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
+
+    expect(result.allowancesExemptSection10.toFixed(2)).toBe('0.00');
+  });
+
+  it('says on the certificate that it cannot confirm the allowance was paid', async () => {
+    // The monthly engine caps these heads at what payroll actually paid.
+    // The certificate does not read the payslip earnings, so it cannot apply
+    // that rule, and a reader must not take the figure as confirmation that
+    // such an allowance was ever received.
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue({
+      regime: 'OLD',
+      ltaExemption: new Decimal(45000),
+      ltaJourneysUsedInBlock: 0,
+    });
+
+    const result = await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
+
+    expect(result.notes.join(' ')).toMatch(/actually paid|was paid/i);
+  });
 });

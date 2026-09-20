@@ -11,6 +11,43 @@ import { ALLOWED_UNDER_NEW_REGIME } from '@/types';
 import type { EmployeeTaxDeclaration, UpsertTaxDeclarationPayload } from '@/types';
 
 /**
+ * `@/types` extended with the two new declaration fields and the year's
+ * configured limits — none of which it carries yet in this checkout. Local
+ * intersection types, not a `declare module` augmentation: this codebase's
+ * `moduleResolution: "bundler"` does not merge an augmentation targeted at a
+ * path-mapped specifier with the real module, it shadows it, which broke
+ * every other file importing from `@/types/statutory-config`. An intersection
+ * type touches nothing outside this feature, so it cannot have that effect.
+ *
+ * These are written to disappear cleanly: once `@/types` gains the same
+ * fields with the same shapes, `EmployeeTaxDeclaration & { ... }` and
+ * `UpsertTaxDeclarationPayload & { ... }` become redundant with the added
+ * members but remain correct, and can be dropped in a follow-up.
+ */
+export interface DeclarationLimits {
+  section80CLimit?: string;
+  childrenEducationMonthlyLimit?: string;
+  hostelAllowanceMonthlyLimit?: string;
+}
+
+export type DeclarationWithNewFields = EmployeeTaxDeclaration & {
+  previousEmployerEncashmentExemption: string;
+  ltaJourneysUsedInBlock: number;
+  /**
+   * The tenant's configured statutory ceilings for this financial year and
+   * regime. Absent when the server has not supplied them; every field inside
+   * is itself optional for the same reason. Never trust a field here over a
+   * fallback default without checking it is actually present.
+   */
+  limits?: DeclarationLimits;
+};
+
+export type UpsertPayloadWithNewFields = UpsertTaxDeclarationPayload & {
+  previousEmployerEncashmentExemption?: number;
+  ltaJourneysUsedInBlock?: number;
+};
+
+/**
  * The twelve rupee figures a declaration carries. Regime and year are not
  * amounts, and neither is `childrenCount`: it is a count of children, not
  * money, and is handled separately below rather than folded in here.
@@ -27,7 +64,23 @@ export type DeclarationAmountKey =
   | 'homeLoanInterest'
   | 'otherDeductions'
   | 'otherIncome'
-  | 'previousEmployerTds';
+  | 'previousEmployerTds'
+  | 'previousEmployerEncashmentExemption';
+
+/**
+ * A ceiling the form is actually sure of, versus one it is guessing at.
+ *
+ * `amount` always has something to compare a declared figure against — a
+ * best-effort default when nothing better is known — but `confirmed` says
+ * whether that figure is the tenant's own configured limit or this feature's
+ * fallback. A warning built from an unconfirmed ceiling must not print
+ * `amount`, because it would read as the employer's own figure when it is
+ * not.
+ */
+export interface ResolvedCeiling {
+  amount: number;
+  confirmed: boolean;
+}
 
 export interface DeclarationFieldSpec {
   key: DeclarationAmountKey;
@@ -35,12 +88,19 @@ export interface DeclarationFieldSpec {
   label: string;
   hint: string;
   /**
-   * The statutory ceiling the figure is subject to, where there is one.
-   *
-   * Nothing enforces it. It exists so the form can say, at the point of entry,
-   * that a larger figure will be accepted and will not help.
+   * A statutory ceiling that is not sourced from tenant configuration — a
+   * fixed figure this product applies the same way for everyone. Shown
+   * exactly as given, without any "unconfirmed" hedging.
    */
   ceiling?: number;
+  /**
+   * A ceiling that should reflect what the tenant actually configured for
+   * this financial year and regime, computed per render by the page (see
+   * `resolveFlatCeiling` and `resolveChildrenAllowanceCeiling` below) and
+   * laid over the base spec. Mutually exclusive with `ceiling` in practice —
+   * a field uses one mechanism or the other, never both.
+   */
+  resolvedCeiling?: ResolvedCeiling;
 }
 
 const inrWhole = new Intl.NumberFormat('en-IN', {
@@ -66,12 +126,23 @@ export const CHILDREN_EDUCATION_ALLOWANCE_MONTHLY_CEILING = 100;
 export const HOSTEL_ALLOWANCE_MONTHLY_CEILING = 300;
 export const CHILDREN_ALLOWANCE_MAX_CHILDREN = 2;
 
+/**
+ * Statutory defaults, used only when the tenant's own configured limit was
+ * not supplied with the declaration. Never shown as a confirmed figure — see
+ * `resolveFlatCeiling` and `ResolvedCeiling` above.
+ */
+export const SECTION_80C_DEFAULT_CEILING = 150000;
+
 export const DECLARATION_FIELDS: readonly DeclarationFieldSpec[] = [
   {
     key: 'section80C',
     label: 'Section 80C',
     hint: 'Provident fund, life insurance premium, ELSS, principal on a home loan, tuition fees, and the rest of section 80C.',
-    ceiling: 150000,
+    // No static `ceiling` here: section 80C's ceiling is tenant-configured, so
+    // the page computes a `resolvedCeiling` from the declaration's `limits`
+    // (falling back to `SECTION_80C_DEFAULT_CEILING`) and lays it over this
+    // spec at render time, the same way it already does for the two
+    // section 10(14) allowances below.
   },
   {
     key: 'section80D',
@@ -102,16 +173,16 @@ export const DECLARATION_FIELDS: readonly DeclarationFieldSpec[] = [
   {
     key: 'childrenEducationAllowance',
     label: "Children's education allowance",
-    hint: `Section 10(14): tuition-related allowance, capped at ${formatCeiling(
-      CHILDREN_EDUCATION_ALLOWANCE_MONTHLY_CEILING,
-    )} a month per child, for at most ${CHILDREN_ALLOWANCE_MAX_CHILDREN} children. Set how many children below; a figure above the cap is accepted but does not reduce your tax.`,
+    // Deliberately does not state a monthly figure: the real cap is set per
+    // tenant, and stating a number here would claim it before it is known.
+    // The ceiling shown below, once you enter a figure, is that tenant's own
+    // configured limit when the server supplied one.
+    hint: `Section 10(14): tuition-related allowance, capped per child per month for at most ${CHILDREN_ALLOWANCE_MAX_CHILDREN} children under your employer's configured limit. Set how many children below; a figure above the cap is accepted but does not reduce your tax.`,
   },
   {
     key: 'hostelAllowance',
     label: 'Hostel allowance',
-    hint: `Section 10(14): allowance for a child in a boarding hostel, capped at ${formatCeiling(
-      HOSTEL_ALLOWANCE_MONTHLY_CEILING,
-    )} a month per child, for at most ${CHILDREN_ALLOWANCE_MAX_CHILDREN} children. Set how many children below; a figure above the cap is accepted but does not reduce your tax.`,
+    hint: `Section 10(14): allowance for a child in a boarding hostel, capped per child per month for at most ${CHILDREN_ALLOWANCE_MAX_CHILDREN} children under your employer's configured limit. Set how many children below; a figure above the cap is accepted but does not reduce your tax.`,
   },
   {
     key: 'homeLoanInterest',
@@ -133,6 +204,11 @@ export const DECLARATION_FIELDS: readonly DeclarationFieldSpec[] = [
     label: 'Tax deducted by a previous employer',
     hint: 'Tax already deducted on salary paid by an earlier employer in this financial year.',
   },
+  {
+    key: 'previousEmployerEncashmentExemption',
+    label: 'Leave encashment exemption used at a previous employer',
+    hint: 'Section 10(10AA) is a lifetime ceiling, not one per employer. Enter how much of it you already used through leave encashment at an earlier employer; leaving this blank lets this employer apply the full ceiling again, over-exempting you.',
+  },
 ];
 
 /**
@@ -152,7 +228,7 @@ export function isIgnoredUnderNewRegime(key: DeclarationAmountKey): boolean {
  * rupee figure that has been through a float is no longer the figure stored.
  */
 export function storedAmount(
-  declaration: EmployeeTaxDeclaration,
+  declaration: DeclarationWithNewFields,
   key: DeclarationAmountKey,
 ): string {
   return declaration[key];
@@ -177,27 +253,36 @@ export const CHILDREN_COUNT_FIELD = {
   hint: `Caps the education and hostel allowances above at, at most, ${CHILDREN_ALLOWANCE_MAX_CHILDREN} children — declaring more children than that does not raise the cap.`,
 };
 
-export type ParsedChildrenCount = { ok: true; value: number } | { ok: false; message: string };
+export type ParsedCount = { ok: true; value: number } | { ok: false; message: string };
+/** @deprecated Kept as an alias; use `ParsedCount`. */
+export type ParsedChildrenCount = ParsedCount;
 
 /**
- * Reads a declared children count.
+ * Reads a declared count — of children, or of anything else this form counts
+ * rather than sums as money.
  *
  * Blank is nil, exactly as a blank rupee figure is: nothing has been
  * declared, which is sent as zero. Anything else must be a whole,
- * non-negative number — half a child or a negative one is refused rather than
+ * non-negative number — half of one or a negative one is refused rather than
  * silently floored or clamped, the same discipline `parseDeclaredAmount`
- * applies to the rupee figures.
+ * applies to the rupee figures. `label` is the field's own label and appears
+ * verbatim in any refusal, the same convention `parseDeclaredAmount` follows.
  */
-export function parseChildrenCount(raw: string): ParsedChildrenCount {
+export function parseCount(raw: string, label: string): ParsedCount {
   const trimmed = (raw ?? '').trim();
   if (trimmed === '') return { ok: true, value: 0 };
   if (!/^\d+$/.test(trimmed)) {
     return {
       ok: false,
-      message: `${CHILDREN_COUNT_FIELD.label} must be a whole number. "${trimmed}" is not one, so nothing was sent.`,
+      message: `${label} must be a whole number. "${trimmed}" is not one, so nothing was sent.`,
     };
   }
   return { ok: true, value: Number(trimmed) };
+}
+
+/** `parseCount` for `CHILDREN_COUNT_FIELD` specifically. */
+export function parseChildrenCount(raw: string): ParsedCount {
+  return parseCount(raw, CHILDREN_COUNT_FIELD.label);
 }
 
 /**
@@ -213,4 +298,107 @@ export function childrenAllowanceCeiling(monthlyLimit: number, childrenCount: nu
   const wholeChildren = Number.isFinite(childrenCount) ? Math.max(0, Math.floor(childrenCount)) : 0;
   const countedChildren = Math.min(wholeChildren, CHILDREN_ALLOWANCE_MAX_CHILDREN);
   return monthlyLimit * 12 * countedChildren;
+}
+
+// ---------------------------------------------------------------------------
+// Ceilings sourced from the tenant's own configuration, with a fallback
+// ---------------------------------------------------------------------------
+
+/**
+ * Reads one configured statutory limit as the server might send it.
+ *
+ * Null for anything that is not a usable non-negative figure — absent, blank,
+ * unparseable, or negative — never defaulted to zero, because zero would
+ * itself be a specific figure nobody confirmed. Accepts a number too, in case
+ * the server sends one rather than the decimal string every other money field
+ * on this form arrives as.
+ */
+function readConfiguredLimit(raw: string | number | undefined | null): number | null {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw === 'number') return Number.isFinite(raw) && raw >= 0 ? raw : null;
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/**
+ * A flat ceiling — section 80C's — from the tenant's configured limit when
+ * the server supplied one, or `fallback` when it did not.
+ *
+ * `confirmed` tells the caller which happened, so a warning built from the
+ * result knows whether it may print `amount` as a real figure.
+ */
+export function resolveFlatCeiling(
+  configured: string | number | undefined | null,
+  fallback: number,
+): ResolvedCeiling {
+  const value = readConfiguredLimit(configured);
+  return value !== null ? { amount: value, confirmed: true } : { amount: fallback, confirmed: false };
+}
+
+/**
+ * The annual ceiling for a section 10(14) children's allowance, from the
+ * tenant's configured monthly limit when the server supplied one, or
+ * `fallbackMonthly` when it did not — scaled by `childrenCount` and capped at
+ * `CHILDREN_ALLOWANCE_MAX_CHILDREN` either way, via `childrenAllowanceCeiling`.
+ */
+export function resolveChildrenAllowanceCeiling(
+  configuredMonthly: string | number | undefined | null,
+  fallbackMonthly: number,
+  childrenCount: number,
+): ResolvedCeiling {
+  const configured = readConfiguredLimit(configuredMonthly);
+  const effectiveMonthly = configured !== null ? configured : fallbackMonthly;
+  return {
+    amount: childrenAllowanceCeiling(effectiveMonthly, childrenCount),
+    confirmed: configured !== null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// `ltaJourneysUsedInBlock`: a count, not an amount
+// ---------------------------------------------------------------------------
+
+/**
+ * Section 10(5) allows two journeys in a block of four calendar years. Both
+ * figures are the Act's own, not something a tenant configures, so — unlike
+ * the ceilings above — they are stated as fact rather than routed through a
+ * "confirmed or fallback" resolver.
+ */
+export const LTA_JOURNEYS_PER_BLOCK = 2;
+export const LTA_BLOCK_LENGTH_YEARS = 4;
+
+/**
+ * How many leave-travel journeys the employee has already used in the current
+ * block, including at an earlier employer.
+ *
+ * Kept out of `DeclarationAmountKey` and `DECLARATION_FIELDS` for the same
+ * reason `childrenCount` is: it counts journeys, not rupees, and belongs next
+ * to `ltaExemption` on the form as context for that claim rather than as a
+ * claim of its own.
+ */
+export const LTA_JOURNEYS_FIELD = {
+  key: 'ltaJourneysUsedInBlock' as const,
+  label: 'LTA journeys already used in this block',
+  hint: `Section 10(5) allows ${LTA_JOURNEYS_PER_BLOCK} journeys in a block of ${LTA_BLOCK_LENGTH_YEARS} calendar years. Declare how many you have already used in the current block — including at an earlier employer — so a third is not claimed by accident.`,
+};
+
+/** `parseCount` for `LTA_JOURNEYS_FIELD` specifically. */
+export function parseLtaJourneysUsedInBlock(raw: string): ParsedCount {
+  return parseCount(raw, LTA_JOURNEYS_FIELD.label);
+}
+
+/**
+ * The warning for a declared journey count above what the block allows, or
+ * null when there is nothing to warn about.
+ *
+ * Nothing enforces this either: the count is still saved exactly as entered,
+ * the same "warns and still saves" discipline every ceiling above follows.
+ */
+export function ltaJourneysWarning(journeysUsedInBlock: number): string | null {
+  if (!Number.isFinite(journeysUsedInBlock) || journeysUsedInBlock <= LTA_JOURNEYS_PER_BLOCK) {
+    return null;
+  }
+  return `Only ${LTA_JOURNEYS_PER_BLOCK} journeys are allowed in a block of ${LTA_BLOCK_LENGTH_YEARS} calendar years. At ${journeysUsedInBlock}, this is already over that, and it will not reduce your tax.`;
 }

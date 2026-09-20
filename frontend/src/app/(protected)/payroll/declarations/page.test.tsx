@@ -115,6 +115,8 @@ function declaration(overrides: Record<string, unknown> = {}) {
     otherDeductions: '0.00',
     otherIncome: '0.00',
     previousEmployerTds: '18000.00',
+    previousEmployerEncashmentExemption: '0.00',
+    ltaJourneysUsedInBlock: 0,
     createdAt: '2026-04-02T00:00:00.000Z',
     updatedAt: '2026-04-02T00:00:00.000Z',
     ...overrides,
@@ -178,6 +180,21 @@ describe('PayrollDeclarationsPage', () => {
       .toBeInTheDocument();
   });
 
+  it("shows the leave encashment exemption used at a previous employer and the LTA journeys already used in this block", async () => {
+    await renderAndPick(
+      declaration({ previousEmployerEncashmentExemption: '250000.00', ltaJourneysUsedInBlock: 1 }),
+    );
+
+    expect(
+      within(screen.getByTestId('field-previousEmployerEncashmentExemption')).getByText(
+        /2,50,000\.00/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('field-ltaJourneysUsedInBlock')).getByText('1'),
+    ).toBeInTheDocument();
+  });
+
   it('explains that TDS falls back to salary alone when the employee has declared nothing', async () => {
     await renderAndPick(null);
 
@@ -196,6 +213,7 @@ describe('PayrollDeclarationsPage', () => {
       'hraExemption',
       'homeLoanInterest',
       'otherDeductions',
+      'previousEmployerEncashmentExemption',
     ]) {
       expect(
         within(screen.getByTestId(`field-${key}`)).getByText(/ignored under the new regime/i),

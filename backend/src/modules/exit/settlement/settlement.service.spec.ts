@@ -926,13 +926,18 @@ describe('SettlementService', () => {
       };
     }
 
-    /** Eleven months on the payroll before the March exit. */
+    /**
+     * Eleven months on the payroll before the March exit, none of them the
+     * month of exit itself. A run in May is as good a stand-in as any: what
+     * matters is that it is not March 2025.
+     */
     function makePayslips() {
       return [
         {
           grossPay: new Decimal(900000),
           professionalTax: new Decimal(2400),
           tds: new Decimal(60000),
+          payrollRun: { year: 2024, month: 5 },
         },
       ];
     }
@@ -976,6 +981,13 @@ describe('SettlementService', () => {
      * less deducted in the payslips                            60,000
      *                             settlement TDS               55,372
      */
+    /**
+     * Only the year of exit has slabs seeded unless a test says otherwise,
+     * which is what most tenants actually look like: nobody seeds six years of
+     * history to run one settlement. Relief under section 89 therefore refuses
+     * for want of configuration in every case below that does not ask for it,
+     * and the figures are the figures of the year's tax alone.
+     */
     function arrangeTax(options: {
       payslips?: unknown[];
       declaration?: unknown;
@@ -983,6 +995,9 @@ describe('SettlementService', () => {
       config?: Record<string, unknown> | null;
       balances?: unknown[];
       existing?: unknown;
+      proofs?: unknown[];
+      /** Seed the earlier years' slabs too, so section 89 can be computed. */
+      seedEarlierYears?: boolean;
     } = {}) {
       arrangeCompute({
         balances: options.balances === undefined ? makeLargeBalance() : options.balances,
@@ -996,9 +1011,14 @@ describe('SettlementService', () => {
       prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(
         options.declaration === undefined ? { regime: 'NEW' } : options.declaration,
       );
-      prisma.incomeTaxConfig.findUnique.mockResolvedValue(
-        options.taxConfig === undefined ? makeIncomeTaxConfig() : options.taxConfig,
-      );
+      prisma.investmentProof.findMany.mockResolvedValue(options.proofs ?? []);
+
+      const forYear = options.taxConfig === undefined ? makeIncomeTaxConfig() : options.taxConfig;
+      prisma.incomeTaxConfig.findUnique.mockImplementation((args: any) => {
+        const year = args.where.tenantId_financialYear_regime_ageBand.financialYear;
+        if (year === 2024) return Promise.resolve(forYear);
+        return Promise.resolve(options.seedEarlierYears ? forYear : null);
+      });
     }
 
     it('deducts the balance of the year’s tax still owing', async () => {
@@ -1036,6 +1056,8 @@ describe('SettlementService', () => {
 
       expect(result.breakdown.taxComputation.settlementTaxable).toEqual({
         proRataSalary: '39677.42',
+        // Payroll has not run the month of exit, so none of it is a duplicate.
+        proRataSalaryExcluded: '0.00',
         // 3,00,000 paid less 2,50,000 exempt under section 10(10)
         gratuityTaxable: '50000.00',
         // 8,00,000 paid less 3,60,000 exempt under section 10(10AA)
@@ -1244,6 +1266,407 @@ describe('SettlementService', () => {
       expect(result.breakdown.totals.tds).toBe('55372.00');
       // Stored as plain JSON, like the payslip's own tax computation.
       expect(() => JSON.stringify(tax)).not.toThrow();
+    });
+
+    // ── relief under section 89 ─────────────────────────────
+
+    describe('relief under section 89', () => {
+      /**
+       * Asha joined on 1 April 2018 and left on 15 March 2025: six completed
+       * years, so the gratuity and leave encashment in this settlement were
+       * earned over six. What is bunched is the taxable balance of each:
+       *
+       *   taxable gratuity                                      50,000.00
+       *   taxable leave encashment                           4,40,000.00
+       *   ----------------------------------------------------------------
+       *   bunched into this year                             4,90,000.00
+       *
+       *   annual gross with it                              14,29,677.42
+       *   annual gross without it                            9,39,677.42
+       *
+       *   tax on 14,29,677.42 (taxable 13,54,677.42)          1,15,372
+       *   tax on  9,39,677.42 (taxable  8,64,677.42):
+       *      3,00,000 - 7,00,000 at 5%                          20,000
+       *      7,00,000 - 8,64,677.42 at 10% on 1,64,677.42    16,467.74
+       *                                       tax to rupee      36,468
+       *      cess at 4% = 1,458.72, to the rupee                 1,459
+       *                                                         37,927
+       *   the bunching cost 1,15,372 - 37,927              =     77,445
+       *
+       *   4,90,000 over six years is 81,666.67 a year (the sixth takes
+       *   81,666.65, so the six add back to 4,90,000 exactly).
+       *   tax on 9,39,677.42 + 81,666.67 = 10,21,344.09
+       *        (taxable 9,46,344.09):
+       *      3,00,000 - 7,00,000 at 5%                          20,000
+       *      7,00,000 - 9,46,344.09 at 10% on 2,46,344.09    24,634.41
+       *                                       tax to rupee      44,634
+       *      cess at 4% = 1,785.36, to the rupee                 1,785
+       *                                                         46,419
+       *   each slice costs 46,419 - 37,927                 =      8,492
+       *   six of them                                      =     50,952
+       *
+       *   relief = 77,445 - 50,952                         =     26,493
+       *   annual tax 1,15,372 - 26,493                     =     88,879
+       *   less deducted in the payslips                          60,000
+       *   ----------------------------------------------------------------
+       *   settlement TDS                                         28,879
+       */
+      it('relieves the tax the bunching added, when the earlier years have slabs', async () => {
+        arrangeTax({ seedEarlierYears: true });
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const tax = result.breakdown.taxComputation;
+
+        expect(tax.annualTaxBeforeRelief).toBe('115372.00');
+        expect(tax.section89.arrears).toBe('490000.00');
+        expect(tax.section89.yearsEarnedOver).toBe(6);
+        expect(tax.section89.costOfBunching).toBe('77445.00');
+        expect(tax.section89.taxIfSpread).toBe('50952.00');
+        expect(tax.section89.relief).toBe('26493.00');
+        expect(tax.section89.ineligibleReason).toBeNull();
+        expect(tax.annualTax).toBe('88879.00');
+        expect(result.tds.toFixed(2)).toBe('28879.00');
+      });
+
+      it('spreads it back over each of the six years, and says which', async () => {
+        arrangeTax({ seedEarlierYears: true });
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const years = result.breakdown.taxComputation.section89.years;
+
+        expect(years.map((y: any) => y.financialYear)).toEqual([
+          2024, 2023, 2022, 2021, 2020, 2019,
+        ]);
+        expect(years[0].arrearsSlice).toBe('81666.67');
+        expect(years[5].arrearsSlice).toBe('81666.65');
+      });
+
+      it('gives no relief, and records the reason, when an earlier year has no slabs', async () => {
+        arrangeTax();
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const tax = result.breakdown.taxComputation;
+
+        expect(tax.section89.relief).toBe('0.00');
+        expect(tax.section89.ineligibleReason).toBe('SECTION_89_NO_TAX_CONFIGURATION');
+        expect(tax.section89.yearsWithoutConfiguration).toEqual([
+          2023, 2022, 2021, 2020, 2019,
+        ]);
+        // The year's tax stands undiminished, which is the whole of the TDS.
+        expect(tax.annualTax).toBe('115372.00');
+        expect(result.tds.toFixed(2)).toBe('55372.00');
+      });
+
+      it('leaves every earning alone: only the tax deducted moves', async () => {
+        arrangeTax({ seedEarlierYears: true });
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+
+        expect(result.proRataSalary.toFixed(2)).toBe('39677.42');
+        expect(result.leaveEncashment.toFixed(2)).toBe('800000.00');
+        expect(result.gratuity.toFixed(2)).toBe('300000.00');
+        expect(result.grossPayable.toFixed(2)).toBe('1139677.42');
+        // 11,39,677.42 - 15,870.97 - 28,879.00
+        expect(result.netPayable.toFixed(2)).toBe('1094927.45');
+      });
+    });
+
+    // ── the cap at what the settlement pays ─────────────────
+
+    describe('the cap at what the settlement actually pays', () => {
+      /**
+       * A notice period of 434 days against 24 served leaves 410 days short,
+       * so 82,000 x 410 / 31 = 10,84,516.13 is recovered:
+       *
+       *   gross payable                                    11,39,677.42
+       *   less notice recovery                             10,84,516.13
+       *   ----------------------------------------------------------------
+       *   payable before tax                                  55,161.29
+       *   the year's tax still owing                          55,372.00
+       *   ----------------------------------------------------------------
+       *   deducted                                            55,161.29
+       *   left uncollected                                       210.71
+       */
+      it('deducts no more than the settlement pays, and records the balance', async () => {
+        arrangeTax({ config: undefined });
+        prisma.separation.findFirst.mockResolvedValue(
+          makeSeparation({ noticePeriodDays: 434 }),
+        );
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const tax = result.breakdown.taxComputation;
+
+        expect(result.noticeRecovery.toFixed(2)).toBe('1084516.13');
+        expect(tax.payableBeforeTax).toBe('55161.29');
+        expect(tax.taxBeforeCap).toBe('55372.00');
+        expect(result.tds.toFixed(2)).toBe('55161.29');
+        expect(tax.uncollectedTax).toBe('210.71');
+        expect(tax.note).toMatch(/own liability/i);
+        // Exactly nothing left over, and nothing owed either.
+        expect(result.netPayable.toFixed(2)).toBe('0.00');
+      });
+
+      /**
+       * 455 days of notice leaves 431 short, recovering 11,40,064.52 against
+       * a gross of 11,39,677.42: the leaver owes the employer 387.10 before
+       * any tax. There is nothing to deduct tax from, so none is deducted and
+       * the whole 55,372.00 stays the leaver's own to settle.
+       */
+      it('deducts nothing from a settlement that pays nothing', async () => {
+        arrangeTax();
+        prisma.separation.findFirst.mockResolvedValue(
+          makeSeparation({ noticePeriodDays: 455 }),
+        );
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const tax = result.breakdown.taxComputation;
+
+        expect(tax.payableBeforeTax).toBe('-387.10');
+        expect(result.tds.toFixed(2)).toBe('0.00');
+        expect(tax.uncollectedTax).toBe('55372.00');
+        // The recovery still stands: the employer is owed it either way.
+        expect(result.netPayable.toFixed(2)).toBe('-387.10');
+      });
+
+      it('an entered override still wins over the cap', async () => {
+        arrangeTax({
+          existing: {
+            id: 'stl-1',
+            status: 'DRAFT',
+            breakdown: {
+              taxComputation: {
+                override: {
+                  applied: true,
+                  amount: '90000.00',
+                  reason: 'Form 10E relief agreed with the leaver',
+                  at: '2025-03-16T00:00:00.000Z',
+                },
+              },
+            },
+          },
+        });
+        prisma.separation.findFirst.mockResolvedValue(
+          makeSeparation({ noticePeriodDays: 455 }),
+        );
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+
+        expect(result.tds.toFixed(2)).toBe('90000.00');
+        expect(result.breakdown.taxComputation.override.reason).toBe(
+          'Form 10E relief agreed with the leaver',
+        );
+        // The computed figure, capped, stays beside it.
+        expect(result.breakdown.taxComputation.computedTds).toBe('0.00');
+      });
+    });
+
+    // ── approved proofs ─────────────────────────────────────
+
+    describe('approved proofs', () => {
+      const OLD_CONFIG = { regime: 'OLD' as const, ageBand: 'GENERAL' };
+
+      /**
+       * The leaver declared 1,50,000 under 80C and 60,000 of house rent, and
+       * filed one approved proof: 40,000 of 80C. The tenant requires proof and
+       * the exit month, March, is past the January cutoff, so 40,000 is what
+       * 80C is worth and house rent — with no approved proof at all — is worth
+       * nothing. Not 60,000: a head with no proof allows nothing once
+       * verification is in force.
+       */
+      function arrangeProofs(options: { required: boolean; proofs?: unknown[] }) {
+        arrangeTax({
+          config: makeConfig({
+            proofVerificationRequired: options.required,
+            proofCutoffMonth: 1,
+            defaultTaxRegime: 'OLD',
+          }),
+          declaration: {
+            regime: 'OLD',
+            section80C: new Decimal(150000),
+            hraExemption: new Decimal(60000),
+          },
+          taxConfig: {
+            ...makeIncomeTaxConfig(),
+            ...OLD_CONFIG,
+            standardDeduction: new Decimal(50000),
+          },
+          proofs: options.proofs ?? [
+            { section: 'SECTION_80C', verifiedAmount: new Decimal(40000) },
+          ],
+        });
+      }
+
+      it('replaces the declared figures with what the approved proofs prove', async () => {
+        arrangeProofs({ required: true });
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const tax = result.breakdown.taxComputation;
+
+        expect(tax.proofs.applied).toBe(true);
+        expect(tax.proofs.cutoffMonth).toBe(1);
+        expect(tax.proofs.verified.section80C).toBe('40000.00');
+        expect(tax.proofs.declared.section80C).toBe('150000.00');
+        expect(tax.note).toMatch(/approved proof/i);
+      });
+
+      it('allows nothing under a head with no approved proof', async () => {
+        arrangeProofs({ required: true });
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const tax = result.breakdown.taxComputation;
+
+        // Declared 60,000 of house rent, proved none of it.
+        expect(tax.proofs.declared.hraExemption).toBe('60000.00');
+        expect(tax.proofs.verified.hraExemption).toBe('0.00');
+        // Every proof-backed head is replaced, not only the proved one.
+        expect(Object.keys(tax.proofs.verified).sort()).toEqual(
+          Object.keys(tax.proofs.declared).sort(),
+        );
+      });
+
+      it('taxes more than the declaration alone would have', async () => {
+        arrangeProofs({ required: true });
+        const verified: any = await service.compute(TENANT, 'sep-1', {});
+
+        arrangeProofs({ required: false });
+        const declared: any = await service.compute(TENANT, 'sep-1', {});
+
+        const taxable = (r: any) =>
+          new Decimal(r.breakdown.taxComputation.taxableIncome);
+        // 1,10,000 of 80C and the whole 60,000 of house rent fall away:
+        // 1,70,000 more income to tax.
+        expect(taxable(verified).sub(taxable(declared)).toFixed(2)).toBe('170000.00');
+        expect(declared.breakdown.taxComputation.proofs.applied).toBe(false);
+      });
+
+      it('leaves the declaration standing where the tenant does not require proof', async () => {
+        arrangeProofs({ required: false });
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+
+        expect(result.breakdown.taxComputation.proofs).toEqual({
+          applied: false,
+          cutoffMonth: 1,
+          verified: null,
+          declared: null,
+        });
+        expect(prisma.investmentProof.findMany).not.toHaveBeenCalled();
+      });
+
+      it('leaves the declaration standing where the exit is before the cutoff', async () => {
+        arrangeTax({
+          config: makeConfig({
+            proofVerificationRequired: true,
+            // The cutoff is February; a March exit is past it, so push the
+            // exit back instead. An exit in April is month 1 of the year.
+            proofCutoffMonth: 2,
+          }),
+        });
+        prisma.separation.findFirst.mockResolvedValue(
+          makeSeparation({
+            initiatedDate: new Date('2024-04-01T12:00:00Z'),
+            lastWorkingDate: new Date('2024-04-20T12:00:00Z'),
+          }),
+        );
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+
+        expect(result.breakdown.taxComputation.proofs.applied).toBe(false);
+        expect(prisma.investmentProof.findMany).not.toHaveBeenCalled();
+      });
+    });
+
+    // ── the month of exit ───────────────────────────────────
+
+    describe('the month of exit', () => {
+      /**
+       * Payroll has already run March 2025 and the settlement also pays
+       * 39,677.42 of pro-rata salary for the same month. Counting both would
+       * tax March twice:
+       *
+       *   year to date, March's payslip included               9,00,000.00
+       *   settlement, pro-rata left out                        4,90,000.00
+       *   ----------------------------------------------------------------
+       *   annual gross                                        13,90,000.00
+       *   less standard deduction                                75,000.00
+       *   taxable income                                      13,15,000.00
+       *
+       *      3,00,000 -  7,00,000 at 5%                           20,000
+       *      7,00,000 - 10,00,000 at 10%                          30,000
+       *     10,00,000 - 12,00,000 at 15%                          30,000
+       *     12,00,000 - 13,15,000 at 20% on 1,15,000              23,000
+       *                                              tax        1,03,000
+       *     cess at 4%                                             4,120
+       *                                       annual tax        1,07,120
+       *     less deducted in the payslips                         60,000
+       *   ----------------------------------------------------------------
+       *     settlement TDS                                        47,120
+       */
+      it('does not tax the exit month twice when payroll has already run it', async () => {
+        arrangeTax({
+          payslips: [
+            {
+              grossPay: new Decimal(900000),
+              professionalTax: new Decimal(2400),
+              tds: new Decimal(60000),
+              payrollRun: { year: 2025, month: 3 },
+            },
+          ],
+        });
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const tax = result.breakdown.taxComputation;
+
+        expect(tax.settlementTaxable.proRataSalaryExcluded).toBe('39677.42');
+        expect(tax.settlementTaxable.total).toBe('490000.00');
+        expect(tax.projectedAnnualGross).toBe('1390000.00');
+        expect(tax.annualTax).toBe('107120.00');
+        expect(result.tds.toFixed(2)).toBe('47120.00');
+        expect(tax.exitMonth.payslipsAlreadyRun).toBe(1);
+        expect(tax.exitMonth.payslipGross).toBe('900000.00');
+        expect(tax.exitMonth.note).toMatch(/already run/i);
+      });
+
+      it('still pays the pro-rata salary in full', async () => {
+        arrangeTax({
+          payslips: [
+            {
+              grossPay: new Decimal(900000),
+              professionalTax: new Decimal(2400),
+              tds: new Decimal(60000),
+              payrollRun: { year: 2025, month: 3 },
+            },
+          ],
+        });
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+
+        expect(result.proRataSalary.toFixed(2)).toBe('39677.42');
+        expect(result.grossPayable.toFixed(2)).toBe('1139677.42');
+        expect(
+          result.breakdown.taxComputation.settlementTaxable.proRataSalary,
+        ).toBe('39677.42');
+      });
+
+      it('taxes the pro-rata when payroll has not run the exit month', async () => {
+        arrangeTax();
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const tax = result.breakdown.taxComputation;
+
+        expect(tax.exitMonth).toBeNull();
+        expect(tax.settlementTaxable.total).toBe('529677.42');
+        expect(result.tds.toFixed(2)).toBe('55372.00');
+      });
+
+      it('reads which month each payslip belongs to', async () => {
+        arrangeTax();
+
+        await service.compute(TENANT, 'sep-1', {});
+
+        const select = prisma.payslip.findMany.mock.calls[0][0].select;
+        expect(select.payrollRun).toEqual({ select: { year: true, month: true } });
+      });
     });
   });
 

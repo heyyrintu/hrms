@@ -5,7 +5,7 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { Prisma, SettlementStatus, TaxRegime } from '@prisma/client';
+import { Prisma, SettlementStatus, TaxAgeBand, TaxRegime } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { PrismaService } from '../../../prisma/prisma.service';
 import {
@@ -23,15 +23,22 @@ import { ageBandOn31March } from '../../payroll/statutory/tax-correctness.types'
 import {
   financialYearOf,
   resolveIncomeTaxConfig,
+  readApprovedProofTotals,
+  PROOF_BACKED_FIELDS,
 } from '../../payroll/statutory/statutory.service';
+import { verificationApplies } from '../../payroll/proofs/proofs.types';
 import {
   computeSettlementTax,
   toIncomeTaxConfigInput,
   toTaxDeclarationInput,
   TDS_DISABLED,
+  SettlementProofsApplied,
+  SettlementSection89Input,
   SettlementTaxableParts,
   SettlementTaxWorking,
 } from './settlement-tax';
+import type { Section89YearBasis } from './section-89-relief';
+import type { IncomeTaxConfigInput } from '../../payroll/statutory/statutory.calculators';
 import { ComputeSettlementDto, UpdateSettlementDto } from './dto/settlement.dto';
 
 /**
@@ -53,7 +60,42 @@ import { ComputeSettlementDto, UpdateSettlementDto } from './dto/settlement.dto'
  * figure is a default: whoever processes the exit can override it, and the
  * override is recorded as one and survives a recompute.
  *
+ * Four things about that tax are worth stating here, because they are the
+ * difference between a defensible deduction and a plausible one:
+ *
+ * - **The tax never exceeds what the settlement pays.** Notice recovery may
+ *   legitimately drive the net negative — the employer is owed that money
+ *   either way — but tax may not, because the employer cannot deduct from a
+ *   payment that does not exist. What could not be collected is recorded in
+ *   the working as the leaver's own liability rather than quietly dropped.
+ *   **An entered override is not capped.** A person who types a figure has
+ *   decided something about facts this cannot see, and silently shrinking
+ *   their number would be a worse failure than a negative net they can see.
+ * - **Relief under section 89** is computed on the bunched gratuity and leave,
+ *   spread back over the completed years of service, using each of those
+ *   years' own slabs. Where a year has none seeded, relief is nil *with the
+ *   reason recorded*, because an employee whose relief is nil is owed a reason.
+ * - **Approved proofs are consulted** on exactly the terms the monthly engine
+ *   consults them: the tenant must require verification and the month of exit
+ *   must have reached the cutoff. Every proof-backed head is then worth what
+ *   the proofs prove and nothing more.
+ * - **The month of exit is not taxed twice.** Where payroll has already run
+ *   that month, the settlement's derived pro-rata figure is left out of the
+ *   year's income and the payslip's figure stands, because the payslip is the
+ *   record of what was actually paid and taxed. Nothing about what is *paid*
+ *   changes: the pro-rata is still in the gross payable.
+ *
  * What this deliberately does NOT do:
+ *
+ * - **Recompute the tax when `update` moves `otherEarnings` or
+ *   `otherRecoveries`.** Both change what the settlement pays and so could
+ *   change the cap above. Recompute is where tax is worked out, and moving a
+ *   deduction under an unrelated edit would be worse than leaving it to an
+ *   explicit action.
+ * - **Read each earlier year's own income for the section 89 spread.** Nothing
+ *   records what a leaver earned before this system ran their payroll, so the
+ *   year of receipt's stands in. See `section-89-relief.ts` for which way that
+ *   errs and why that is the safe direction.
  *
  * - **Notice recovery uses a simple daily rate**, monthly gross divided by the
  *   calendar days in the month of the last working day. Many contracts recover
@@ -377,11 +419,27 @@ export class SettlementService {
     // of the computed one is a decision about facts this cannot see, and
     // discarding it because a leave balance moved would be indefensible.
     const override = this.readTdsOverride(existing?.breakdown);
+
+    // What the settlement pays before any tax comes off it, which is the most
+    // that can be deducted from it. Computed the same way `computeTotals` does,
+    // with the two manual figures at the zero a recompute resets them to.
+    const payableBeforeTax = money(
+      money(proRata.amount.add(encashment.amount).add(gratuity.amount)).sub(
+        money(notice.amount),
+      ),
+    );
+
     const tax = await this.computeTax({
       tenantId,
       employee: separation.employee,
       statutory: config,
       lastWorkingDate,
+      payableBeforeTax,
+      // Gratuity and leave encashment accrued across the whole of the service,
+      // so the completed years are the years the bunched amount was earned
+      // over. The same count the encashment exemption uses, and for the same
+      // reason: a part-year was not completed and did not earn a year's worth.
+      yearsEarnedOver: encashmentCompletedYears,
       parts: {
         proRataSalary: proRata.amount,
         gratuityTaxable: money(gratuity.amount.sub(gratuity.exemptAmount)),
@@ -886,17 +944,23 @@ export class SettlementService {
   private async computeTax(args: {
     tenantId: string;
     employee: { id: string; dateOfBirth?: Date | null };
-    statutory: { tdsEnabled: boolean; defaultTaxRegime: TaxRegime };
+    statutory: {
+      tdsEnabled: boolean;
+      defaultTaxRegime: TaxRegime;
+      proofVerificationRequired?: boolean | null;
+      proofCutoffMonth?: number | null;
+    };
     lastWorkingDate: Date;
+    payableBeforeTax: Decimal;
+    yearsEarnedOver: number;
     parts: SettlementTaxableParts;
     override: TdsOverride | null;
   }): Promise<{ tds: Decimal; working: StoredTaxComputation }> {
     const { tenantId, employee, statutory, lastWorkingDate, parts, override } = args;
 
-    const financialYear = financialYearOf(
-      lastWorkingDate.getUTCMonth() + 1,
-      lastWorkingDate.getUTCFullYear(),
-    );
+    const exitMonth = lastWorkingDate.getUTCMonth() + 1;
+    const exitYear = lastWorkingDate.getUTCFullYear();
+    const financialYear = financialYearOf(exitMonth, exitYear);
 
     const [declarationRow, payslips] = await Promise.all([
       this.prisma.employeeTaxDeclaration.findUnique({
@@ -919,24 +983,46 @@ export class SettlementService {
             ],
           },
         },
-        select: { grossPay: true, professionalTax: true, tds: true },
+        // Which month each payslip belongs to, so a run that already covered
+        // the month of exit can be told from the rest of the year's.
+        select: {
+          grossPay: true,
+          professionalTax: true,
+          tds: true,
+          payrollRun: { select: { year: true, month: true } },
+        },
       }),
     ]);
 
     const rows = payslips ?? [];
     const zero = new Decimal(0);
     const yearToDate = rows.reduce(
-      (acc, p) => ({
-        grossPaid: acc.grossPaid.add(new Decimal(p.grossPay)),
-        professionalTaxPaid: acc.professionalTaxPaid.add(new Decimal(p.professionalTax)),
-        tdsDeducted: acc.tdsDeducted.add(new Decimal(p.tds)),
-        payslips: acc.payslips + 1,
-      }),
+      (acc, p) => {
+        const run = (p as { payrollRun?: { year: number; month: number } | null })
+          .payrollRun;
+        const isExitMonth = run?.year === exitYear && run?.month === exitMonth;
+
+        return {
+          grossPaid: acc.grossPaid.add(new Decimal(p.grossPay)),
+          professionalTaxPaid: acc.professionalTaxPaid.add(
+            new Decimal(p.professionalTax),
+          ),
+          tdsDeducted: acc.tdsDeducted.add(new Decimal(p.tds)),
+          payslips: acc.payslips + 1,
+          exitMonthPayslips: isExitMonth
+            ? {
+                count: acc.exitMonthPayslips.count + 1,
+                grossPaid: acc.exitMonthPayslips.grossPaid.add(new Decimal(p.grossPay)),
+              }
+            : acc.exitMonthPayslips,
+        };
+      },
       {
         grossPaid: zero,
         professionalTaxPaid: zero,
         tdsDeducted: zero,
         payslips: 0,
+        exitMonthPayslips: { count: 0, grossPaid: zero },
       },
     );
 
@@ -970,14 +1056,79 @@ export class SettlementService {
       );
     }
 
+    // Where the tenant requires proof and the exit has reached the cutoff, a
+    // proof-backed head is worth what the approved proofs prove and nothing
+    // more — exactly as the monthly engine treats it. Every such head is
+    // replaced, not only the ones that happen to have a proof: a head with no
+    // approved proof allows nothing, which is the point of switching
+    // verification on. A leaver taxed on a more generous basis than their own
+    // payslips used is the failure this closes.
+    const declaration = toTaxDeclarationInput(declarationRow);
+    const useVerified = verificationApplies({
+      proofVerificationRequired: statutory.proofVerificationRequired ?? false,
+      proofCutoffMonth: statutory.proofCutoffMonth ?? 1,
+      payrollMonth: exitMonth,
+    });
+
+    let proofs: SettlementProofsApplied = {
+      applied: false,
+      cutoffMonth: statutory.proofCutoffMonth ?? null,
+      verified: null,
+      declared: null,
+    };
+
+    if (useVerified) {
+      const verified = await readApprovedProofTotals(
+        this.prisma,
+        tenantId,
+        employee.id,
+        financialYear,
+      );
+      const declared = Object.fromEntries(
+        PROOF_BACKED_FIELDS.map((field) => [field, (declaration[field] ?? zero).toFixed(2)]),
+      );
+
+      for (const field of PROOF_BACKED_FIELDS) {
+        declaration[field] = new Decimal(verified[field] ?? 0);
+      }
+
+      proofs = {
+        applied: true,
+        cutoffMonth: statutory.proofCutoffMonth ?? 1,
+        verified: Object.fromEntries(
+          PROOF_BACKED_FIELDS.map((field) => [field, (declaration[field] ?? zero).toFixed(2)]),
+        ),
+        declared,
+      };
+    }
+
+    // The earlier years the bunched gratuity and leave are spread back over,
+    // each with its own slabs. A year the tenant has not seeded has no slabs
+    // to tax a slice against, and the relief is refused for that reason rather
+    // than computed on a year's worth of guesswork.
+    const section89 = await this.resolveSection89Years({
+      tenantId,
+      financialYear,
+      regime,
+      ageBand: ageBandRequested,
+      yearsEarnedOver: args.yearsEarnedOver,
+      receiptYearConfig: resolved
+        ? toIncomeTaxConfigInput(resolved.taxConfig, regime, resolved.ageBandUsed)
+        : null,
+      enabled: statutory.tdsEnabled,
+    });
+
     const computation = computeSettlementTax({
       financialYear,
       regime,
       config: resolved
         ? toIncomeTaxConfigInput(resolved.taxConfig, regime, resolved.ageBandUsed)
         : null,
-      declaration: toTaxDeclarationInput(declarationRow),
+      declaration,
       declarationFound: Boolean(declarationRow),
+      payableBeforeTax: args.payableBeforeTax,
+      section89,
+      proofs,
       ageBandUsed: resolved?.ageBandUsed ?? ageBandRequested,
       ageBandRequested,
       ageBandFallback: resolved?.ageBandFallback ?? false,
@@ -1001,6 +1152,71 @@ export class SettlementService {
       // computed figure stays in the working beside it.
       tds: override ? money(new Decimal(override.amount)) : computation.tds,
       working: { ...computation.working, override },
+    };
+  }
+
+  /**
+   * The years a bunched settlement is spread back over, with each year's slabs.
+   *
+   * The year of receipt first, then one year back for each further year of
+   * service, because that is the order rule 21A walks them in and the order a
+   * leaver reading the working expects.
+   *
+   * A year with nothing seeded comes back with a null config rather than a
+   * fallback to another year's slabs. Taxing 2019's slice on 2024's rates
+   * would be a fabricated number wearing the clothes of a computed one, and
+   * the relief module refuses on the null and says which years were missing.
+   */
+  private async resolveSection89Years(args: {
+    tenantId: string;
+    financialYear: number;
+    regime: TaxRegime;
+    ageBand: TaxAgeBand;
+    yearsEarnedOver: number;
+    receiptYearConfig: IncomeTaxConfigInput | null;
+    enabled: boolean;
+  }): Promise<SettlementSection89Input> {
+    const receiptYear: Section89YearBasis = {
+      financialYear: args.financialYear,
+      config: args.receiptYearConfig,
+    };
+
+    // Nothing to spread, or no tax being computed at all: no point querying.
+    if (!args.enabled || args.yearsEarnedOver < 2 || !args.receiptYearConfig) {
+      return {
+        yearsEarnedOver: args.yearsEarnedOver,
+        receiptYear,
+        spreadYears:
+          args.yearsEarnedOver >= 1 && args.receiptYearConfig ? [receiptYear] : [],
+      };
+    }
+
+    const earlier = await Promise.all(
+      Array.from({ length: args.yearsEarnedOver - 1 }, (_, i) => {
+        const year = args.financialYear - (i + 1);
+        // No fallback callback: a band falling back to GENERAL in a year six
+        // years ago is not something to warn about once per settlement.
+        return resolveIncomeTaxConfig(
+          this.prisma,
+          args.tenantId,
+          year,
+          args.regime,
+          args.ageBand,
+        ).then(
+          (row): Section89YearBasis => ({
+            financialYear: year,
+            config: row
+              ? toIncomeTaxConfigInput(row.taxConfig, args.regime, row.ageBandUsed)
+              : null,
+          }),
+        );
+      }),
+    );
+
+    return {
+      yearsEarnedOver: args.yearsEarnedOver,
+      receiptYear,
+      spreadYears: [receiptYear, ...earlier],
     };
   }
 

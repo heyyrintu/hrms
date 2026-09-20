@@ -218,4 +218,20 @@ export class UpsertTaxDeclarationDto {
   @IsNumber()
   @Min(0)
   previousEmployerTds?: number;
+  @ApiPropertyOptional({
+    description:
+      'Section 10(10AA) exemption already used at an earlier employer. The ceiling is a lifetime one.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  previousEmployerEncashmentExemption?: number;
+  @ApiPropertyOptional({
+    description:
+      'Leave travel journeys already exempted in the current block of four calendar years. The Act allows two.',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  ltaJourneysUsedInBlock?: number;
 }

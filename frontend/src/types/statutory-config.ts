@@ -257,9 +257,48 @@ export interface EmployeeTaxDeclaration {
   otherIncome: string;
   /** Tax already deducted by a previous employer this year. */
   previousEmployerTds: string;
+  /**
+   * Section 10(10AA) exemption already used at an earlier employer. The
+   * ceiling is a lifetime one, so without this a leaver who used part of it
+   * elsewhere is over-exempted.
+   */
+  previousEmployerEncashmentExemption: string;
+  /**
+   * Section 10(5) journeys already exempted in the current block of four
+   * calendar years. The Act allows two, so a third exempts nothing however
+   * much is declared: the limit is on journeys, not on money.
+   */
+  ltaJourneysUsedInBlock: number;
+
+  /**
+   * The ceilings that actually apply to this declaration, from the tenant's
+   * configuration for the year.
+   *
+   * Every field is optional and the whole object may be absent, because a
+   * figure the employer has not configured must not be stated as though they
+   * had. A page that cannot confirm a ceiling should say so rather than print
+   * a statutory default and imply it was confirmed.
+   */
+  limits?: DeclarationLimits;
 
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Statutory maxima for one financial year, regime and age band.
+ *
+ * Money arrives as a decimal string; the children count is a count and arrives
+ * as a number. A field is present only where the configuration row carries it.
+ */
+export interface DeclarationLimits {
+  section80CLimit?: string;
+  section80DLimit?: string;
+  section80CCD1BLimit?: string;
+  /** Per child, per month, for at most `childrenAllowanceMaxChildren`. */
+  childrenEducationMonthlyLimit?: string;
+  hostelAllowanceMonthlyLimit?: string;
+  childrenAllowanceMaxChildren?: number;
 }
 
 export interface UpsertTaxDeclarationPayload {
@@ -279,6 +318,8 @@ export interface UpsertTaxDeclarationPayload {
   otherDeductions?: number;
   otherIncome?: number;
   previousEmployerTds?: number;
+  previousEmployerEncashmentExemption?: number;
+  ltaJourneysUsedInBlock?: number;
 }
 
 /**

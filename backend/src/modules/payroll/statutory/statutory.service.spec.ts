@@ -1046,3 +1046,431 @@ describe('StatutoryService.compute — section 10 exemptions beyond house rent',
     expect((r.taxComputation as any).verifiedDeductions.ltaExemption).toBe('30000.00');
   });
 });
+
+describe('StatutoryService.compute - the leave travel block and the allowance actually paid', () => {
+  let service: StatutoryService;
+  let prisma: any;
+
+  /** April 2026: month 1 of FY 2026-27, which opens in the 2026-2029 block. */
+  const april = {
+    tenantId: 'tenant-1',
+    employeeId: 'emp-1',
+    month: 4,
+    year: 2026,
+    pfWages: new Decimal(0),
+    grossPay: new Decimal(100000),
+    pfOptOut: true,
+    gender: null,
+    employeeRegime: 'OLD' as const,
+  };
+
+  const statutoryConfig = {
+    pfEnabled: false,
+    pfEmployeeRate: new Decimal(12), pfEmployerRate: new Decimal(12),
+    epsRate: new Decimal(8.33), pfWageCeiling: new Decimal(15000),
+    applyPfCeiling: true, edliRate: new Decimal(0.5), pfAdminRate: new Decimal(0.5),
+    esiEnabled: false, esiEmployeeRate: new Decimal(0.75),
+    esiEmployerRate: new Decimal(3.25), esiWageLimit: new Decimal(21000),
+    ptEnabled: false, ptState: null, ptMonths: [],
+    lwfEnabled: false, lwfEmployeeAmount: new Decimal(0),
+    lwfEmployerAmount: new Decimal(0), lwfMonths: [],
+    tdsEnabled: true,
+    defaultTaxRegime: 'OLD',
+    proofVerificationRequired: false,
+    proofCutoffMonth: 1,
+  };
+
+  const taxConfig = {
+    standardDeduction: new Decimal(50000),
+    rebateIncomeLimit: new Decimal(500000),
+    rebateMaxAmount: new Decimal(12500),
+    cessRate: new Decimal(4),
+    surchargeSlabs: [],
+    section80CLimit: new Decimal(150000),
+    section80DLimit: new Decimal(25000),
+    section80CCD1BLimit: new Decimal(50000),
+    childrenEducationMonthlyLimit: new Decimal(100),
+    hostelAllowanceMonthlyLimit: new Decimal(300),
+    childrenAllowanceMaxChildren: 2,
+    marginalReliefEnabled: true,
+    slabs: [
+      { fromAmount: new Decimal(0), toAmount: new Decimal(250000), rate: new Decimal(0) },
+      { fromAmount: new Decimal(250000), toAmount: new Decimal(500000), rate: new Decimal(5) },
+      { fromAmount: new Decimal(500000), toAmount: new Decimal(1000000), rate: new Decimal(20) },
+      { fromAmount: new Decimal(1000000), toAmount: null, rate: new Decimal(30) },
+    ],
+  };
+
+  function declaration(overrides: Record<string, unknown> = {}) {
+    return {
+      regime: 'OLD',
+      section80C: new Decimal(0),
+      section80D: new Decimal(0),
+      section80CCD1B: new Decimal(0),
+      section80CCD2: new Decimal(0),
+      hraExemption: new Decimal(0),
+      ltaExemption: new Decimal(0),
+      ltaJourneysUsedInBlock: 0,
+      childrenEducationAllowance: new Decimal(0),
+      hostelAllowance: new Decimal(0),
+      childrenCount: 0,
+      homeLoanInterest: new Decimal(0),
+      otherDeductions: new Decimal(0),
+      otherIncome: new Decimal(0),
+      previousEmployerTds: new Decimal(0),
+      ...overrides,
+    };
+  }
+
+  /** A structure that pays leave travel of 2,500 a month and nothing else. */
+  function ltaAllowance(paidThisMonth: string | null) {
+    return {
+      paidThisMonth: paidThisMonth === null ? {} : { lta: new Decimal(paidThisMonth) },
+      componentNames: {
+        LTA: ['Leave Travel Allowance'],
+        CHILDREN_EDUCATION: [],
+        HOSTEL_ALLOWANCE: [],
+      },
+    };
+  }
+
+  // Nothing exempt: 12,00,000 - 50,000 standard = 11,50,000 taxable;
+  // 12,500 + 1,00,000 + 30% of 1,50,000 = 1,57,500, cess 6,300, total
+  // 1,63,800, over twelve months 13,650.
+  const NOTHING_EXEMPT_TDS = '13650';
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        StatutoryService,
+        { provide: PrismaService, useValue: createMockPrismaService() },
+      ],
+    }).compile();
+
+    service = module.get(StatutoryService);
+    prisma = module.get(PrismaService);
+
+    prisma.payslip.findFirst.mockResolvedValue(null);
+    prisma.payslip.findMany.mockResolvedValue([]);
+    prisma.investmentProof.findMany.mockResolvedValue([]);
+    prisma.statutoryConfig.findUnique.mockResolvedValue(statutoryConfig);
+    prisma.incomeTaxConfig.findUnique.mockResolvedValue(taxConfig);
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(declaration());
+  });
+
+  it('exempts nothing for a third journey in the block, and says which block', async () => {
+    // Both journeys in 2026-2029 already used, so the 45,000 declared exempts
+    // nothing and the TDS is the same 13,650 as for an employee who declared
+    // nothing at all. Allowed, it would have been 12,480 a month.
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(
+      declaration({ ltaExemption: new Decimal(45000), ltaJourneysUsedInBlock: 2 }),
+    );
+
+    const r = await service.compute(april);
+
+    expect(r.tds.toString()).toBe(NOTHING_EXEMPT_TDS);
+
+    const working = r.taxComputation as any;
+    expect(working.ltaBlock.block).toBe('2026-2029');
+    expect(working.ltaBlock.journeysUsedInBlock).toBe(2);
+    expect(working.ltaBlock.journeysRemaining).toBe(0);
+    expect(working.section10Exemptions.LTA.declared).toBe('45000.00');
+    expect(working.section10Exemptions.LTA.allowed).toBe('0.00');
+    expect(working.section10Exemptions.LTA.limitedBy).toBe('LTA_BLOCK_EXHAUSTED');
+  });
+
+  it('allows the journey and names the block where one is left', async () => {
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(
+      declaration({ ltaExemption: new Decimal(45000), ltaJourneysUsedInBlock: 1 }),
+    );
+
+    const r = await service.compute(april);
+
+    // 12,00,000 - 50,000 - 45,000 = 11,05,000 taxable; 1,44,000 of tax,
+    // cess 5,760, total 1,49,760, over twelve months 12,480.
+    expect(r.tds.toString()).toBe('12480');
+
+    const working = r.taxComputation as any;
+    expect(working.ltaBlock.block).toBe('2026-2029');
+    expect(working.ltaBlock.journeysRemaining).toBe(1);
+    expect(working.section10Exemptions.LTA.allowed).toBe('45000.00');
+  });
+
+  it('reads a declaration that predates the question as nought journeys used', async () => {
+    // The regression that matters: a row written before the column existed
+    // carries no count, which must read as nought used and leave the tax
+    // exactly where it was.
+    const { ltaJourneysUsedInBlock, ...older } = declaration({
+      ltaExemption: new Decimal(45000),
+    });
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(older);
+
+    const r = await service.compute(april);
+
+    expect(r.tds.toString()).toBe('12480');
+    expect((r.taxComputation as any).ltaBlock.journeysRemaining).toBe(2);
+  });
+
+  it('exempts nothing where the employer pays no leave travel allowance', async () => {
+    // The structure marks components, but pays no leave travel at all. There
+    // is no receipt for the exemption to reduce, so the 45,000 declared
+    // exempts nothing however it was evidenced.
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(
+      declaration({ ltaExemption: new Decimal(45000) }),
+    );
+
+    const r = await service.compute({ ...april, section10Allowances: ltaAllowance(null) });
+
+    expect(r.tds.toString()).toBe(NOTHING_EXEMPT_TDS);
+
+    const working = r.taxComputation as any;
+    expect(working.section10AllowancesPaid.lta).toBe('0.00');
+    expect(working.section10Exemptions.LTA.paidByEmployer).toBe('0.00');
+    expect(working.section10Exemptions.LTA.allowed).toBe('0.00');
+    expect(working.section10Exemptions.LTA.limitedBy).toBe('ALLOWANCE_PAID');
+  });
+
+  it('caps the exemption at the year projected from this month s allowance', async () => {
+    // 2,500 a month of leave travel allowance, twelve months to run, so
+    // 30,000 for the year against the 45,000 declared.
+    //
+    // 12,00,000 - 50,000 standard - 30,000 = 11,20,000 taxable;
+    // 12,500 + 1,00,000 + 30% of 1,20,000 (36,000) = 1,48,500, cess 5,940,
+    // total 1,54,440, over twelve months 12,870.
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(
+      declaration({ ltaExemption: new Decimal(45000) }),
+    );
+
+    const r = await service.compute({ ...april, section10Allowances: ltaAllowance('2500') });
+
+    expect(r.tds.toString()).toBe('12870');
+
+    const working = r.taxComputation as any;
+    expect(working.section10AllowancesPaid.lta).toBe('30000.00');
+    expect(working.section10Exemptions.LTA.allowed).toBe('30000.00');
+    expect(working.section10Exemptions.LTA.disallowed).toBe('15000.00');
+  });
+
+  it('projects the allowance mid-year exactly as it projects the gross', async () => {
+    // October, the seventh month: six payslips behind, six months to run.
+    // Gross 6 x 1,00,000 + 6 x 1,00,000 = 12,00,000, the same year as the
+    // April projection. Leave travel 6 x 2,500 + 6 x 2,500 = 30,000, the
+    // same year too - the point being that the figure does not depend on
+    // which month asked.
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(
+      declaration({ ltaExemption: new Decimal(45000) }),
+    );
+    prisma.payslip.findMany.mockResolvedValue(
+      Array.from({ length: 6 }, () => ({
+        grossPay: new Decimal(100000),
+        professionalTax: new Decimal(0),
+        tds: new Decimal(0),
+        earnings: [{ name: 'Leave Travel Allowance', amount: '2500' }],
+      })),
+    );
+
+    const r = await service.compute({
+      ...april,
+      month: 10,
+      section10Allowances: ltaAllowance('2500'),
+    });
+
+    const working = r.taxComputation as any;
+    expect(working.projectedAnnualGross).toBe('1200000.00');
+    expect(working.section10AllowancesPaid.lta).toBe('30000.00');
+    expect(working.section10Exemptions.LTA.allowed).toBe('30000.00');
+    // 1,54,440 for the year, nothing collected yet, six months to run.
+    expect(working.annualTax).toBe('154440.00');
+    expect(r.tds.toString()).toBe('25740');
+  });
+
+  it('deducts exactly what it did before for an employer who marks no component', async () => {
+    // Nothing is passed, so the rule is not in force: the 45,000 declared is
+    // exempt in full, as it was before any of this existed.
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(
+      declaration({ ltaExemption: new Decimal(45000) }),
+    );
+
+    const r = await service.compute(april);
+
+    expect(r.tds.toString()).toBe('12480');
+
+    const working = r.taxComputation as any;
+    expect(working.section10AllowancesPaid).toBeNull();
+    expect(working.section10Exemptions.LTA.paidByEmployer).toBeNull();
+    expect(working.section10Exemptions.LTA.allowed).toBe('45000.00');
+  });
+});
+
+describe('StatutoryService.getDeclaration - the ceilings that actually apply to it', () => {
+  let service: StatutoryService;
+  let prisma: any;
+
+  const declarationRow = {
+    id: 'decl-1',
+    tenantId: 'tenant-1',
+    employeeId: 'emp-1',
+    financialYear: 2026,
+    regime: 'OLD',
+    section80C: new Decimal(120000),
+    section80D: new Decimal(0),
+    section80CCD1B: new Decimal(0),
+    section80CCD2: new Decimal(0),
+    hraExemption: new Decimal(0),
+    ltaExemption: new Decimal(0),
+    childrenEducationAllowance: new Decimal(0),
+    hostelAllowance: new Decimal(0),
+    childrenCount: 0,
+    homeLoanInterest: new Decimal(0),
+    otherDeductions: new Decimal(0),
+    otherIncome: new Decimal(0),
+    previousEmployerTds: new Decimal(0),
+  };
+
+  const configRow = {
+    standardDeduction: new Decimal(50000),
+    rebateIncomeLimit: new Decimal(500000),
+    rebateMaxAmount: new Decimal(12500),
+    cessRate: new Decimal(4),
+    surchargeSlabs: [{ threshold: 5000000, rate: 10 }],
+    // A tenant who has raised the ceilings for the year. The page must warn
+    // against these, not against the figures printed in the source.
+    section80CLimit: new Decimal(200000),
+    section80DLimit: new Decimal(50000),
+    section80CCD1BLimit: new Decimal(75000),
+    childrenEducationMonthlyLimit: new Decimal(150),
+    hostelAllowanceMonthlyLimit: new Decimal(450),
+    childrenAllowanceMaxChildren: 3,
+    marginalReliefEnabled: true,
+    slabs: [
+      { fromAmount: new Decimal(0), toAmount: null, rate: new Decimal(10) },
+    ],
+  };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        StatutoryService,
+        { provide: PrismaService, useValue: createMockPrismaService() },
+      ],
+    }).compile();
+
+    service = module.get(StatutoryService);
+    prisma = module.get(PrismaService);
+
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(declarationRow);
+    prisma.employee.findUnique.mockResolvedValue({ dateOfBirth: null });
+    prisma.incomeTaxConfig.findUnique.mockResolvedValue(configRow);
+  });
+
+  it('leaves every field of the declaration reachable exactly where it was', async () => {
+    const r: any = await service.getDeclaration('tenant-1', 'emp-1', 2026);
+
+    expect(r.id).toBe('decl-1');
+    expect(r.financialYear).toBe(2026);
+    expect(r.regime).toBe('OLD');
+    expect(r.section80C.toString()).toBe('120000');
+    expect(r.childrenCount).toBe(0);
+  });
+
+  it('carries the year and regime ceilings the calculation will actually apply', async () => {
+    // The employee is warned against 2,00,000 because that is what this
+    // tenant configured for the year, not against the 1,50,000 printed in
+    // the page's source.
+    const r: any = await service.getDeclaration('tenant-1', 'emp-1', 2026);
+
+    expect(r.limits.section80CLimit).toBe('200000.00');
+    expect(r.limits.section80DLimit).toBe('50000.00');
+    expect(r.limits.section80CCD1BLimit).toBe('75000.00');
+    expect(r.limits.childrenEducationMonthlyLimit).toBe('150.00');
+    expect(r.limits.hostelAllowanceMonthlyLimit).toBe('450.00');
+    expect(r.limits.childrenAllowanceMaxChildren).toBe(3);
+  });
+
+  it('reads the ceilings for the declaration s own regime', async () => {
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue({
+      ...declarationRow,
+      regime: 'NEW',
+    });
+
+    await service.getDeclaration('tenant-1', 'emp-1', 2026);
+
+    const where = prisma.incomeTaxConfig.findUnique.mock.calls[0][0].where;
+    expect(where.tenantId_financialYear_regime_ageBand).toEqual({
+      tenantId: 'tenant-1',
+      financialYear: 2026,
+      regime: 'NEW',
+      ageBand: 'GENERAL',
+    });
+  });
+
+  it('reads the band the employee s age puts them in, as the tax does', async () => {
+    // Born in 1960, so 66 on 31 March 2027: a senior citizen, whose row is
+    // seeded separately and may carry different figures.
+    prisma.employee.findUnique.mockResolvedValue({
+      dateOfBirth: new Date('1960-06-15T12:00:00Z'),
+    });
+
+    await service.getDeclaration('tenant-1', 'emp-1', 2026);
+
+    const where = prisma.incomeTaxConfig.findUnique.mock.calls[0][0].where;
+    expect(where.tenantId_financialYear_regime_ageBand.ageBand).toBe('SENIOR');
+  });
+
+  it('sends no ceilings at all where the year has no configuration', async () => {
+    // Saying nothing is the honest answer: the page then falls back to the
+    // statutory defaults and does not present them as figures the employer
+    // has confirmed.
+    prisma.incomeTaxConfig.findUnique.mockResolvedValue(null);
+
+    const r: any = await service.getDeclaration('tenant-1', 'emp-1', 2026);
+
+    expect(r.id).toBe('decl-1');
+    expect(r.limits).toBeUndefined();
+  });
+
+  it('omits a ceiling the configuration row does not carry', async () => {
+    // A row seeded before the section 10(14) columns existed states nothing
+    // about them, and a default sent in its place would read as confirmed.
+    const {
+      childrenEducationMonthlyLimit,
+      hostelAllowanceMonthlyLimit,
+      childrenAllowanceMaxChildren,
+      ...older
+    } = configRow;
+    prisma.incomeTaxConfig.findUnique.mockResolvedValue(older);
+
+    const r: any = await service.getDeclaration('tenant-1', 'emp-1', 2026);
+
+    expect(r.limits.section80CLimit).toBe('200000.00');
+    expect(r.limits.childrenEducationMonthlyLimit).toBeUndefined();
+    expect(r.limits.hostelAllowanceMonthlyLimit).toBeUndefined();
+    expect(r.limits.childrenAllowanceMaxChildren).toBeUndefined();
+  });
+
+  it('leaks nothing else about the tenant s configuration', async () => {
+    // Every employee reaches this through my-declaration, which carries no
+    // role guard. The ceilings are theirs to know; the slabs, the rebate and
+    // the surcharge bands are not theirs to read from here.
+    const r: any = await service.getDeclaration('tenant-1', 'emp-1', 2026);
+
+    expect(Object.keys(r.limits).sort()).toEqual([
+      'childrenAllowanceMaxChildren',
+      'childrenEducationMonthlyLimit',
+      'hostelAllowanceMonthlyLimit',
+      'section80CCD1BLimit',
+      'section80CLimit',
+      'section80DLimit',
+    ]);
+  });
+
+  it('returns null where there is no declaration, as it always did', async () => {
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(null);
+
+    const r = await service.getDeclaration('tenant-1', 'emp-1', 2026);
+
+    expect(r).toBeNull();
+    // Nothing to attach ceilings to, so the configuration is not read at all.
+    expect(prisma.incomeTaxConfig.findUnique).not.toHaveBeenCalled();
+  });
+});

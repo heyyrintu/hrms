@@ -123,6 +123,9 @@ function makeInput(overrides: Record<string, unknown> = {}) {
     ageBandFallback: false,
     parts: makeParts(),
     yearToDate: makeYearToDate(),
+    // Comfortably more than any tax below, so the cap does not bite unless a
+    // test is about the cap.
+    payableBeforeTax: new Decimal(5000000),
     ...overrides,
   };
 }
@@ -196,6 +199,7 @@ describe('computeSettlementTax', () => {
       // 1,50,000 = 3,00,000, on top of the 9,00,000 already paid.
       expect(result.working.settlementTaxable).toEqual({
         proRataSalary: '100000.00',
+        proRataSalaryExcluded: '0.00',
         gratuityTaxable: '50000.00',
         leaveEncashmentTaxable: '150000.00',
         otherEarnings: '0.00',
@@ -409,6 +413,328 @@ describe('computeSettlementTax', () => {
 
       expect(result.working.ageBandRequested).toBe(TaxAgeBand.SENIOR);
       expect(result.working.ageBandFallbackApplied).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Tax capped at what is actually payable
+  // -------------------------------------------------------------------------
+
+  describe('the cap at what is actually payable', () => {
+    /**
+     * The year's tax comes to 31,500 as above, but this settlement only pays
+     * 20,000 after notice recovery. An employer cannot deduct from a payment
+     * that does not exist, so 20,000 comes off and the remaining 11,500 is the
+     * leaver's own liability on assessment.
+     */
+    it('deducts no more than the settlement pays, and records the balance', () => {
+      const result = computeSettlementTax(
+        makeInput({ payableBeforeTax: new Decimal(20000) }) as never,
+      );
+
+      expect(result.working.annualTax).toBe('71500.00');
+      expect(result.working.taxBeforeCap).toBe('31500.00');
+      expect(result.tds.toFixed(2)).toBe('20000.00');
+      expect(result.working.uncollectedTax).toBe('11500.00');
+      expect(result.working.payableBeforeTax).toBe('20000.00');
+      expect(result.working.computedTds).toBe('20000.00');
+      expect(result.working.note).toMatch(/11500\.00/);
+    });
+
+    it('deducts nothing from a settlement that pays nothing', () => {
+      const result = computeSettlementTax(
+        makeInput({ payableBeforeTax: new Decimal(0) }) as never,
+      );
+
+      expect(result.tds.toFixed(2)).toBe('0.00');
+      expect(result.working.taxBeforeCap).toBe('31500.00');
+      expect(result.working.uncollectedTax).toBe('31500.00');
+    });
+
+    /**
+     * Notice recovery can legitimately drive the net negative: the employer is
+     * owed that money either way. There is still nothing to deduct tax from.
+     */
+    it('deducts nothing when notice recovery has already taken the payment away', () => {
+      const result = computeSettlementTax(
+        makeInput({ payableBeforeTax: new Decimal(-45000) }) as never,
+      );
+
+      expect(result.tds.toFixed(2)).toBe('0.00');
+      expect(result.working.uncollectedTax).toBe('31500.00');
+    });
+
+    it('leaves the tax alone when the settlement covers it', () => {
+      const result = computeSettlementTax(
+        makeInput({ payableBeforeTax: new Decimal(31500) }) as never,
+      );
+
+      expect(result.tds.toFixed(2)).toBe('31500.00');
+      expect(result.working.uncollectedTax).toBe('0.00');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The month of exit
+  // -------------------------------------------------------------------------
+
+  describe('the month of exit', () => {
+    /**
+     * Payroll has already run for the month of exit, and the settlement also
+     * pays pro-rata salary for it. Counting both would tax that month twice:
+     *
+     *   year to date, payslips included                9,00,000
+     *   settlement, pro-rata excluded                  2,00,000
+     *   ------------------------------------------------------
+     *   annual gross                                  11,00,000
+     *   less standard deduction                          75,000
+     *   taxable                                       10,25,000
+     *     3,00,000 - 7,00,000 at 5%                      20,000
+     *     7,00,000 - 10,00,000 at 10%                    30,000
+     *     10,00,000 - 10,25,000 at 15%                    3,750
+     *   tax                                              53,750
+     *   cess at 4%                                        2,150
+     *   ------------------------------------------------------
+     *   annual tax                                       55,900
+     *   less already deducted                            40,000
+     *   ------------------------------------------------------
+     *   to deduct                                        15,900
+     */
+    it('does not tax the exit month twice when payroll has already run it', () => {
+      const result = computeSettlementTax(
+        makeInput({
+          yearToDate: makeYearToDate({
+            exitMonthPayslips: { count: 1, grossPaid: new Decimal(90000) },
+          }),
+        }) as never,
+      );
+
+      expect(result.working.settlementTaxable.proRataSalary).toBe('100000.00');
+      expect(result.working.settlementTaxable.proRataSalaryExcluded).toBe('100000.00');
+      expect(result.working.settlementTaxable.total).toBe('200000.00');
+      expect(result.working.projectedAnnualGross).toBe('1100000.00');
+      expect(result.working.annualTax).toBe('55900.00');
+      expect(result.tds.toFixed(2)).toBe('15900.00');
+    });
+
+    it('records what it excluded and why', () => {
+      const result = computeSettlementTax(
+        makeInput({
+          yearToDate: makeYearToDate({
+            exitMonthPayslips: { count: 1, grossPaid: new Decimal(90000) },
+          }),
+        }) as never,
+      );
+
+      expect(result.working.exitMonth).toEqual({
+        payslipsAlreadyRun: 1,
+        payslipGross: '90000.00',
+        proRataExcluded: '100000.00',
+        note: expect.stringMatching(/already run/i),
+      });
+      // Nothing about what is paid has changed: only what is taxed.
+      expect(result.working.exitMonth?.note).toMatch(/still paid/i);
+    });
+
+    /** No payslip for that month, so the pro-rata is the only record of it. */
+    it('taxes the pro-rata when payroll has not run the exit month', () => {
+      const result = computeSettlementTax(
+        makeInput({
+          yearToDate: makeYearToDate({
+            exitMonthPayslips: { count: 0, grossPaid: new Decimal(0) },
+          }),
+        }) as never,
+      );
+
+      expect(result.working.settlementTaxable.total).toBe('300000.00');
+      expect(result.working.exitMonth).toBeNull();
+      expect(result.tds.toFixed(2)).toBe('31500.00');
+    });
+
+    /**
+     * A settlement that pays no pro-rata salary cannot be double counting it,
+     * whatever payroll has already run.
+     */
+    it('excludes nothing when the settlement pays no pro-rata salary', () => {
+      const result = computeSettlementTax(
+        makeInput({
+          parts: makeParts({ proRataSalary: new Decimal(0) }),
+          yearToDate: makeYearToDate({
+            exitMonthPayslips: { count: 1, grossPaid: new Decimal(90000) },
+          }),
+        }) as never,
+      );
+
+      expect(result.working.settlementTaxable.total).toBe('200000.00');
+      expect(result.working.exitMonth).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Section 89
+  // -------------------------------------------------------------------------
+
+  describe('relief under section 89', () => {
+    /**
+     * Ten months of salary at 9,00,000, then a settlement that bunches three
+     * years of gratuity and leave into the same year:
+     *
+     *   pro-rata salary                                1,00,000
+     *   taxable gratuity                               4,00,000
+     *   taxable leave encashment                       5,00,000
+     *   ------------------------------------------------------
+     *   settlement                                    10,00,000
+     *   annual gross with the lump                    19,00,000
+     *   annual gross without it                       10,00,000
+     *
+     *   tax on 19,00,000 (taxable 18,25,000)           2,47,000
+     *   tax on 10,00,000 (taxable  9,25,000)             44,200
+     *   the bunching cost                              2,02,800
+     *
+     *   a 3,00,000 slice on 10,00,000, so tax on
+     *   13,00,000 (taxable 12,25,000)                    88,400
+     *   less the year's own tax                          44,200
+     *   the slice costs                                  44,200
+     *   three of them                                  1,32,600
+     *
+     *   relief = 2,02,800 - 1,32,600                     70,200
+     *   annual tax after relief                        1,76,800
+     *   less already deducted                             40,000
+     *   ------------------------------------------------------
+     *   to deduct                                      1,36,800
+     */
+    const bunched = {
+      parts: makeParts({
+        proRataSalary: new Decimal(100000),
+        gratuityTaxable: new Decimal(400000),
+        leaveEncashmentTaxable: new Decimal(500000),
+      }),
+      section89: {
+        yearsEarnedOver: 3,
+        receiptYear: { financialYear: 2024, config: NEW_REGIME },
+        spreadYears: [
+          { financialYear: 2024, config: NEW_REGIME },
+          { financialYear: 2023, config: NEW_REGIME },
+          { financialYear: 2022, config: NEW_REGIME },
+        ],
+      },
+    };
+
+    it('reduces the tax by the relief the bunching earned', () => {
+      const result = computeSettlementTax(makeInput(bunched) as never);
+
+      expect(result.working.projectedAnnualGross).toBe('1900000.00');
+      expect(result.working.annualTaxBeforeRelief).toBe('247000.00');
+      expect(result.working.section89.relief).toBe('70200.00');
+      expect(result.working.annualTax).toBe('176800.00');
+      expect(result.tds.toFixed(2)).toBe('136800.00');
+    });
+
+    it('keeps the working of the relief, year by year', () => {
+      const result = computeSettlementTax(makeInput(bunched) as never);
+
+      expect(result.working.section89.arrears).toBe('900000.00');
+      expect(result.working.section89.yearsEarnedOver).toBe(3);
+      expect(result.working.section89.taxIfSpread).toBe('132600.00');
+      expect(result.working.section89.years).toHaveLength(3);
+      expect(result.working.section89.ineligibleReason).toBeNull();
+    });
+
+    /**
+     * The arrears are the bunched heads only. Pro-rata salary and other
+     * earnings are this year's own income, not an earlier year's caught up.
+     */
+    it('treats only gratuity and leave encashment as the bunched amount', () => {
+      const result = computeSettlementTax(makeInput(bunched) as never);
+
+      expect(result.working.section89.arrears).toBe('900000.00');
+      expect(result.working.section89.incomeWithoutArrears).toBe('1000000.00');
+    });
+
+    it('gives no relief, with a reason, when an earlier year has no slabs', () => {
+      const result = computeSettlementTax(
+        makeInput({
+          ...bunched,
+          section89: {
+            ...bunched.section89,
+            spreadYears: [
+              { financialYear: 2024, config: NEW_REGIME },
+              { financialYear: 2023, config: null },
+              { financialYear: 2022, config: null },
+            ],
+          },
+        }) as never,
+      );
+
+      expect(result.working.section89.relief).toBe('0.00');
+      expect(result.working.section89.ineligibleReason).toBe(
+        'SECTION_89_NO_TAX_CONFIGURATION',
+      );
+      expect(result.working.annualTax).toBe('247000.00');
+      expect(result.tds.toFixed(2)).toBe('207000.00');
+    });
+
+    it('gives no relief, with a reason, when nothing says how many years', () => {
+      const result = computeSettlementTax(makeInput({ parts: bunched.parts }) as never);
+
+      expect(result.working.section89.relief).toBe('0.00');
+      expect(result.working.section89.ineligibleReason).toBe(
+        'SECTION_89_YEARS_EARNED_OVER_UNKNOWN',
+      );
+      expect(result.working.section89.note).toMatch(/Form 10E/);
+    });
+
+    it('never lets the relief make the year\'s tax negative', () => {
+      const result = computeSettlementTax(
+        makeInput({
+          ...bunched,
+          yearToDate: makeYearToDate({ grossPaid: new Decimal(0), tdsDeducted: new Decimal(0) }),
+        }) as never,
+      );
+
+      expect(new Decimal(result.working.annualTax as string).isNegative()).toBe(false);
+      expect(result.tds.isNegative()).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Approved proofs
+  // -------------------------------------------------------------------------
+
+  describe('approved proofs', () => {
+    it('records that verified figures replaced declared ones, and both sets', () => {
+      const result = computeSettlementTax(
+        makeInput({
+          regime: 'OLD',
+          config: OLD_REGIME,
+          declaration: toTaxDeclarationInput({ section80C: new Decimal(0) }),
+          proofs: {
+            applied: true,
+            cutoffMonth: 1,
+            verified: { section80C: '40000.00', hraExemption: '0.00' },
+            declared: { section80C: '150000.00', hraExemption: '60000.00' },
+          },
+        }) as never,
+      );
+
+      expect(result.working.proofs).toEqual({
+        applied: true,
+        cutoffMonth: 1,
+        verified: { section80C: '40000.00', hraExemption: '0.00' },
+        declared: { section80C: '150000.00', hraExemption: '60000.00' },
+      });
+      expect(result.working.note).toMatch(/approved proof/i);
+    });
+
+    it('records that the declaration stood where verification was not in force', () => {
+      const result = computeSettlementTax(makeInput() as never);
+
+      expect(result.working.proofs).toEqual({
+        applied: false,
+        cutoffMonth: null,
+        verified: null,
+        declared: null,
+      });
     });
   });
 });

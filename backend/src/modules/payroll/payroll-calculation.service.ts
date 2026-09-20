@@ -1,7 +1,16 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Decimal } from '@prisma/client/runtime/library';
-import { StatutoryService, StatutoryResult } from './statutory/statutory.service';
+import {
+  Section10AllowancesInput,
+  StatutoryService,
+  StatutoryResult,
+} from './statutory/statutory.service';
+import {
+  Section10AllowancesPaid,
+  Section10ComponentHead,
+} from './statutory/completion.types';
+import { SECTION_10_HEAD_TO_ALLOWANCE_KEY } from './statutory/statutory.calculators';
 
 interface SalaryComponent {
   name: string;
@@ -14,7 +23,27 @@ interface SalaryComponent {
    * conveyance are excluded unless flagged. Basic pay is always included.
    */
   pfApplicable?: boolean;
+  /**
+   * Which section 10 allowance this earning is paid under, where it is one.
+   *
+   * Section 10 exempts an allowance *received*: where the employer pays no
+   * leave travel, children's education or hostel allowance at all, there is
+   * nothing to exempt however much the employee declares. Marking the
+   * component is how the structure says what it pays, and it follows
+   * `pfApplicable` above rather than inventing a second convention.
+   *
+   * An unmarked structure passes nothing to the statutory engine, and every
+   * exemption is then computed from exactly the figures it was before.
+   */
+  section10Head?: Section10ComponentHead;
 }
+
+/** The three heads, in the order the working reports them. */
+const SECTION_10_HEADS: readonly Section10ComponentHead[] = [
+  'LTA',
+  'CHILDREN_EDUCATION',
+  'HOSTEL_ALLOWANCE',
+];
 
 /**
  * Money is carried as Decimal end to end. Payslip and PayrollRun columns are
@@ -195,6 +224,17 @@ export class PayrollCalculationService {
         return line ? sum.add(line.amount) : sum;
       }, proratedBasePay);
 
+    // What this month actually pays under each section 10 allowance head, and
+    // through which earning lines, so the year to date can be summed from the
+    // payslips already run. Matched by name against the month's earnings the
+    // same way provident fund wages are, so the figure passed is the figure on
+    // the payslip, pro-rating and all.
+    //
+    // Only an *earning* can carry a head: section 10 exempts an allowance
+    // received, and a deduction is not one. Undefined when the structure marks
+    // nothing, which leaves every exemption exactly where it was.
+    const section10Allowances = this.section10AllowancesPaid(components, earnings);
+
     const statutory = await this.statutoryService.compute({
       tenantId,
       employeeId,
@@ -202,6 +242,7 @@ export class PayrollCalculationService {
       year,
       pfWages,
       grossPay,
+      ...(section10Allowances ? { section10Allowances } : {}),
       pfOptOut: salary.employee.pfOptOut,
       gender: salary.employee.gender,
       dateOfBirth: salary.employee.dateOfBirth,
@@ -237,6 +278,43 @@ export class PayrollCalculationService {
       otPay,
       statutory,
     };
+  }
+
+  /**
+   * What the month pays under each section 10 allowance head.
+   *
+   * Returns undefined where no earning carries a head, so an employer who has
+   * marked nothing is computed exactly as before — the statutory engine is not
+   * told about allowances at all, rather than told there are none.
+   *
+   * Where anything is marked, all three heads are reported, including the ones
+   * nothing is marked under: a head at nought exempts nothing, which is the
+   * rule. Marking one component therefore opts the whole of section 10(5) and
+   * 10(14) into being capped at what was received.
+   */
+  private section10AllowancesPaid(
+    components: SalaryComponent[],
+    earnings: { name: string; amount: Decimal }[],
+  ): Section10AllowancesInput | undefined {
+    const marked = components.filter((c) => c.type === 'earning' && c.section10Head);
+    if (marked.length === 0) return undefined;
+
+    const paidThisMonth: Section10AllowancesPaid = {};
+    const componentNames = {} as Record<Section10ComponentHead, string[]>;
+
+    for (const head of SECTION_10_HEADS) {
+      const names = marked.filter((c) => c.section10Head === head).map((c) => c.name);
+      componentNames[head] = names;
+      paidThisMonth[SECTION_10_HEAD_TO_ALLOWANCE_KEY[head]] = names.reduce(
+        (sum, name) => {
+          const line = earnings.find((e) => e.name === name);
+          return line ? sum.add(line.amount) : sum;
+        },
+        new Decimal(0),
+      );
+    }
+
+    return { paidThisMonth, componentNames };
   }
 
   private async getWorkingDays(

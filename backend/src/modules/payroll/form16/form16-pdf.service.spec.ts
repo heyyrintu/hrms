@@ -1,7 +1,59 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { Decimal } from '@prisma/client/runtime/library';
+import * as zlib from 'zlib';
 import { Form16PdfService } from './form16-pdf.service';
 import { Form16PartB, Form16Quarter } from './form16.service';
+import { Section10ExemptionEntry } from '../statutory/statutory.calculators';
+
+/**
+ * Recovers the words PDFKit drew, for asserting on rendered content the way
+ * `payroll-pdf.service.spec.ts`-style tests would if this codebase had one.
+ *
+ * PDFKit writes each page's content as a Flate-compressed stream of text
+ * operators, showing text as hex strings inside `TJ`/`Tj`, e.g.
+ * `[<48656c6c6f> 0] TJ`. Decoding every hex run in document order and
+ * concatenating the bytes reconstructs the words for the plain Helvetica
+ * text this service renders (WinAnsi bytes are ASCII for the characters used
+ * here). This only proves text is present, not its on-page position — a
+ * genuine visual check still needs the PDF opened and read.
+ */
+function extractPdfText(buffer: Buffer): string {
+  const raw = buffer.toString('latin1');
+  const streamRe = /stream\r?\n([\s\S]*?)endstream/g;
+  let streamMatch: RegExpExecArray | null;
+  let decompressed = '';
+  while ((streamMatch = streamRe.exec(raw))) {
+    try {
+      decompressed += zlib.inflateSync(Buffer.from(streamMatch[1], 'latin1')).toString('latin1');
+    } catch {
+      // Not a Flate stream (e.g. an embedded font program) — skip it.
+    }
+  }
+
+  let text = '';
+  const hexRe = /<([0-9A-Fa-f]+)>/g;
+  let hexMatch: RegExpExecArray | null;
+  while ((hexMatch = hexRe.exec(decompressed))) {
+    text += Buffer.from(hexMatch[1], 'hex').toString('latin1');
+  }
+  return text;
+}
+
+function section10Entry(
+  overrides: Partial<Section10ExemptionEntry> = {},
+): Section10ExemptionEntry {
+  return {
+    head: 'HRA',
+    declared: new Decimal(0),
+    limit: null,
+    allowed: new Decimal(0),
+    disallowed: new Decimal(0),
+    paidByEmployer: null,
+    ltaBlock: null,
+    limitedBy: 'DECLARED',
+    ...overrides,
+  };
+}
 
 function quarter(q: Form16Quarter['quarter'], tax: number): Form16Quarter {
   return {
@@ -180,5 +232,115 @@ describe('Form16PdfService', () => {
     );
 
     expect(buffer.subarray(0, 5).toString()).toBe('%PDF-');
+  });
+
+  describe('section 10 breakdown beneath line 2', () => {
+    it('shows each head that has a figure, allowed amount included', async () => {
+      const buffer = await service.generatePartBPdf(
+        partB({
+          allowancesExemptSection10Breakdown: [
+            section10Entry({ head: 'HRA', declared: new Decimal(96000), allowed: new Decimal(96000) }),
+            section10Entry({
+              head: 'LTA',
+              declared: new Decimal(18000),
+              allowed: new Decimal(18000),
+            }),
+          ],
+        }),
+      );
+
+      const text = extractPdfText(buffer);
+      expect(text).toContain('House rent allowance');
+      expect(text).toContain('96,000.00');
+      expect(text).toContain('Leave travel allowance');
+      expect(text).toContain('18,000.00');
+    });
+
+    it('shows both the declared and the allowed figure where a head was trimmed to a ceiling', async () => {
+      const buffer = await service.generatePartBPdf(
+        partB({
+          allowancesExemptSection10Breakdown: [
+            section10Entry({
+              head: 'CHILDREN_EDUCATION',
+              declared: new Decimal(5000),
+              limit: new Decimal(1200),
+              allowed: new Decimal(1200),
+              disallowed: new Decimal(3800),
+            }),
+          ],
+        }),
+      );
+
+      const text = extractPdfText(buffer);
+      expect(text).toContain("Children's education allowance");
+      // Both figures must appear: what was declared and what survived the cap.
+      expect(text).toContain('5,000.00');
+      expect(text).toContain('1,200.00');
+    });
+
+    it('leaves out a head with nothing declared and nothing allowed', async () => {
+      const buffer = await service.generatePartBPdf(
+        partB({
+          allowancesExemptSection10Breakdown: [
+            section10Entry({ head: 'HRA', declared: new Decimal(96000), allowed: new Decimal(96000) }),
+            section10Entry({ head: 'LTA' }), // nil: declared 0, allowed 0
+            section10Entry({ head: 'HOSTEL_ALLOWANCE' }), // nil too
+          ],
+        }),
+      );
+
+      const text = extractPdfText(buffer);
+      expect(text).toContain('House rent allowance');
+      expect(text).not.toContain('Leave travel allowance');
+      expect(text).not.toContain('Hostel allowance');
+    });
+
+    it('renders exactly as before when there is no section 10 breakdown at all', async () => {
+      const buffer = await service.generatePartBPdf(partB());
+
+      expect(buffer.subarray(0, 5).toString()).toBe('%PDF-');
+      const text = extractPdfText(buffer);
+      expect(text).not.toContain('House rent allowance');
+      expect(text).not.toContain('Leave travel allowance');
+      expect(text).not.toContain("Children's education allowance");
+      expect(text).not.toContain('Hostel allowance');
+      // Line 2 itself is unaffected either way.
+      expect(text).toContain('Less: allowances exempt under section 10');
+    });
+
+    it('does not collide with the line above or below it', async () => {
+      const buffer = await service.generatePartBPdf(
+        partB({
+          allowancesExemptSection10Breakdown: [
+            section10Entry({ head: 'HRA', declared: new Decimal(96000), allowed: new Decimal(96000) }),
+            section10Entry({
+              head: 'CHILDREN_EDUCATION',
+              declared: new Decimal(5000),
+              limit: new Decimal(1200),
+              allowed: new Decimal(1200),
+              disallowed: new Decimal(3800),
+            }),
+            section10Entry({
+              head: 'HOSTEL_ALLOWANCE',
+              declared: new Decimal(9000),
+              limit: new Decimal(7200),
+              allowed: new Decimal(7200),
+              disallowed: new Decimal(1800),
+            }),
+          ],
+        }),
+      );
+
+      const text = extractPdfText(buffer);
+      // Line 2 and line 3 must both still be present, in order, with the new
+      // breakdown rows between them rather than merged into either line.
+      const line2 = text.indexOf('Less: allowances exempt under section 10');
+      const line3 = text.indexOf('Balance (1 - 2)');
+      expect(line2).toBeGreaterThan(-1);
+      expect(line3).toBeGreaterThan(line2);
+      expect(text.slice(line2, line3)).toContain('House rent allowance');
+      expect(text.slice(line2, line3)).toContain("Children's education allowance");
+      expect(text.slice(line2, line3)).toContain('Hostel allowance');
+    });
   });
 });
