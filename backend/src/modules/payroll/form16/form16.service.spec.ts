@@ -894,4 +894,28 @@ describe('Form16Service.computePartB — section 10 exemptions beyond house rent
 
     expect(result.notes.join(' ')).toMatch(/actually paid|was paid/i);
   });
+
+  it('does not call a verified figure "declared" once proofs are in force', async () => {
+    // With verification on, these figures are what a reviewer accepted, not
+    // what the employee declared. A note calling them declared misdescribes
+    // the very thing the certificate exists to state.
+    prisma.statutoryConfig.findUnique.mockResolvedValue({
+      proofVerificationRequired: true,
+      proofCutoffMonth: 1,
+    });
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue({
+      regime: 'OLD',
+      ltaExemption: new Decimal(45000),
+      ltaJourneysUsedInBlock: 0,
+    });
+    prisma.investmentProof.findMany.mockResolvedValue([
+      { section: 'LTA', verifiedAmount: new Decimal(30000) },
+    ]);
+
+    const result = await service.computePartB(TENANT, EMPLOYEE, FY, mockHrAdmin);
+
+    const notes = result.notes.join(' ');
+    expect(notes).toMatch(/accepted on the evidence|verified/i);
+    expect(notes).not.toMatch(/what was declared and allowed/i);
+  });
 });

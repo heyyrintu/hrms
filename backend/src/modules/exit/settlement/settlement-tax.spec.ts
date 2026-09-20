@@ -123,6 +123,9 @@ function makeInput(overrides: Record<string, unknown> = {}) {
     ageBandFallback: false,
     parts: makeParts(),
     yearToDate: makeYearToDate(),
+    // Furnished by default so the relief cases below have something to
+    // compute; the gate on it has a test of its own.
+    form10EFurnished: true,
     // Comfortably more than any tax below, so the cap does not bite unless a
     // test is about the cap.
     payableBeforeTax: new Decimal(5000000),
@@ -199,7 +202,6 @@ describe('computeSettlementTax', () => {
       // 1,50,000 = 3,00,000, on top of the 9,00,000 already paid.
       expect(result.working.settlementTaxable).toEqual({
         proRataSalary: '100000.00',
-        proRataSalaryExcluded: '0.00',
         gratuityTaxable: '50000.00',
         leaveEncashmentTaxable: '150000.00',
         otherEarnings: '0.00',
@@ -480,68 +482,83 @@ describe('computeSettlementTax', () => {
 
   describe('the month of exit', () => {
     /**
-     * Payroll has already run for the month of exit, and the settlement also
-     * pays pro-rata salary for it. Counting both would tax that month twice:
+     * Payroll has already run March 2025 and the settlement also pays
+     * pro-rata salary for the same month. Both are paid, so both are taxed:
      *
-     *   year to date, payslips included                9,00,000
-     *   settlement, pro-rata excluded                  2,00,000
+     *   year to date, the March payslip included          9,00,000
+     *   the settlement in full, pro-rata included         3,00,000
      *   ------------------------------------------------------
-     *   annual gross                                  11,00,000
-     *   less standard deduction                          75,000
-     *   taxable                                       10,25,000
-     *     3,00,000 - 7,00,000 at 5%                      20,000
-     *     7,00,000 - 10,00,000 at 10%                    30,000
-     *     10,00,000 - 10,25,000 at 15%                    3,750
-     *   tax                                              53,750
-     *   cess at 4%                                        2,150
+     *   annual gross                                     12,00,000
+     *   less standard deduction                             75,000
+     *   taxable                                          11,25,000
+     *     3,00,000 -  7,00,000 at  5%                       20,000
+     *     7,00,000 - 10,00,000 at 10%                       30,000
+     *    10,00,000 - 11,25,000 at 15%                       18,750
+     *   tax                                                 68,750
+     *   cess at 4%                                           2,750
      *   ------------------------------------------------------
-     *   annual tax                                       55,900
-     *   less already deducted                            40,000
+     *   annual tax                                          71,500
+     *   less already deducted                               40,000
      *   ------------------------------------------------------
-     *   to deduct                                        15,900
+     *   to deduct                                           31,500
      */
-    it('does not tax the exit month twice when payroll has already run it', () => {
-      const result = computeSettlementTax(
-        makeInput({
-          yearToDate: makeYearToDate({
-            exitMonthPayslips: { count: 1, grossPaid: new Decimal(90000) },
-          }),
-        }) as never,
-      );
+    const overlapping = {
+      yearToDate: makeYearToDate({
+        exitMonthPayslips: {
+          count: 1,
+          grossPaid: new Decimal(90000),
+          year: 2025,
+          month: 3,
+        },
+      }),
+    };
+
+    it('taxes the settlement pro-rata even where the exit month is on a payslip', () => {
+      const result = computeSettlementTax(makeInput(overlapping) as never);
 
       expect(result.working.settlementTaxable.proRataSalary).toBe('100000.00');
-      expect(result.working.settlementTaxable.proRataSalaryExcluded).toBe('100000.00');
-      expect(result.working.settlementTaxable.total).toBe('200000.00');
-      expect(result.working.projectedAnnualGross).toBe('1100000.00');
-      expect(result.working.annualTax).toBe('55900.00');
-      expect(result.tds.toFixed(2)).toBe('15900.00');
+      expect(result.working.settlementTaxable.total).toBe('300000.00');
+      expect(result.working.projectedAnnualGross).toBe('1200000.00');
+      expect(result.working.annualTax).toBe('71500.00');
+      expect(result.tds.toFixed(2)).toBe('31500.00');
     });
 
-    it('records what it excluded and why', () => {
-      const result = computeSettlementTax(
-        makeInput({
-          yearToDate: makeYearToDate({
-            exitMonthPayslips: { count: 1, grossPaid: new Decimal(90000) },
-          }),
-        }) as never,
-      );
+    /**
+     * The duplication, if it is one, is in what is *paid*. So it is named on
+     * both sides and flagged, and nothing is quietly netted off.
+     */
+    it('records the overlap, names both figures, and flags it for a person', () => {
+      const result = computeSettlementTax(makeInput(overlapping) as never);
 
       expect(result.working.exitMonth).toEqual({
+        year: 2025,
+        month: 3,
         payslipsAlreadyRun: 1,
         payslipGross: '90000.00',
-        proRataExcluded: '100000.00',
-        note: expect.stringMatching(/already run/i),
+        settlementProRata: '100000.00',
+        requiresReview: true,
+        note: expect.stringMatching(/NEEDS REVIEW/),
       });
-      // Nothing about what is paid has changed: only what is taxed.
-      expect(result.working.exitMonth?.note).toMatch(/still paid/i);
+      // Both figures appear in the note, and the month they collide in.
+      expect(result.working.exitMonth?.note).toMatch(/90000\.00/);
+      expect(result.working.exitMonth?.note).toMatch(/100000\.00/);
+      expect(result.working.exitMonth?.note).toMatch(/03\/2025/);
+      // And it says where the fix belongs: in the payment, not in the tax.
+      expect(result.working.exitMonth?.note).toMatch(/not in the tax/i);
+      expect(result.working.note).toMatch(/NEEDS REVIEW/);
     });
 
-    /** No payslip for that month, so the pro-rata is the only record of it. */
-    it('taxes the pro-rata when payroll has not run the exit month', () => {
+    /** No run for that month, so there is no overlap to report. */
+    it('reports no overlap when payroll has not run the exit month', () => {
       const result = computeSettlementTax(
         makeInput({
           yearToDate: makeYearToDate({
-            exitMonthPayslips: { count: 0, grossPaid: new Decimal(0) },
+            exitMonthPayslips: {
+              count: 0,
+              grossPaid: new Decimal(0),
+              year: 2025,
+              month: 3,
+            },
           }),
         }) as never,
       );
@@ -552,16 +569,14 @@ describe('computeSettlementTax', () => {
     });
 
     /**
-     * A settlement that pays no pro-rata salary cannot be double counting it,
+     * A settlement that pays no pro-rata salary cannot be overlapping one,
      * whatever payroll has already run.
      */
-    it('excludes nothing when the settlement pays no pro-rata salary', () => {
+    it('reports no overlap when the settlement pays no pro-rata salary', () => {
       const result = computeSettlementTax(
         makeInput({
           parts: makeParts({ proRataSalary: new Decimal(0) }),
-          yearToDate: makeYearToDate({
-            exitMonthPayslips: { count: 1, grossPaid: new Decimal(90000) },
-          }),
+          ...overlapping,
         }) as never,
       );
 
@@ -576,46 +591,54 @@ describe('computeSettlementTax', () => {
 
   describe('relief under section 89', () => {
     /**
-     * Ten months of salary at 9,00,000, then a settlement that bunches three
+     * Ten months of salary at 9,00,000, then a settlement that bunches six
      * years of gratuity and leave into the same year:
      *
      *   pro-rata salary                                1,00,000
-     *   taxable gratuity                               4,00,000
-     *   taxable leave encashment                       5,00,000
+     *   taxable gratuity                               3,00,000
+     *   taxable leave encashment                       6,00,000
      *   ------------------------------------------------------
      *   settlement                                    10,00,000
-     *   annual gross with the lump                    19,00,000
-     *   annual gross without it                       10,00,000
+     *   annual gross                                  19,00,000
+     *
+     * The gratuity is not relieved here at all — rule 21A(3) prescribes a
+     * different method and this system has no earlier-year incomes for it —
+     * so only the 6,00,000 of leave encashment is spread back:
+     *
+     *   annual gross less the relievable part         13,00,000
      *
      *   tax on 19,00,000 (taxable 18,25,000)           2,47,000
-     *   tax on 10,00,000 (taxable  9,25,000)             44,200
-     *   the bunching cost                              2,02,800
+     *   tax on 13,00,000 (taxable 12,25,000)             88,400
+     *   the bunching cost                              1,58,600
      *
-     *   a 3,00,000 slice on 10,00,000, so tax on
-     *   13,00,000 (taxable 12,25,000)                    88,400
-     *   less the year's own tax                          44,200
-     *   the slice costs                                  44,200
-     *   three of them                                  1,32,600
+     *   a 1,00,000 slice on 13,00,000, so tax on
+     *   14,00,000 (taxable 13,25,000)                  1,09,200
+     *   less the year's own tax                          88,400
+     *   the slice costs                                  20,800
+     *   six of them                                    1,24,800
      *
-     *   relief = 2,02,800 - 1,32,600                     70,200
-     *   annual tax after relief                        1,76,800
+     *   relief = 1,58,600 - 1,24,800                     33,800
+     *   annual tax 2,47,000 - 33,800                   2,13,200
      *   less already deducted                             40,000
      *   ------------------------------------------------------
-     *   to deduct                                      1,36,800
+     *   to deduct                                      1,73,200
      */
     const bunched = {
       parts: makeParts({
         proRataSalary: new Decimal(100000),
-        gratuityTaxable: new Decimal(400000),
-        leaveEncashmentTaxable: new Decimal(500000),
+        gratuityTaxable: new Decimal(300000),
+        leaveEncashmentTaxable: new Decimal(600000),
       }),
       section89: {
-        yearsEarnedOver: 3,
+        yearsEarnedOver: 6,
         receiptYear: { financialYear: 2024, config: NEW_REGIME },
         spreadYears: [
           { financialYear: 2024, config: NEW_REGIME },
           { financialYear: 2023, config: NEW_REGIME },
           { financialYear: 2022, config: NEW_REGIME },
+          { financialYear: 2021, config: NEW_REGIME },
+          { financialYear: 2020, config: NEW_REGIME },
+          { financialYear: 2019, config: NEW_REGIME },
         ],
       },
     };
@@ -625,30 +648,86 @@ describe('computeSettlementTax', () => {
 
       expect(result.working.projectedAnnualGross).toBe('1900000.00');
       expect(result.working.annualTaxBeforeRelief).toBe('247000.00');
-      expect(result.working.section89.relief).toBe('70200.00');
-      expect(result.working.annualTax).toBe('176800.00');
-      expect(result.tds.toFixed(2)).toBe('136800.00');
+      expect(result.working.section89.relief).toBe('33800.00');
+      expect(result.working.annualTax).toBe('213200.00');
+      expect(result.tds.toFixed(2)).toBe('173200.00');
     });
 
     it('keeps the working of the relief, year by year', () => {
       const result = computeSettlementTax(makeInput(bunched) as never);
 
       expect(result.working.section89.arrears).toBe('900000.00');
-      expect(result.working.section89.yearsEarnedOver).toBe(3);
-      expect(result.working.section89.taxIfSpread).toBe('132600.00');
-      expect(result.working.section89.years).toHaveLength(3);
+      expect(result.working.section89.relievableArrears).toBe('600000.00');
+      expect(result.working.section89.yearsEarnedOver).toBe(6);
+      expect(result.working.section89.taxIfSpread).toBe('124800.00');
+      expect(result.working.section89.years).toHaveLength(6);
       expect(result.working.section89.ineligibleReason).toBeNull();
     });
 
     /**
      * The arrears are the bunched heads only. Pro-rata salary and other
      * earnings are this year's own income, not an earlier year's caught up.
+     * Of those heads, only the leave encashment is relieved.
      */
-    it('treats only gratuity and leave encashment as the bunched amount', () => {
+    it('relieves the leave encashment and leaves the gratuity out of the base', () => {
       const result = computeSettlementTax(makeInput(bunched) as never);
 
       expect(result.working.section89.arrears).toBe('900000.00');
-      expect(result.working.section89.incomeWithoutArrears).toBe('1000000.00');
+      expect(result.working.section89.incomeWithoutArrears).toBe('1300000.00');
+      expect(result.working.section89.gratuity).toEqual({
+        taxable: '300000.00',
+        relievable: '0.00',
+        excluded: '300000.00',
+        reason: 'SECTION_89_GRATUITY_EARLIER_YEAR_INCOMES_UNKNOWN',
+        serviceYears: 6,
+        note: expect.stringMatching(/21A\(3\)/),
+      });
+      // Excluded from the relief, not from the income: it is still taxed.
+      expect(result.working.settlementTaxable.gratuityTaxable).toBe('300000.00');
+      expect(result.working.settlementTaxable.total).toBe('1000000.00');
+    });
+
+    /**
+     * Gratuity paid for under five years of service — here because the
+     * minimum was waived — gets no relief at all under rule 21A(3), and the
+     * reason says so rather than pointing at missing data.
+     */
+    it('admits no relief on gratuity for service of under five years', () => {
+      const result = computeSettlementTax(
+        makeInput({
+          ...bunched,
+          section89: {
+            ...bunched.section89,
+            yearsEarnedOver: 3,
+            spreadYears: bunched.section89.spreadYears.slice(0, 3),
+          },
+        }) as never,
+      );
+
+      expect(result.working.section89.gratuity.reason).toBe(
+        'SECTION_89_GRATUITY_SERVICE_UNDER_FIVE_YEARS',
+      );
+      expect(result.working.section89.gratuity.excluded).toBe('300000.00');
+      expect(result.working.section89.relievableArrears).toBe('600000.00');
+    });
+
+    /**
+     * Section 192(2A): without Form 10E the employer has no basis for
+     * reducing the deduction, so the whole 2,47,000 stands.
+     */
+    it('gives no relief, with a reason, when no Form 10E has been furnished', () => {
+      const result = computeSettlementTax(
+        makeInput({ ...bunched, form10EFurnished: false }) as never,
+      );
+
+      expect(result.working.section89.form10EFurnished).toBe(false);
+      expect(result.working.section89.relief).toBe('0.00');
+      expect(result.working.section89.ineligibleReason).toBe(
+        'SECTION_89_FORM_10E_NOT_FURNISHED',
+      );
+      expect(result.working.annualTax).toBe('247000.00');
+      expect(result.tds.toFixed(2)).toBe('207000.00');
+      expect(result.working.note).toMatch(/192\(2A\)/);
     });
 
     it('gives no relief, with a reason, when an earlier year has no slabs', () => {
@@ -661,6 +740,9 @@ describe('computeSettlementTax', () => {
               { financialYear: 2024, config: NEW_REGIME },
               { financialYear: 2023, config: null },
               { financialYear: 2022, config: null },
+              { financialYear: 2021, config: null },
+              { financialYear: 2020, config: null },
+              { financialYear: 2019, config: null },
             ],
           },
         }) as never,
@@ -678,6 +760,11 @@ describe('computeSettlementTax', () => {
       const result = computeSettlementTax(makeInput({ parts: bunched.parts }) as never);
 
       expect(result.working.section89.relief).toBe('0.00');
+      // Nothing is known about the service either, so the gratuity is out on
+      // that ground and the leave encashment is out for want of years.
+      expect(result.working.section89.gratuity.reason).toBe(
+        'SECTION_89_GRATUITY_SERVICE_YEARS_UNKNOWN',
+      );
       expect(result.working.section89.ineligibleReason).toBe(
         'SECTION_89_YEARS_EARNED_OVER_UNKNOWN',
       );

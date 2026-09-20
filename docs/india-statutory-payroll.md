@@ -341,12 +341,24 @@ who marks no component is unaffected.
 
 ## Tax on a settlement
 
-**Section 89 relief** is computed. A settlement bunches several years of
-gratuity and leave into one year and can push a leaver into a band they never
-belonged in; the relief is the difference between taxing it all at once and
-spreading it back over the years it was earned. Relief is floored at zero,
-because bunching can only cost a taxpayer, and a year that cannot be computed
-refuses with a reason rather than quietly returning nothing.
+**Section 89 relief** is computed, on two conditions the statute sets.
+
+The first is Form 10E. Section 192(2A) lets an employer compute the relief only
+on particulars the employee furnishes in that form, so without it relief is
+refused rather than assumed. The employee still claims it on their own
+assessment. That is the safe direction: too much deducted comes back, too little
+exposes the employer to interest under section 201(1A).
+
+The second is what the relief may be computed on. Leave encashment is relieved
+by the ordinary spreading method. **Gratuity is not**: rule 21A(3) prescribes an
+average-rate method over two or three preceding years, and those years' incomes
+are not on record. Gratuity is therefore taxed in full and excluded from the
+relief base, with the reason recorded, rather than relieved by a method the Act
+does not prescribe for it. No relief is admissible at all on gratuity for
+service under five years, and that bar is enforced.
+
+Relief is floored at zero, because bunching can only cost a taxpayer, and every
+refusal carries its reason rather than quietly returning nothing.
 
 **The tax is capped at what is actually payable.** Notice recovery may
 legitimately leave a leaver owing the employer, because the employer is owed
@@ -354,9 +366,16 @@ that money either way. Tax may not: an employer cannot deduct from a payment
 that does not exist. The uncollected balance is recorded as the leaver's own
 liability on assessment rather than hidden inside a negative number.
 
-The settlement now also consults approved proofs on the same terms the monthly
-engine does, and a month of exit that payroll has already run is no longer
-counted twice.
+The settlement also consults approved proofs on the same terms the monthly
+engine does.
+
+**A month of exit that payroll has already run is flagged, not silently
+adjusted.** If a payslip covers that month and the settlement also pays pro-rata
+salary for it, both are paid, so both are taxed. The duplication is in what is
+paid, and a tax calculation may not quietly correct that: the working names the
+month and both figures and marks the settlement for review, so a person can fix
+the payment. Excluding the pro-rata from income instead would leave money paid
+and untaxed, which is worse than the double count.
 
 ## Not implemented
 
@@ -374,14 +393,15 @@ Known and deliberate, so nobody assumes otherwise:
   less the arrears. That stand-in is usually too high, so the relief comes out
   understated, which is the safe direction: too much deducted is recovered on
   assessment, too little exposes the employer to interest under section 201(1A).
-- **The gratuity variant of rule 21A.** Relief is computed on the general
-  spreading rule. The sub-rule specific to gratuity, which uses the average of
-  three preceding years, is not modelled.
-- **Pro-rata salary in a month payroll already ran.** The tax no longer counts
-  that month twice: the payslip is treated as the fact and the settlement's
-  derived pro-rata is excluded from taxable income. The pro-rata is still paid,
-  and is then untaxed. Whether a settlement should pay it at all in that case is
-  a question about what is paid, not about tax.
+- **The gratuity variant of rule 21A.** Not modelled, so gratuity is excluded
+  from the relief base rather than relieved by the wrong method. An employee
+  recovers it on their own Form 10E.
+- **Which rule leave encashment falls under.** Relief on it is computed by the
+  ordinary spreading method of rule 21A(2), which is framed as salary in arrears
+  or in advance. Encashment on retirement is not one of the heads that sub-rule
+  names, and a reasonable reading puts it under 21A(6), where relief is as the
+  Board allows rather than as of right. Worth a qualified view before this
+  computes anyone's real tax.
 - **A settlement's tax is not recomputed when an entered figure changes.**
   Editing other earnings or recoveries moves what is payable, so the cap can go
   stale until somebody recomputes.

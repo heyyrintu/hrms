@@ -11,43 +11,6 @@ import { ALLOWED_UNDER_NEW_REGIME } from '@/types';
 import type { EmployeeTaxDeclaration, UpsertTaxDeclarationPayload } from '@/types';
 
 /**
- * `@/types` extended with the two new declaration fields and the year's
- * configured limits — none of which it carries yet in this checkout. Local
- * intersection types, not a `declare module` augmentation: this codebase's
- * `moduleResolution: "bundler"` does not merge an augmentation targeted at a
- * path-mapped specifier with the real module, it shadows it, which broke
- * every other file importing from `@/types/statutory-config`. An intersection
- * type touches nothing outside this feature, so it cannot have that effect.
- *
- * These are written to disappear cleanly: once `@/types` gains the same
- * fields with the same shapes, `EmployeeTaxDeclaration & { ... }` and
- * `UpsertTaxDeclarationPayload & { ... }` become redundant with the added
- * members but remain correct, and can be dropped in a follow-up.
- */
-export interface DeclarationLimits {
-  section80CLimit?: string;
-  childrenEducationMonthlyLimit?: string;
-  hostelAllowanceMonthlyLimit?: string;
-}
-
-export type DeclarationWithNewFields = EmployeeTaxDeclaration & {
-  previousEmployerEncashmentExemption: string;
-  ltaJourneysUsedInBlock: number;
-  /**
-   * The tenant's configured statutory ceilings for this financial year and
-   * regime. Absent when the server has not supplied them; every field inside
-   * is itself optional for the same reason. Never trust a field here over a
-   * fallback default without checking it is actually present.
-   */
-  limits?: DeclarationLimits;
-};
-
-export type UpsertPayloadWithNewFields = UpsertTaxDeclarationPayload & {
-  previousEmployerEncashmentExemption?: number;
-  ltaJourneysUsedInBlock?: number;
-};
-
-/**
  * The twelve rupee figures a declaration carries. Regime and year are not
  * amounts, and neither is `childrenCount`: it is a count of children, not
  * money, and is handled separately below rather than folded in here.
@@ -228,7 +191,7 @@ export function isIgnoredUnderNewRegime(key: DeclarationAmountKey): boolean {
  * rupee figure that has been through a float is no longer the figure stored.
  */
 export function storedAmount(
-  declaration: DeclarationWithNewFields,
+  declaration: EmployeeTaxDeclaration,
   key: DeclarationAmountKey,
 ): string {
   return declaration[key];
@@ -289,14 +252,27 @@ export function parseChildrenCount(raw: string): ParsedCount {
  * The annual ceiling for a section 10(14) children's allowance, given how
  * many children were declared.
  *
- * Capped at `CHILDREN_ALLOWANCE_MAX_CHILDREN` even when more are declared, and
- * annualised over twelve months because the declaration itself is an annual
- * figure. Nothing enforces this ceiling — like the flat ones above, it exists
- * so the form can warn at the point of entry, not to block the entry.
+ * Capped at `maxChildren` even when more are declared, and annualised over
+ * twelve months because the declaration itself is an annual figure. Nothing
+ * enforces this ceiling — like the flat ones above, it exists so the form
+ * can warn at the point of entry, not to block the entry.
+ *
+ * `maxChildren` defaults to `CHILDREN_ALLOWANCE_MAX_CHILDREN` — the fallback
+ * used when the tenant has not configured one, never the source of truth —
+ * so existing callers that have not been taught about the tenant's own
+ * configured maximum keep behaving exactly as they did before it existed.
  */
-export function childrenAllowanceCeiling(monthlyLimit: number, childrenCount: number): number {
+export function childrenAllowanceCeiling(
+  monthlyLimit: number,
+  childrenCount: number,
+  maxChildren: number = CHILDREN_ALLOWANCE_MAX_CHILDREN,
+): number {
   const wholeChildren = Number.isFinite(childrenCount) ? Math.max(0, Math.floor(childrenCount)) : 0;
-  const countedChildren = Math.min(wholeChildren, CHILDREN_ALLOWANCE_MAX_CHILDREN);
+  const effectiveMax =
+    Number.isFinite(maxChildren) && maxChildren > 0
+      ? Math.floor(maxChildren)
+      : CHILDREN_ALLOWANCE_MAX_CHILDREN;
+  const countedChildren = Math.min(wholeChildren, effectiveMax);
   return monthlyLimit * 12 * countedChildren;
 }
 
@@ -338,20 +314,44 @@ export function resolveFlatCeiling(
 }
 
 /**
+ * Reads a configured maximum child count as the server might send it.
+ *
+ * Null for anything that is not a usable whole positive count — absent,
+ * zero, negative or non-finite — never defaulted to
+ * `CHILDREN_ALLOWANCE_MAX_CHILDREN` here: that fallback is applied by the
+ * caller, the same "configured or fallback" shape `readConfiguredLimit`
+ * already follows for the rupee ceilings.
+ */
+function readConfiguredMaxChildren(raw: number | undefined | null): number | null {
+  if (raw === undefined || raw === null) return null;
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : null;
+}
+
+/**
  * The annual ceiling for a section 10(14) children's allowance, from the
  * tenant's configured monthly limit when the server supplied one, or
  * `fallbackMonthly` when it did not — scaled by `childrenCount` and capped at
- * `CHILDREN_ALLOWANCE_MAX_CHILDREN` either way, via `childrenAllowanceCeiling`.
+ * the tenant's configured maximum child count when the server supplied one,
+ * or `CHILDREN_ALLOWANCE_MAX_CHILDREN` when it did not, via
+ * `childrenAllowanceCeiling`.
+ *
+ * `confirmed` follows the monthly limit alone, exactly as it did before the
+ * maximum child count was itself configurable: the maximum only changes how
+ * many children the monthly limit is multiplied by, not whether the monthly
+ * figure driving that multiplication is the employer's own.
  */
 export function resolveChildrenAllowanceCeiling(
   configuredMonthly: string | number | undefined | null,
   fallbackMonthly: number,
   childrenCount: number,
+  configuredMaxChildren?: number | null,
 ): ResolvedCeiling {
   const configured = readConfiguredLimit(configuredMonthly);
   const effectiveMonthly = configured !== null ? configured : fallbackMonthly;
+  const maxChildren = readConfiguredMaxChildren(configuredMaxChildren);
+  const effectiveMaxChildren = maxChildren !== null ? maxChildren : CHILDREN_ALLOWANCE_MAX_CHILDREN;
   return {
-    amount: childrenAllowanceCeiling(effectiveMonthly, childrenCount),
+    amount: childrenAllowanceCeiling(effectiveMonthly, childrenCount, effectiveMaxChildren),
     confirmed: configured !== null,
   };
 }
@@ -402,3 +402,56 @@ export function ltaJourneysWarning(journeysUsedInBlock: number): string | null {
   }
   return `Only ${LTA_JOURNEYS_PER_BLOCK} journeys are allowed in a block of ${LTA_BLOCK_LENGTH_YEARS} calendar years. At ${journeysUsedInBlock}, this is already over that, and it will not reduce your tax.`;
 }
+
+/**
+ * The warning for an LTA exemption claim that cannot reduce tax because the
+ * block is already exhausted, or null when there is nothing to warn about.
+ *
+ * Two conditions both have to hold: the block already has no journeys left
+ * (`journeysUsedInBlock` at or over `LTA_JOURNEYS_PER_BLOCK`), and an amount
+ * has actually been declared against it. Either alone is fine — a full block
+ * with nothing claimed costs nothing, and a claim with room left in the block
+ * is exactly what the exemption is for.
+ *
+ * Shown on the leave travel field itself (`ltaExemption`), not on the journey
+ * count: the employee is looking at the figure this affects, not the count
+ * that explains why. Like every other warning here, this does not stop the
+ * save — the figure is still sent exactly as declared.
+ */
+export function ltaExemptionBlockExhaustedWarning(
+  journeysUsedInBlock: number,
+  ltaExemptionAmount: number,
+): string | null {
+  if (!Number.isFinite(journeysUsedInBlock) || journeysUsedInBlock < LTA_JOURNEYS_PER_BLOCK) {
+    return null;
+  }
+  if (!Number.isFinite(ltaExemptionAmount) || ltaExemptionAmount <= 0) {
+    return null;
+  }
+  return `The block already has ${LTA_JOURNEYS_PER_BLOCK} of ${LTA_JOURNEYS_PER_BLOCK} journeys used in this ${LTA_BLOCK_LENGTH_YEARS}-year period, so this will not reduce your tax.`;
+}
+
+// ---------------------------------------------------------------------------
+// `form10EFurnished`: a boolean, not an amount or a count
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether Form 10E has been furnished to the Income Tax Department for this
+ * year.
+ *
+ * Section 192(2A) lets an employer compute section 89 relief — on a
+ * settlement, most often — only on particulars furnished in that form, so a
+ * settlement refuses the relief until it is furnished. The employee furnishes
+ * the form to the department itself; this field only records that they have.
+ *
+ * Kept out of `DeclarationAmountKey` and `DECLARATION_FIELDS` for the same
+ * reason `childrenCount` and `ltaJourneysUsedInBlock` are: it is not a rupee
+ * figure or a count, and following the shape of those two existing fields —
+ * rather than inventing something new — is what this codebase already does
+ * for a fact about the declaration that is neither.
+ */
+export const FORM_10E_FURNISHED_FIELD = {
+  key: 'form10EFurnished' as const,
+  label: 'Form 10E furnished',
+  hint: 'Without Form 10E on file with the Income Tax Department, your employer cannot reduce the tax it deducts on a settlement for section 89 relief — you would need to claim that relief yourself when you file your own return instead. Tick this once you have furnished the form.',
+};

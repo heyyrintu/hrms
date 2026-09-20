@@ -351,6 +351,7 @@ export class Form16Service {
     // certificate that disagrees with the year's payslips is worse than either
     // being wrong on its own. Verification is judged at March, the last month
     // of the financial year, because that is the position the year closed on.
+    let usedVerifiedAmounts = false;
     if (statutoryConfig?.proofVerificationRequired) {
       const inForceByYearEnd = verificationApplies({
         proofVerificationRequired: true,
@@ -359,6 +360,7 @@ export class Form16Service {
       });
 
       if (inForceByYearEnd) {
+        usedVerifiedAmounts = true;
         const verified = await readApprovedProofTotals(
           this.prisma,
           tenantId,
@@ -459,8 +461,12 @@ export class Form16Service {
       (entry) => entry.head !== 'HRA' && entry.allowed.gt(0),
     );
     if (unconfirmedHeads.length > 0) {
+      // Calling a verified figure "declared" would misdescribe the very thing
+      // the certificate exists to state, so the note follows which it is.
       notes.push(
-        'The leave travel and section 10(14) figures here are what was declared and allowed under the statutory ceilings. This certificate does not check what your employer actually paid under each of those heads, so they are not confirmation that the allowance was paid.',
+        usedVerifiedAmounts
+          ? 'The leave travel and section 10(14) figures here are what was accepted on the evidence you filed, then limited by the statutory ceilings. This certificate does not check what your employer actually paid under each of those heads, so they are not confirmation that the allowance was paid.'
+          : 'The leave travel and section 10(14) figures here are what was declared and allowed under the statutory ceilings. This certificate does not check what your employer actually paid under each of those heads, so they are not confirmation that the allowance was paid.',
       );
     }
 

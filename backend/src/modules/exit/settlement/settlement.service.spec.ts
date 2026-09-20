@@ -1056,8 +1056,6 @@ describe('SettlementService', () => {
 
       expect(result.breakdown.taxComputation.settlementTaxable).toEqual({
         proRataSalary: '39677.42',
-        // Payroll has not run the month of exit, so none of it is a duplicate.
-        proRataSalaryExcluded: '0.00',
         // 3,00,000 paid less 2,50,000 exempt under section 10(10)
         gratuityTaxable: '50000.00',
         // 8,00,000 paid less 3,60,000 exempt under section 10(10AA)
@@ -1271,6 +1269,9 @@ describe('SettlementService', () => {
     // ── relief under section 89 ─────────────────────────────
 
     describe('relief under section 89', () => {
+      /** A declaration with the form on file, which is what unlocks relief. */
+      const WITH_FORM_10E = { regime: 'NEW', form10EFurnished: true };
+
       /**
        * Asha joined on 1 April 2018 and left on 15 March 2025: six completed
        * years, so the gratuity and leave encashment in this settlement were
@@ -1281,55 +1282,62 @@ describe('SettlementService', () => {
        *   ----------------------------------------------------------------
        *   bunched into this year                             4,90,000.00
        *
+       * Rule 21A(3) prescribes a different method for the gratuity and this
+       * system has no earlier-year incomes to apply it with, so the gratuity
+       * is out of the relief base — still taxed, just not relieved — and only
+       * the leave encashment is spread back:
+       *
+       *   relievable arrears                                 4,40,000.00
        *   annual gross with it                              14,29,677.42
-       *   annual gross without it                            9,39,677.42
+       *   annual gross without it                            9,89,677.42
        *
        *   tax on 14,29,677.42 (taxable 13,54,677.42)          1,15,372
-       *   tax on  9,39,677.42 (taxable  8,64,677.42):
+       *   tax on  9,89,677.42 (taxable  9,14,677.42):
        *      3,00,000 - 7,00,000 at 5%                          20,000
-       *      7,00,000 - 8,64,677.42 at 10% on 1,64,677.42    16,467.74
-       *                                       tax to rupee      36,468
-       *      cess at 4% = 1,458.72, to the rupee                 1,459
-       *                                                         37,927
-       *   the bunching cost 1,15,372 - 37,927              =     77,445
+       *      7,00,000 - 9,14,677.42 at 10% on 2,14,677.42    21,467.74
+       *                                       tax to rupee      41,468
+       *      cess at 4% = 1,658.72, to the rupee                 1,659
+       *                                                         43,127
+       *   the bunching cost 1,15,372 - 43,127              =     72,245
        *
-       *   4,90,000 over six years is 81,666.67 a year (the sixth takes
-       *   81,666.65, so the six add back to 4,90,000 exactly).
-       *   tax on 9,39,677.42 + 81,666.67 = 10,21,344.09
-       *        (taxable 9,46,344.09):
+       *   4,40,000 over six years is 73,333.33 a year (the sixth takes
+       *   73,333.35, so the six add back to 4,40,000 exactly).
+       *   tax on 9,89,677.42 + 73,333.33 = 10,63,010.75
+       *        (taxable 9,88,010.75):
        *      3,00,000 - 7,00,000 at 5%                          20,000
-       *      7,00,000 - 9,46,344.09 at 10% on 2,46,344.09    24,634.41
-       *                                       tax to rupee      44,634
-       *      cess at 4% = 1,785.36, to the rupee                 1,785
-       *                                                         46,419
-       *   each slice costs 46,419 - 37,927                 =      8,492
-       *   six of them                                      =     50,952
+       *      7,00,000 - 9,88,010.75 at 10% on 2,88,010.75    28,801.08
+       *                                       tax to rupee      48,801
+       *      cess at 4% = 1,952.04, to the rupee                 1,952
+       *                                                         50,753
+       *   each slice costs 50,753 - 43,127                 =      7,626
+       *   six of them                                      =     45,756
        *
-       *   relief = 77,445 - 50,952                         =     26,493
-       *   annual tax 1,15,372 - 26,493                     =     88,879
+       *   relief = 72,245 - 45,756                         =     26,489
+       *   annual tax 1,15,372 - 26,489                     =     88,883
        *   less deducted in the payslips                          60,000
        *   ----------------------------------------------------------------
-       *   settlement TDS                                         28,879
+       *   settlement TDS                                         28,883
        */
       it('relieves the tax the bunching added, when the earlier years have slabs', async () => {
-        arrangeTax({ seedEarlierYears: true });
+        arrangeTax({ seedEarlierYears: true, declaration: WITH_FORM_10E });
 
         const result: any = await service.compute(TENANT, 'sep-1', {});
         const tax = result.breakdown.taxComputation;
 
         expect(tax.annualTaxBeforeRelief).toBe('115372.00');
         expect(tax.section89.arrears).toBe('490000.00');
+        expect(tax.section89.relievableArrears).toBe('440000.00');
         expect(tax.section89.yearsEarnedOver).toBe(6);
-        expect(tax.section89.costOfBunching).toBe('77445.00');
-        expect(tax.section89.taxIfSpread).toBe('50952.00');
-        expect(tax.section89.relief).toBe('26493.00');
+        expect(tax.section89.costOfBunching).toBe('72245.00');
+        expect(tax.section89.taxIfSpread).toBe('45756.00');
+        expect(tax.section89.relief).toBe('26489.00');
         expect(tax.section89.ineligibleReason).toBeNull();
-        expect(tax.annualTax).toBe('88879.00');
-        expect(result.tds.toFixed(2)).toBe('28879.00');
+        expect(tax.annualTax).toBe('88883.00');
+        expect(result.tds.toFixed(2)).toBe('28883.00');
       });
 
       it('spreads it back over each of the six years, and says which', async () => {
-        arrangeTax({ seedEarlierYears: true });
+        arrangeTax({ seedEarlierYears: true, declaration: WITH_FORM_10E });
 
         const result: any = await service.compute(TENANT, 'sep-1', {});
         const years = result.breakdown.taxComputation.section89.years;
@@ -1337,12 +1345,58 @@ describe('SettlementService', () => {
         expect(years.map((y: any) => y.financialYear)).toEqual([
           2024, 2023, 2022, 2021, 2020, 2019,
         ]);
-        expect(years[0].arrearsSlice).toBe('81666.67');
-        expect(years[5].arrearsSlice).toBe('81666.65');
+        expect(years[0].arrearsSlice).toBe('73333.33');
+        expect(years[5].arrearsSlice).toBe('73333.35');
+      });
+
+      /**
+       * Section 192(2A) lets the employer compute this relief only on the
+       * particulars furnished in Form 10E. The declaration on file says it has
+       * not been furnished, so the whole 1,15,372 stands and 55,372 is
+       * deducted — the same figure as a settlement with no relief at all.
+       */
+      it('gives no relief, and records the reason, without a Form 10E', async () => {
+        arrangeTax({ seedEarlierYears: true });
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const tax = result.breakdown.taxComputation;
+
+        expect(tax.section89.form10EFurnished).toBe(false);
+        expect(tax.section89.relief).toBe('0.00');
+        expect(tax.section89.ineligibleReason).toBe(
+          'SECTION_89_FORM_10E_NOT_FURNISHED',
+        );
+        expect(tax.section89.note).toMatch(/192\(2A\)/);
+        expect(tax.annualTax).toBe('115372.00');
+        expect(result.tds.toFixed(2)).toBe('55372.00');
+      });
+
+      /**
+       * The gratuity is out of the relief base, not out of the income: it is
+       * taxed in full and the reason it was not relieved is recorded.
+       */
+      it('leaves the gratuity out of the relief base, and says why', async () => {
+        arrangeTax({ seedEarlierYears: true, declaration: WITH_FORM_10E });
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const tax = result.breakdown.taxComputation;
+
+        expect(tax.section89.gratuity).toEqual({
+          taxable: '50000.00',
+          relievable: '0.00',
+          excluded: '50000.00',
+          reason: 'SECTION_89_GRATUITY_EARLIER_YEAR_INCOMES_UNKNOWN',
+          serviceYears: 6,
+          note: expect.stringMatching(/21A\(3\)/),
+        });
+        // Six years is the five-to-fifteen limb: a half across two years.
+        expect(tax.section89.gratuity.note).toMatch(/one-half/i);
+        // Still income, still taxed.
+        expect(tax.settlementTaxable.gratuityTaxable).toBe('50000.00');
       });
 
       it('gives no relief, and records the reason, when an earlier year has no slabs', async () => {
-        arrangeTax();
+        arrangeTax({ declaration: WITH_FORM_10E });
 
         const result: any = await service.compute(TENANT, 'sep-1', {});
         const tax = result.breakdown.taxComputation;
@@ -1358,7 +1412,7 @@ describe('SettlementService', () => {
       });
 
       it('leaves every earning alone: only the tax deducted moves', async () => {
-        arrangeTax({ seedEarlierYears: true });
+        arrangeTax({ seedEarlierYears: true, declaration: WITH_FORM_10E });
 
         const result: any = await service.compute(TENANT, 'sep-1', {});
 
@@ -1366,8 +1420,8 @@ describe('SettlementService', () => {
         expect(result.leaveEncashment.toFixed(2)).toBe('800000.00');
         expect(result.gratuity.toFixed(2)).toBe('300000.00');
         expect(result.grossPayable.toFixed(2)).toBe('1139677.42');
-        // 11,39,677.42 - 15,870.97 - 28,879.00
-        expect(result.netPayable.toFixed(2)).toBe('1094927.45');
+        // 11,39,677.42 - 15,870.97 - 28,883.00
+        expect(result.netPayable.toFixed(2)).toBe('1094923.45');
       });
     });
 
@@ -1579,65 +1633,72 @@ describe('SettlementService', () => {
     // ── the month of exit ───────────────────────────────────
 
     describe('the month of exit', () => {
+      /** A payroll run that already covered March 2025, the month of exit. */
+      const exitMonthRun = [
+        {
+          grossPay: new Decimal(900000),
+          professionalTax: new Decimal(2400),
+          tds: new Decimal(60000),
+          payrollRun: { year: 2025, month: 3 },
+        },
+      ];
+
       /**
        * Payroll has already run March 2025 and the settlement also pays
-       * 39,677.42 of pro-rata salary for the same month. Counting both would
-       * tax March twice:
+       * 39,677.42 of pro-rata salary for the same month. Both are paid, so
+       * both are taxed — the figures are the ordinary ones:
        *
        *   year to date, March's payslip included               9,00,000.00
-       *   settlement, pro-rata left out                        4,90,000.00
+       *   the settlement in full                               5,29,677.42
        *   ----------------------------------------------------------------
-       *   annual gross                                        13,90,000.00
-       *   less standard deduction                                75,000.00
-       *   taxable income                                      13,15,000.00
-       *
-       *      3,00,000 -  7,00,000 at 5%                           20,000
-       *      7,00,000 - 10,00,000 at 10%                          30,000
-       *     10,00,000 - 12,00,000 at 15%                          30,000
-       *     12,00,000 - 13,15,000 at 20% on 1,15,000              23,000
-       *                                              tax        1,03,000
-       *     cess at 4%                                             4,120
-       *                                       annual tax        1,07,120
-       *     less deducted in the payslips                         60,000
+       *   annual gross                                        14,29,677.42
+       *   annual tax                                           1,15,372.00
+       *   less deducted in the payslips                           60,000.00
        *   ----------------------------------------------------------------
-       *     settlement TDS                                        47,120
+       *   settlement TDS                                          55,372.00
        */
-      it('does not tax the exit month twice when payroll has already run it', async () => {
-        arrangeTax({
-          payslips: [
-            {
-              grossPay: new Decimal(900000),
-              professionalTax: new Decimal(2400),
-              tds: new Decimal(60000),
-              payrollRun: { year: 2025, month: 3 },
-            },
-          ],
-        });
+      it('taxes both the exit-month payslip and the settlement pro-rata', async () => {
+        arrangeTax({ payslips: exitMonthRun });
 
         const result: any = await service.compute(TENANT, 'sep-1', {});
         const tax = result.breakdown.taxComputation;
 
-        expect(tax.settlementTaxable.proRataSalaryExcluded).toBe('39677.42');
-        expect(tax.settlementTaxable.total).toBe('490000.00');
-        expect(tax.projectedAnnualGross).toBe('1390000.00');
-        expect(tax.annualTax).toBe('107120.00');
-        expect(result.tds.toFixed(2)).toBe('47120.00');
-        expect(tax.exitMonth.payslipsAlreadyRun).toBe(1);
-        expect(tax.exitMonth.payslipGross).toBe('900000.00');
-        expect(tax.exitMonth.note).toMatch(/already run/i);
+        expect(tax.settlementTaxable.proRataSalary).toBe('39677.42');
+        expect(tax.settlementTaxable.total).toBe('529677.42');
+        expect(tax.projectedAnnualGross).toBe('1429677.42');
+        expect(tax.annualTax).toBe('115372.00');
+        expect(result.tds.toFixed(2)).toBe('55372.00');
+      });
+
+      /**
+       * The overlap is reported rather than corrected: both figures are named
+       * and a person is asked to look. A duplicated payment is fixed in the
+       * payment, and a figure that silently vanished cannot be fixed at all.
+       */
+      it('records the overlap, names both figures, and flags it for review', async () => {
+        arrangeTax({ payslips: exitMonthRun });
+
+        const result: any = await service.compute(TENANT, 'sep-1', {});
+        const exitMonth = result.breakdown.taxComputation.exitMonth;
+
+        expect(exitMonth).toEqual({
+          year: 2025,
+          month: 3,
+          payslipsAlreadyRun: 1,
+          payslipGross: '900000.00',
+          settlementProRata: '39677.42',
+          requiresReview: true,
+          note: expect.stringMatching(/NEEDS REVIEW/),
+        });
+        expect(exitMonth.note).toMatch(/03\/2025/);
+        expect(exitMonth.note).toMatch(/900000\.00/);
+        expect(exitMonth.note).toMatch(/39677\.42/);
+        expect(exitMonth.note).toMatch(/not in the tax/i);
+        expect(result.breakdown.taxComputation.note).toMatch(/NEEDS REVIEW/);
       });
 
       it('still pays the pro-rata salary in full', async () => {
-        arrangeTax({
-          payslips: [
-            {
-              grossPay: new Decimal(900000),
-              professionalTax: new Decimal(2400),
-              tds: new Decimal(60000),
-              payrollRun: { year: 2025, month: 3 },
-            },
-          ],
-        });
+        arrangeTax({ payslips: exitMonthRun });
 
         const result: any = await service.compute(TENANT, 'sep-1', {});
 
@@ -1648,7 +1709,7 @@ describe('SettlementService', () => {
         ).toBe('39677.42');
       });
 
-      it('taxes the pro-rata when payroll has not run the exit month', async () => {
+      it('reports no overlap when payroll has not run the exit month', async () => {
         arrangeTax();
 
         const result: any = await service.compute(TENANT, 'sep-1', {});

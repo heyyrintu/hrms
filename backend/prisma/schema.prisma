@@ -2009,6 +2009,12 @@ model EmployeeTaxDeclaration {
   /// allows two, and nothing else records this, so the employee declares it
   /// and a reviewer settles it from the tickets.
   ltaJourneysUsedInBlock Int @default(0)
+  /// Whether the employee has furnished Form 10E for this year.
+  ///
+  /// Section 192(2A) lets an employer compute section 89 relief only on
+  /// particulars furnished in Form 10E. Without it the employer has no basis
+  /// to reduce the deduction, so relief is refused rather than assumed.
+  form10EFurnished Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

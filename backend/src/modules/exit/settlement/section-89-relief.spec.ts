@@ -2,6 +2,10 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { TaxAgeBand } from '@prisma/client';
 import {
   calculateSection89Relief,
+  SECTION_89_FORM_10E_NOT_FURNISHED,
+  SECTION_89_GRATUITY_EARLIER_YEARS_UNKNOWN,
+  SECTION_89_GRATUITY_SERVICE_UNKNOWN,
+  SECTION_89_GRATUITY_UNDER_FIVE_YEARS,
   SECTION_89_MISSING_CONFIGURATION,
   SECTION_89_NOT_BENEFICIAL,
   SECTION_89_NO_ARREARS,
@@ -114,6 +118,7 @@ describe('calculateSection89Relief', () => {
       receiptYear: year(2024, NEW_REGIME),
       spreadYears: [year(2024, NEW_REGIME), year(2023, NEW_REGIME), year(2022, NEW_REGIME)],
       declaration: NO_DECLARATION,
+      form10EFurnished: true,
       professionalTaxPaid: new Decimal(0),
     });
 
@@ -133,6 +138,7 @@ describe('calculateSection89Relief', () => {
       receiptYear: year(2024, NEW_REGIME),
       spreadYears: [year(2024, NEW_REGIME), year(2023, NEW_REGIME), year(2022, NEW_REGIME)],
       declaration: NO_DECLARATION,
+      form10EFurnished: true,
       professionalTaxPaid: new Decimal(0),
     });
 
@@ -157,6 +163,7 @@ describe('calculateSection89Relief', () => {
       receiptYear: year(2024, NEW_REGIME),
       spreadYears: [year(2024, NEW_REGIME), year(2023, NEW_REGIME), year(2022, NEW_REGIME)],
       declaration: NO_DECLARATION,
+      form10EFurnished: true,
       professionalTaxPaid: new Decimal(0),
     });
 
@@ -190,6 +197,7 @@ describe('calculateSection89Relief', () => {
         year(2022, FLAT_THIRTY),
       ],
       declaration: NO_DECLARATION,
+      form10EFurnished: true,
       professionalTaxPaid: new Decimal(0),
     });
 
@@ -207,6 +215,7 @@ describe('calculateSection89Relief', () => {
       receiptYear: year(2024, NEW_REGIME),
       spreadYears: [year(2024, NEW_REGIME), year(2023, null), year(2022, NEW_REGIME)],
       declaration: NO_DECLARATION,
+      form10EFurnished: true,
       professionalTaxPaid: new Decimal(0),
     });
 
@@ -225,6 +234,7 @@ describe('calculateSection89Relief', () => {
       receiptYear: year(2024, null),
       spreadYears: [year(2024, NEW_REGIME), year(2023, NEW_REGIME), year(2022, NEW_REGIME)],
       declaration: NO_DECLARATION,
+      form10EFurnished: true,
       professionalTaxPaid: new Decimal(0),
     });
 
@@ -244,6 +254,7 @@ describe('calculateSection89Relief', () => {
         receiptYear: year(2024, NEW_REGIME),
         spreadYears: [],
         declaration: NO_DECLARATION,
+        form10EFurnished: true,
         professionalTaxPaid: new Decimal(0),
       });
 
@@ -261,6 +272,7 @@ describe('calculateSection89Relief', () => {
       receiptYear: year(2024, NEW_REGIME),
       spreadYears: [year(2024, NEW_REGIME)],
       declaration: NO_DECLARATION,
+      form10EFurnished: true,
       professionalTaxPaid: new Decimal(0),
     });
 
@@ -277,6 +289,7 @@ describe('calculateSection89Relief', () => {
       receiptYear: year(2024, NEW_REGIME),
       spreadYears: [],
       declaration: NO_DECLARATION,
+      form10EFurnished: true,
       professionalTaxPaid: new Decimal(0),
     });
 
@@ -293,6 +306,7 @@ describe('calculateSection89Relief', () => {
       receiptYear: year(2024, NEW_REGIME),
       spreadYears: [year(2024, NEW_REGIME), year(2023, NEW_REGIME)],
       declaration: NO_DECLARATION,
+      form10EFurnished: true,
       professionalTaxPaid: new Decimal(0),
     });
 
@@ -327,6 +341,7 @@ describe('calculateSection89Relief', () => {
       receiptYear: year(2024, OLD_REGIME),
       spreadYears: [year(2024, OLD_REGIME), year(2023, OLD_REGIME), year(2022, OLD_REGIME)],
       declaration: declared,
+      form10EFurnished: true,
       professionalTaxPaid: new Decimal(2400),
     });
 
@@ -338,6 +353,7 @@ describe('calculateSection89Relief', () => {
       receiptYear: year(2024, OLD_REGIME),
       spreadYears: [year(2024, OLD_REGIME), year(2023, OLD_REGIME), year(2022, OLD_REGIME)],
       declaration: NO_DECLARATION,
+      form10EFurnished: true,
       professionalTaxPaid: new Decimal(0),
     });
 
@@ -361,9 +377,220 @@ describe('calculateSection89Relief', () => {
         year(2021, FLAT_THIRTY),
       ],
       declaration: NO_DECLARATION,
+      form10EFurnished: true,
       professionalTaxPaid: new Decimal(0),
     });
 
     expect(result.relief.isNegative()).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // Section 192(2A): relief only on particulars furnished in Form 10E
+  // -------------------------------------------------------------------------
+
+  describe('Form 10E', () => {
+    /** The same 9,00,000 over three years the first case works out in full. */
+    const bunched = {
+      totalIncomeWithArrears: new Decimal(2100000),
+      totalIncomeWithoutArrears: new Decimal(1200000),
+      arrears: new Decimal(900000),
+      yearsEarnedOver: 3,
+      receiptYear: year(2024, NEW_REGIME),
+      spreadYears: [
+        year(2024, NEW_REGIME),
+        year(2023, NEW_REGIME),
+        year(2022, NEW_REGIME),
+      ],
+      declaration: NO_DECLARATION,
+      professionalTaxPaid: new Decimal(0),
+    };
+
+    it('refuses relief, with a reason, when no Form 10E has been furnished', () => {
+      const result = calculateSection89Relief({
+        ...bunched,
+        form10EFurnished: false,
+      });
+
+      expect(result.relief.toFixed(2)).toBe('0.00');
+      expect(result.ineligibleReason).toBe(SECTION_89_FORM_10E_NOT_FURNISHED);
+      expect(result.working.note).toMatch(/Form 10E/);
+      expect(result.working.note).toMatch(/192\(2A\)/);
+      expect(result.working.form10EFurnished).toBe(false);
+    });
+
+    /** Furnishing it restores exactly the relief the first case computes. */
+    it('gives the relief once Form 10E has been furnished', () => {
+      const result = calculateSection89Relief({
+        ...bunched,
+        form10EFurnished: true,
+      });
+
+      expect(result.relief.toFixed(2)).toBe('62400.00');
+      expect(result.ineligibleReason).toBeNull();
+      expect(result.working.form10EFurnished).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Rule 21A(3): gratuity is not relieved by the salary-arrears method
+  // -------------------------------------------------------------------------
+
+  describe('gratuity', () => {
+    /**
+     * The settlement bunches 9,00,000, of which 3,00,000 is the taxable
+     * balance of gratuity and 6,00,000 of leave encashment. Only the leave is
+     * relieved under rule 21A(2); the gratuity is left out of the relief base
+     * but stays in the income, so it is still taxed in full.
+     *
+     *   total income with the bunched amount           21,00,000
+     *   less the relievable part (leave only)           6,00,000
+     *   ------------------------------------------------------
+     *   income without the relievable arrears          15,00,000
+     *
+     *   tax on 21,00,000 (taxable 20,25,000)            3,09,400
+     *   tax on 15,00,000 (taxable 14,25,000):
+     *      3,00,000 -  7,00,000 at  5%                    20,000
+     *      7,00,000 - 10,00,000 at 10%                    30,000
+     *     10,00,000 - 12,00,000 at 15%                    30,000
+     *     12,00,000 - 14,25,000 at 20% on 2,25,000        45,000
+     *                                          tax      1,25,000
+     *     cess at 4%                                       5,000
+     *                                                   1,30,000
+     *   cost of bunching = 3,09,400 - 1,30,000          1,79,400
+     *
+     *   6,00,000 over three years is 2,00,000 a year:
+     *   tax on 17,00,000 (taxable 16,25,000):
+     *      3,00,000 -  7,00,000 at  5%                    20,000
+     *      7,00,000 - 10,00,000 at 10%                    30,000
+     *     10,00,000 - 12,00,000 at 15%                    30,000
+     *     12,00,000 - 15,00,000 at 20%                    60,000
+     *     above 15,00,000 at 30% on 1,25,000              37,500
+     *                                          tax      1,77,500
+     *     cess at 4%                                       7,100
+     *                                                   1,84,600
+     *   each slice costs 1,84,600 - 1,30,000              54,600
+     *   three of them                                   1,63,800
+     *
+     *   relief = 1,79,400 - 1,63,800                      15,600
+     */
+    const mixed = {
+      totalIncomeWithArrears: new Decimal(2100000),
+      totalIncomeWithoutArrears: new Decimal(1200000),
+      arrears: new Decimal(900000),
+      yearsEarnedOver: 3,
+      receiptYear: year(2024, NEW_REGIME),
+      spreadYears: [
+        year(2024, NEW_REGIME),
+        year(2023, NEW_REGIME),
+        year(2022, NEW_REGIME),
+      ],
+      declaration: NO_DECLARATION,
+      professionalTaxPaid: new Decimal(0),
+      form10EFurnished: true,
+    };
+
+    /**
+     * Three completed years, so the gratuity — paid here only because the
+     * minimum service was waived — relates to service of under five years and
+     * no relief on it is admissible at all under the proviso to rule 21A(3).
+     */
+    it('admits no relief on gratuity for service of under five years', () => {
+      const result = calculateSection89Relief({
+        ...mixed,
+        gratuity: { taxable: new Decimal(300000), serviceYears: 3 },
+      });
+
+      expect(result.working.gratuity.excluded).toBe('300000.00');
+      expect(result.working.gratuity.relievable).toBe('0.00');
+      expect(result.working.gratuity.reason).toBe(
+        SECTION_89_GRATUITY_UNDER_FIVE_YEARS,
+      );
+      expect(result.working.gratuity.note).toMatch(/less than five years/i);
+      expect(result.working.relievableArrears).toBe('600000.00');
+      expect(result.relief.toFixed(2)).toBe('15600.00');
+    });
+
+    /**
+     * Five years or more, so relief would be admissible — but only by the
+     * average-rate method of rule 21A(3), which needs each preceding year's
+     * own total income, and nothing in this system records it.
+     */
+    it('refuses relief on gratuity for five years or more, saying why', () => {
+      const result = calculateSection89Relief({
+        ...mixed,
+        gratuity: { taxable: new Decimal(300000), serviceYears: 8 },
+      });
+
+      expect(result.working.gratuity.excluded).toBe('300000.00');
+      expect(result.working.gratuity.reason).toBe(
+        SECTION_89_GRATUITY_EARLIER_YEARS_UNKNOWN,
+      );
+      // Five but under fifteen: one half added to each of two preceding years.
+      expect(result.working.gratuity.note).toMatch(/one-half/i);
+      expect(result.working.gratuity.note).toMatch(/two preceding/i);
+      expect(result.working.relievableArrears).toBe('600000.00');
+      expect(result.relief.toFixed(2)).toBe('15600.00');
+    });
+
+    /** Fifteen years or more takes the other limb: a third across three years. */
+    it('names the three-year limb where past service is fifteen years or more', () => {
+      const result = calculateSection89Relief({
+        ...mixed,
+        gratuity: { taxable: new Decimal(300000), serviceYears: 16 },
+      });
+
+      expect(result.working.gratuity.reason).toBe(
+        SECTION_89_GRATUITY_EARLIER_YEARS_UNKNOWN,
+      );
+      expect(result.working.gratuity.note).toMatch(/one-third/i);
+      expect(result.working.gratuity.note).toMatch(/three preceding/i);
+    });
+
+    /**
+     * Everything bunched is gratuity, so once it is out of the relief base
+     * there is nothing left to spread. The refusal carries the gratuity's own
+     * reason, not a bare "nothing was bunched".
+     */
+    it('refuses with the gratuity reason when the bunched amount is all gratuity', () => {
+      const result = calculateSection89Relief({
+        ...mixed,
+        totalIncomeWithArrears: new Decimal(1500000),
+        totalIncomeWithoutArrears: new Decimal(1200000),
+        arrears: new Decimal(300000),
+        gratuity: { taxable: new Decimal(300000), serviceYears: 8 },
+      });
+
+      expect(result.relief.toFixed(2)).toBe('0.00');
+      expect(result.ineligibleReason).toBe(
+        SECTION_89_GRATUITY_EARLIER_YEARS_UNKNOWN,
+      );
+      expect(result.working.relievableArrears).toBe('0.00');
+    });
+
+    /** Nothing says how long the service was, so nothing is assumed about it. */
+    it('refuses relief on gratuity when the years of service are not known', () => {
+      const result = calculateSection89Relief({
+        ...mixed,
+        gratuity: { taxable: new Decimal(300000), serviceYears: 0 },
+      });
+
+      expect(result.working.gratuity.reason).toBe(
+        SECTION_89_GRATUITY_SERVICE_UNKNOWN,
+      );
+      expect(result.working.gratuity.excluded).toBe('300000.00');
+    });
+
+    /** No gratuity in the settlement at all: the whole bunched amount stands. */
+    it('leaves the relief base alone when the settlement pays no gratuity', () => {
+      const result = calculateSection89Relief({
+        ...mixed,
+        gratuity: { taxable: new Decimal(0), serviceYears: 8 },
+      });
+
+      expect(result.working.gratuity.excluded).toBe('0.00');
+      expect(result.working.gratuity.reason).toBeNull();
+      expect(result.working.relievableArrears).toBe('900000.00');
+      expect(result.relief.toFixed(2)).toBe('62400.00');
+    });
   });
 });

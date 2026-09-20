@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Select';
 import { statutoryApi } from '@/lib/api';
-import type { TaxRegimeName } from '@/types';
+import type { EmployeeTaxDeclaration, TaxRegimeName, UpsertTaxDeclarationPayload } from '@/types';
 
 import {
   currentFinancialYear,
@@ -32,6 +32,7 @@ import {
   NoDeclarationNotice,
 } from '@/components/declaration/DeclarationNotices';
 import {
+  EditableBooleanField,
   EditableCountField,
   EditableDeclarationField,
   ignoredForRegime,
@@ -42,18 +43,18 @@ import {
   DECLARATION_FIELDS,
   DeclarationAmountKey,
   DeclarationFieldSpec,
-  DeclarationWithNewFields,
+  FORM_10E_FURNISHED_FIELD,
   HOSTEL_ALLOWANCE_MONTHLY_CEILING,
   LTA_JOURNEYS_FIELD,
   SECTION_80C_DEFAULT_CEILING,
-  UpsertPayloadWithNewFields,
+  ltaExemptionBlockExhaustedWarning,
   ltaJourneysWarning,
   parseChildrenCount,
   parseLtaJourneysUsedInBlock,
   resolveChildrenAllowanceCeiling,
   resolveFlatCeiling,
 } from '@/components/declaration/fields';
-import { parseDeclaredAmount } from '@/components/declaration/parseAmount';
+import { parseDeclaredAmount, readableAmount } from '@/components/declaration/parseAmount';
 
 type AmountMap = Record<DeclarationAmountKey, string>;
 type ErrorMap = Partial<Record<DeclarationAmountKey, string>>;
@@ -69,7 +70,7 @@ const EMPTY_AMOUNTS: AmountMap = DECLARATION_FIELDS.reduce((acc, field) => {
  * Not parsed: the input carries the string, and only the save path turns it
  * into a number.
  */
-function amountsFrom(declaration: DeclarationWithNewFields): AmountMap {
+function amountsFrom(declaration: EmployeeTaxDeclaration): AmountMap {
   return DECLARATION_FIELDS.reduce((acc, field) => {
     acc[field.key] = declaration[field.key] ?? '';
     return acc;
@@ -83,7 +84,7 @@ const REGIME_OPTIONS = [
 
 export default function MyTaxDeclarationPage() {
   const [financialYear, setFinancialYear] = useState<number>(() => currentFinancialYear());
-  const [declaration, setDeclaration] = useState<DeclarationWithNewFields | null>(null);
+  const [declaration, setDeclaration] = useState<EmployeeTaxDeclaration | null>(null);
   const [regime, setRegime] = useState<TaxRegimeName>('NEW');
   const [amounts, setAmounts] = useState<AmountMap>(EMPTY_AMOUNTS);
   const [errors, setErrors] = useState<ErrorMap>({});
@@ -94,6 +95,8 @@ export default function MyTaxDeclarationPage() {
   const [childrenCountError, setChildrenCountError] = useState<string | undefined>();
   const [ltaJourneysUsedInBlock, setLtaJourneysUsedInBlockValue] = useState('');
   const [ltaJourneysError, setLtaJourneysError] = useState<string | undefined>();
+  // A boolean, not a rupee figure or a count, so it is tracked on its own too.
+  const [form10EFurnished, setForm10EFurnishedValue] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   /** Generation counter identifying the newest in-flight load. */
@@ -115,7 +118,7 @@ export default function MyTaxDeclarationPage() {
       const response = await statutoryApi.getMyDeclaration(financialYear);
       if (requestRef.current !== request) return;
 
-      const data = (response.data ?? null) as DeclarationWithNewFields | null;
+      const data = (response.data ?? null) as EmployeeTaxDeclaration | null;
       setDeclaration(data);
       setErrors({});
       setChildrenCountError(undefined);
@@ -125,6 +128,7 @@ export default function MyTaxDeclarationPage() {
         setAmounts(amountsFrom(data));
         setChildrenCountValue(String(data.childrenCount ?? 0));
         setLtaJourneysUsedInBlockValue(String(data.ltaJourneysUsedInBlock ?? 0));
+        setForm10EFurnishedValue(Boolean(data.form10EFurnished));
       } else {
         // No row yet. The form starts empty rather than at zero: an employee
         // has declared nothing, which is not the same as declaring nil.
@@ -132,6 +136,7 @@ export default function MyTaxDeclarationPage() {
         setAmounts(EMPTY_AMOUNTS);
         setChildrenCountValue('');
         setLtaJourneysUsedInBlockValue('');
+        setForm10EFurnishedValue(false);
       }
     } catch {
       if (requestRef.current !== request) return;
@@ -183,9 +188,13 @@ export default function MyTaxDeclarationPage() {
     return parsed.ok ? parsed.value : 0;
   })();
 
+  // Same best-effort reading of the declared LTA amount, for the "block is
+  // exhausted" warning shown on the leave travel field itself.
+  const ltaExemptionForWarning = readableAmount(amounts.ltaExemption) ?? 0;
+
   const handleSave = async () => {
     const nextErrors: ErrorMap = {};
-    const payload: UpsertPayloadWithNewFields = { financialYear, regime };
+    const payload: UpsertTaxDeclarationPayload = { financialYear, regime };
 
     for (const field of DECLARATION_FIELDS) {
       const parsed = parseDeclaredAmount(amounts[field.key], field.label);
@@ -214,6 +223,10 @@ export default function MyTaxDeclarationPage() {
     }
     setLtaJourneysError(nextLtaJourneysError);
 
+    // A boolean, sent as one — there is nothing here to refuse the way an
+    // unreadable amount or a fractional count is.
+    payload.form10EFurnished = form10EFurnished;
+
     setErrors(nextErrors);
     // Nothing is sent while any entry is unreadable. Dropping the bad entry and
     // saving the rest would write a zero nobody typed into the basis for tax.
@@ -225,7 +238,7 @@ export default function MyTaxDeclarationPage() {
     setSaving(true);
     try {
       const response = await statutoryApi.saveMyDeclaration(payload);
-      setDeclaration((response.data ?? null) as DeclarationWithNewFields | null);
+      setDeclaration((response.data ?? null) as EmployeeTaxDeclaration | null);
       toast.success('Your declaration was saved. It applies from the next payroll run.');
     } catch {
       toast.error('Your declaration could not be saved. Nothing on your record was changed.');
@@ -309,6 +322,13 @@ export default function MyTaxDeclarationPage() {
                       {declaration.ltaJourneysUsedInBlock}
                     </dd>
                   </div>
+                  <div className="flex items-baseline justify-between gap-4">
+                    <dt className="text-xs text-warm-500">{FORM_10E_FURNISHED_FIELD.label}</dt>
+                    {/* A boolean, not rupees or a count, so it is shown as Yes/No. */}
+                    <dd className="text-xs font-medium tabular-nums text-warm-800">
+                      {declaration.form10EFurnished ? 'Yes' : 'No'}
+                    </dd>
+                  </div>
                 </dl>
               </CardContent>
               </Card>
@@ -375,6 +395,7 @@ export default function MyTaxDeclarationPage() {
                               declaration?.limits?.childrenEducationMonthlyLimit,
                               CHILDREN_EDUCATION_ALLOWANCE_MONTHLY_CEILING,
                               childrenCountForCeiling,
+                              declaration?.limits?.childrenAllowanceMaxChildren,
                             ),
                           }
                         : field.key === 'hostelAllowance'
@@ -384,6 +405,7 @@ export default function MyTaxDeclarationPage() {
                                 declaration?.limits?.hostelAllowanceMonthlyLimit,
                                 HOSTEL_ALLOWANCE_MONTHLY_CEILING,
                                 childrenCountForCeiling,
+                                declaration?.limits?.childrenAllowanceMaxChildren,
                               ),
                             }
                           : field;
@@ -398,10 +420,26 @@ export default function MyTaxDeclarationPage() {
                         error={errors[field.key]}
                         ignored={ignoredForRegime(field.key, regime)}
                         disabled={saving}
+                        warning={
+                          field.key === 'ltaExemption'
+                            ? ltaExemptionBlockExhaustedWarning(
+                                ltaJourneysForWarning,
+                                ltaExemptionForWarning,
+                              ) ?? undefined
+                            : undefined
+                        }
                       />
                     </Fragment>
                   );
                 })}
+                <EditableBooleanField
+                  id="form10EFurnished"
+                  label={FORM_10E_FURNISHED_FIELD.label}
+                  hint={FORM_10E_FURNISHED_FIELD.hint}
+                  checked={form10EFurnished}
+                  onChange={setForm10EFurnishedValue}
+                  disabled={saving}
+                />
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-warm-100 pt-4">

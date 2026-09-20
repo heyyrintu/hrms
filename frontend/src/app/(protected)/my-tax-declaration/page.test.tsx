@@ -435,6 +435,62 @@ describe('MyTaxDeclarationPage — the section 10 fields', () => {
     expect(screen.queryByText(/18,000/)).not.toBeInTheDocument();
   });
 
+  it('uses the employer-configured maximum child count, not a hard-coded two, to drive the ceiling', async () => {
+    // Configured for three children, so a fourth-declared but a third-counted
+    // figure proves the configured maximum is what actually drove it, not
+    // the old hard-coded two.
+    mockedApi.getMyDeclaration.mockResolvedValue({
+      data: declaration({
+        limits: { childrenEducationMonthlyLimit: '100.00', childrenAllowanceMaxChildren: 3 },
+      }),
+    } as any);
+    render(<MyTaxDeclarationPage />);
+    await screen.findByLabelText('Number of children');
+
+    fireEvent.change(screen.getByLabelText('Number of children'), { target: { value: '3' } });
+    // 100 a month, twelve months, three children (the configured maximum) — a
+    // 3,600 ceiling, not the 2,400 that a hard-coded two would have produced.
+    fireEvent.change(screen.getByLabelText("Children's education allowance"), {
+      target: { value: '5000' },
+    });
+
+    expect(
+      within(fieldRow('childrenEducationAllowance')).getByText(/3,600/),
+    ).toBeInTheDocument();
+    expect(
+      within(fieldRow('childrenEducationAllowance')).queryByText(/2,400/),
+    ).not.toBeInTheDocument();
+  });
+
+  it('falls back to a maximum of two children, the same fallback convention as the monthly limit, when no maximum is configured', async () => {
+    // Only the monthly limit is configured; the maximum child count is not,
+    // so the fallback of two applies — the same "configured or fallback"
+    // convention `resolveFlatCeiling` already uses for section 80C.
+    mockedApi.getMyDeclaration.mockResolvedValue({
+      data: declaration({ limits: { childrenEducationMonthlyLimit: '100.00' } }),
+    } as any);
+    render(<MyTaxDeclarationPage />);
+    await screen.findByLabelText('Number of children');
+
+    fireEvent.change(screen.getByLabelText('Number of children'), { target: { value: '5' } });
+    // 100 a month, twelve months, capped at the fallback of two children — a
+    // 2,400 ceiling, not five times that.
+    fireEvent.change(screen.getByLabelText("Children's education allowance"), {
+      target: { value: '5000' },
+    });
+
+    expect(
+      within(fieldRow('childrenEducationAllowance')).getByText(/2,400/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/6,000/)).not.toBeInTheDocument();
+    // The monthly limit was itself configured, so the ceiling is still shown
+    // as the employer's own confirmed figure, exactly as it already was
+    // before the maximum child count was itself configurable.
+    expect(
+      within(fieldRow('childrenEducationAllowance')).queryByText(/could not be confirmed/i),
+    ).not.toBeInTheDocument();
+  });
+
   it('does not warn when the entry is within the per-child cap', async () => {
     await renderWithNoDeclaration();
 
@@ -675,5 +731,99 @@ describe('MyTaxDeclarationPage — the two new declaration fields', () => {
       ).toHaveValue('250000.00'),
     );
     expect(screen.getByLabelText('LTA journeys already used in this block')).toHaveValue('1');
+  });
+
+  it('warns on the leave travel field, not the journey count, when two journeys are already used and an amount is declared, and still saves it', async () => {
+    await renderWithNoDeclaration();
+
+    fireEvent.change(screen.getByLabelText('LTA journeys already used in this block'), {
+      target: { value: '2' },
+    });
+    fireEvent.change(screen.getByLabelText('LTA exemption'), { target: { value: '15000' } });
+
+    expect(
+      within(fieldRow('ltaExemption')).getByText(/will not reduce your tax/i),
+    ).toBeInTheDocument();
+    // The journey count itself is not over the block, so it carries no
+    // warning of its own — this one belongs on the amount, not the count.
+    expect(
+      within(fieldRow('ltaJourneysUsedInBlock')).queryByText(/will not reduce your tax/i),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /save declaration/i }));
+
+    await waitFor(() => expect(mockedApi.saveMyDeclaration).toHaveBeenCalled());
+    expect(mockedApi.saveMyDeclaration.mock.calls[0][0]).toMatchObject({
+      ltaExemption: 15000,
+      ltaJourneysUsedInBlock: 2,
+    });
+  });
+
+  it('does not warn on the leave travel field when only one journey has been used', async () => {
+    await renderWithNoDeclaration();
+
+    fireEvent.change(screen.getByLabelText('LTA journeys already used in this block'), {
+      target: { value: '1' },
+    });
+    fireEvent.change(screen.getByLabelText('LTA exemption'), { target: { value: '15000' } });
+
+    expect(
+      within(fieldRow('ltaExemption')).queryByText(/will not reduce your tax/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it('does not warn on the leave travel field when the block is exhausted but nothing is declared for it', async () => {
+    await renderWithNoDeclaration();
+
+    fireEvent.change(screen.getByLabelText('LTA journeys already used in this block'), {
+      target: { value: '2' },
+    });
+
+    expect(
+      within(fieldRow('ltaExemption')).queryByText(/will not reduce your tax/i),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe('MyTaxDeclarationPage — Form 10E furnished', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedApi.getMyDeclaration.mockResolvedValue({ data: null } as any);
+    mockedApi.saveMyDeclaration.mockResolvedValue({ data: declaration() } as any);
+  });
+
+  it('renders a checkbox explaining what furnishing Form 10E is for', async () => {
+    await renderWithNoDeclaration();
+
+    const checkbox = screen.getByLabelText('Form 10E furnished');
+    expect(checkbox).toBeInTheDocument();
+    expect(checkbox).not.toBeChecked();
+    expect(
+      within(fieldRow('form10EFurnished')).getByText(/section 89 relief/i),
+    ).toBeInTheDocument();
+    expect(
+      within(fieldRow('form10EFurnished')).getByText(/cannot reduce the tax it deducts/i),
+    ).toBeInTheDocument();
+  });
+
+  it('saves whether Form 10E has been furnished as a boolean', async () => {
+    await renderWithNoDeclaration();
+
+    fireEvent.click(screen.getByLabelText('Form 10E furnished'));
+    fireEvent.click(screen.getByRole('button', { name: /save declaration/i }));
+
+    await waitFor(() => expect(mockedApi.saveMyDeclaration).toHaveBeenCalled());
+    expect(mockedApi.saveMyDeclaration.mock.calls[0][0]).toMatchObject({
+      form10EFurnished: true,
+    });
+  });
+
+  it('fills the checkbox from what is on record', async () => {
+    mockedApi.getMyDeclaration.mockResolvedValue({
+      data: declaration({ form10EFurnished: true }),
+    } as any);
+    render(<MyTaxDeclarationPage />);
+
+    await waitFor(() => expect(screen.getByLabelText('Form 10E furnished')).toBeChecked());
   });
 });

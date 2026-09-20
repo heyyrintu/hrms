@@ -33,6 +33,13 @@ interface EditableProps {
   /** True when the selected regime disregards this figure. */
   ignored: boolean;
   disabled?: boolean;
+  /**
+   * A warning that does not come from a ceiling — the leave travel field's
+   * "the block is already exhausted" notice is the first of these. Shown the
+   * same way a ceiling warning is, so the employee does not have to tell the
+   * two kinds apart by look.
+   */
+  warning?: string;
 }
 
 /**
@@ -49,6 +56,7 @@ export function EditableDeclarationField({
   error,
   ignored,
   disabled,
+  warning,
 }: EditableProps) {
   const inputId = `declaration-${field.key}`;
   const entered = readableAmount(value);
@@ -89,6 +97,7 @@ export function EditableDeclarationField({
             : `This looks like it is above the ceiling for ${field.label}, but your employer's configured limit for this year could not be confirmed, so no figure is shown here. It is saved exactly as you declared it, and any part beyond the real ceiling will not reduce your tax.`}
         </p>
       ) : null}
+      {warning ? <p className="text-xs font-medium text-amber-700">{warning}</p> : null}
     </div>
   );
 }
@@ -164,6 +173,72 @@ export function ReadOnlyCountField({ fieldKey, label, value }: ReadOnlyCountProp
     >
       <dt className="text-sm font-medium text-warm-700">{label}</dt>
       <dd className="text-sm font-semibold tabular-nums text-warm-900">{value}</dd>
+    </div>
+  );
+}
+
+interface EditableBooleanProps {
+  /** Used for the input id and the `field-{id}` test id, matching the
+   * `field-{key}` convention every other field row uses. */
+  id: string;
+  label: string;
+  hint: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+}
+
+/**
+ * An editable yes/no figure — the shape of `EditableCountField`, but for a
+ * boolean rather than a whole number. Like a count, it carries no "ignored
+ * under the new regime" marker: it is not itself a deduction, only a fact
+ * about the declaration.
+ */
+export function EditableBooleanField({
+  id,
+  label,
+  hint,
+  checked,
+  onChange,
+  disabled,
+}: EditableBooleanProps) {
+  const inputId = `declaration-${id}`;
+  return (
+    <div data-testid={`field-${id}`} className="space-y-1.5">
+      <label
+        htmlFor={inputId}
+        className="flex items-center gap-2 text-sm font-medium text-warm-700"
+      >
+        <input
+          id={inputId}
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.checked)}
+          className="h-4 w-4 rounded border-warm-300 text-primary-600 focus:ring-2 focus:ring-primary-500"
+        />
+        {label}
+      </label>
+      <p className="text-xs text-warm-500">{hint}</p>
+    </div>
+  );
+}
+
+interface ReadOnlyBooleanProps {
+  fieldKey: string;
+  label: string;
+  value: boolean;
+}
+
+/** The read-only counterpart of `EditableBooleanField`, for payroll's view. */
+export function ReadOnlyBooleanField({ fieldKey, label, value }: ReadOnlyBooleanProps) {
+  return (
+    <div
+      data-testid={`field-${fieldKey}`}
+      className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-warm-100 py-2.5 last:border-0"
+    >
+      <dt className="text-sm font-medium text-warm-700">{label}</dt>
+      <dd className="text-sm font-semibold text-warm-900">{value ? 'Yes' : 'No'}</dd>
     </div>
   );
 }

@@ -104,16 +104,27 @@ export interface Section89Input {
   totalIncomeWithArrears: Decimal;
   /** The same year without it. */
   totalIncomeWithoutArrears: Decimal;
-  /** The bunched amount, and the years it was earned over. */
+  /**
+   * The relievable part of the bunched amount, and the years it was earned
+   * over. Gratuity is deliberately not part of this; see `taxWithoutArrears`.
+   */
   arrears: Decimal;
   yearsEarnedOver: number;
 }
 
 export interface Section89Result {
   relief: Decimal;
-  /** Tax on the year of receipt including the bunched amount. */
+  /** Tax on the year of receipt including the relievable amount. */
   taxWithArrears: Decimal;
-  /** Tax on that year without it. */
+  /**
+   * Tax on that year without the **relievable** amount.
+   *
+   * Not the same as the year without the whole bunched payment. Gratuity is
+   * taxed in full but is excluded from the relief base, because rule 21A(3)
+   * prescribes an average-rate method this module cannot compute without
+   * earlier years' incomes. So a settlement's gratuity sits inside both of
+   * these figures and cancels out, while the leave encashment does not.
+   */
   taxWithoutArrears: Decimal;
   /** Tax on the arrears spread back, in total across those years. */
   taxIfSpread: Decimal;

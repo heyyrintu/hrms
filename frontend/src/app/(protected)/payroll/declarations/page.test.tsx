@@ -258,4 +258,20 @@ describe('PayrollDeclarationsPage', () => {
       expect(screen.getByText(/has ended/i)).toBeInTheDocument(),
     );
   });
+
+  it('shows whether Form 10E has been furnished', async () => {
+    await renderAndPick(declaration({ form10EFurnished: true }));
+
+    expect(
+      within(screen.getByTestId('field-form10EFurnished')).getByText('Yes'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows Form 10E as not furnished when it has not been', async () => {
+    await renderAndPick(declaration({ form10EFurnished: false }));
+
+    expect(
+      within(screen.getByTestId('field-form10EFurnished')).getByText('No'),
+    ).toBeInTheDocument();
+  });
 });

@@ -234,4 +234,11 @@ export class UpsertTaxDeclarationDto {
   @IsInt()
   @Min(0)
   ltaJourneysUsedInBlock?: number;
+  @ApiPropertyOptional({
+    description:
+      'Whether Form 10E has been furnished. Section 192(2A) lets the employer compute section 89 relief only on those particulars.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  form10EFurnished?: boolean;
 }

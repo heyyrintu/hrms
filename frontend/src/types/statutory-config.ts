@@ -269,6 +269,15 @@ export interface EmployeeTaxDeclaration {
    * much is declared: the limit is on journeys, not on money.
    */
   ltaJourneysUsedInBlock: number;
+  /**
+   * Whether Form 10E has been furnished for this year.
+   *
+   * Section 192(2A) lets an employer compute section 89 relief only on
+   * particulars furnished in that form, so a settlement refuses relief until
+   * it is. The employee furnishes it to the Income Tax Department; this only
+   * records that they have.
+   */
+  form10EFurnished: boolean;
 
   /**
    * The ceilings that actually apply to this declaration, from the tenant's
@@ -320,6 +329,7 @@ export interface UpsertTaxDeclarationPayload {
   previousEmployerTds?: number;
   previousEmployerEncashmentExemption?: number;
   ltaJourneysUsedInBlock?: number;
+  form10EFurnished?: boolean;
 }
 
 /**

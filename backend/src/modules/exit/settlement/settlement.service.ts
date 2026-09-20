@@ -79,11 +79,16 @@ import { ComputeSettlementDto, UpdateSettlementDto } from './dto/settlement.dto'
  *   consults them: the tenant must require verification and the month of exit
  *   must have reached the cutoff. Every proof-backed head is then worth what
  *   the proofs prove and nothing more.
- * - **The month of exit is not taxed twice.** Where payroll has already run
- *   that month, the settlement's derived pro-rata figure is left out of the
- *   year's income and the payslip's figure stands, because the payslip is the
- *   record of what was actually paid and taxed. Nothing about what is *paid*
- *   changes: the pro-rata is still in the gross payable.
+ * - **An exit month paid twice is reported, not silently corrected.** Where a
+ *   payroll run has already covered the month of exit and the settlement also
+ *   pays pro-rata salary for it, both are paid and so both are taxed, and the
+ *   overlap is recorded in the tax working with both figures named and flagged
+ *   for a person to resolve. A duplicated *payment* is corrected in the
+ *   payment, not by a tax calculation quietly dropping one side of it.
+ * - **Relief under section 89 is gated on Form 10E**, which section 192(2A)
+ *   requires before an employer may compute it, and gratuity is out of the
+ *   relief base entirely because rule 21A(3) prescribes a method this system
+ *   has no earlier-year incomes for. Both refusals carry their reason.
  *
  * What this deliberately does NOT do:
  *
@@ -1011,6 +1016,7 @@ export class SettlementService {
           payslips: acc.payslips + 1,
           exitMonthPayslips: isExitMonth
             ? {
+                ...acc.exitMonthPayslips,
                 count: acc.exitMonthPayslips.count + 1,
                 grossPaid: acc.exitMonthPayslips.grossPaid.add(new Decimal(p.grossPay)),
               }
@@ -1022,7 +1028,14 @@ export class SettlementService {
         professionalTaxPaid: zero,
         tdsDeducted: zero,
         payslips: 0,
-        exitMonthPayslips: { count: 0, grossPaid: zero },
+        // The month looked for, carried through so the working can name it
+        // rather than report a bare count of payslips.
+        exitMonthPayslips: {
+          count: 0,
+          grossPaid: zero,
+          year: exitYear,
+          month: exitMonth,
+        },
       },
     );
 
@@ -1126,6 +1139,9 @@ export class SettlementService {
         : null,
       declaration,
       declarationFound: Boolean(declarationRow),
+      // Section 192(2A): relief under section 89 only on particulars the
+      // employee furnished in Form 10E. No declaration at all means no form.
+      form10EFurnished: declarationRow?.form10EFurnished ?? false,
       payableBeforeTax: args.payableBeforeTax,
       section89,
       proofs,

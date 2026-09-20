@@ -19,7 +19,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Select';
 import { employeesApi, statutoryApi } from '@/lib/api';
-import type { Employee } from '@/types';
+import type { Employee, EmployeeTaxDeclaration } from '@/types';
 
 import {
   currentFinancialYear,
@@ -33,13 +33,14 @@ import {
   NoDeclarationNotice,
 } from '@/components/declaration/DeclarationNotices';
 import {
+  ReadOnlyBooleanField,
   ReadOnlyCountField,
   ReadOnlyDeclarationField,
   ignoredForRegime,
 } from '@/components/declaration/DeclarationFieldRow';
 import {
   DECLARATION_FIELDS,
-  DeclarationWithNewFields,
+  FORM_10E_FURNISHED_FIELD,
   LTA_JOURNEYS_FIELD,
 } from '@/components/declaration/fields';
 
@@ -47,7 +48,7 @@ export default function PayrollDeclarationsPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [employeeId, setEmployeeId] = useState('');
   const [financialYear, setFinancialYear] = useState<number>(() => currentFinancialYear());
-  const [declaration, setDeclaration] = useState<DeclarationWithNewFields | null>(null);
+  const [declaration, setDeclaration] = useState<EmployeeTaxDeclaration | null>(null);
   const [loading, setLoading] = useState(false);
   /** True once a read for the current selection has come back. */
   const [read, setRead] = useState(false);
@@ -103,7 +104,7 @@ export default function PayrollDeclarationsPage() {
     try {
       const response = await statutoryApi.getDeclarationFor(employeeId, financialYear);
       if (requestRef.current !== request) return;
-      setDeclaration((response.data ?? null) as DeclarationWithNewFields | null);
+      setDeclaration((response.data ?? null) as EmployeeTaxDeclaration | null);
       setRead(true);
     } catch {
       if (requestRef.current !== request) return;
@@ -209,6 +210,11 @@ export default function PayrollDeclarationsPage() {
                   fieldKey={LTA_JOURNEYS_FIELD.key}
                   label={LTA_JOURNEYS_FIELD.label}
                   value={declaration.ltaJourneysUsedInBlock}
+                />
+                <ReadOnlyBooleanField
+                  fieldKey={FORM_10E_FURNISHED_FIELD.key}
+                  label={FORM_10E_FURNISHED_FIELD.label}
+                  value={Boolean(declaration.form10EFurnished)}
                 />
               </dl>
 
