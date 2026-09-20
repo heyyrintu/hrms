@@ -395,7 +395,9 @@ Known and deliberate, so nobody assumes otherwise:
   assessment, too little exposes the employer to interest under section 201(1A).
 - **The gratuity variant of rule 21A.** Not modelled, so gratuity is excluded
   from the relief base rather than relieved by the wrong method. An employee
-  recovers it on their own Form 10E.
+  who is entitled to it claims it in their own return, having furnished Form
+  10E to the department; the form supplies the particulars for the claim rather
+  than being the claim.
 - **Which rule leave encashment falls under.** Relief on it is computed by the
   ordinary spreading method of rule 21A(2), which is framed as salary in arrears
   or in advance. Encashment on retirement is not one of the heads that sub-rule
