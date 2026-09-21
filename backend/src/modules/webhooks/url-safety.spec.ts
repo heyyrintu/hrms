@@ -71,6 +71,29 @@ describe('url-safety', () => {
       );
     });
 
+    // The URL parser rewrites ::ffff:127.0.0.1 to ::ffff:7f00:1 before any
+    // check sees it, so the hex form is the one that actually arrives.
+    it.each([
+      ['::ffff:7f00:1', 'loopback'],
+      ['::ffff:a9fe:a9fe', 'link-local (cloud metadata)'],
+      ['::ffff:a00:5', 'private'],
+      ['0:0:0:0:0:ffff:7f00:1', 'loopback'],
+      ['::FFFF:7F00:1', 'loopback'],
+      ['64:ff9b::a9fe:a9fe', 'link-local (cloud metadata)'],
+      ['2002:7f00:1::', 'loopback'],
+      ['2002:a9fe:a9fe::1', 'link-local (cloud metadata)'],
+      ['::7f00:1', 'IPv4-compatible (deprecated)'],
+      ['0:0:0:0:0:0:0:1', 'loopback'],
+      ['fec0::1', 'site-local (deprecated)'],
+      ['2001:db8::1', 'documentation'],
+    ])('blocks the hex or expanded form %s', (ip, reason) => {
+      expect(classifyBlockedAddress(ip)).toBe(reason);
+    });
+
+    it('lets a mapped address through only when the IPv4 inside is public', () => {
+      expect(classifyBlockedAddress('::ffff:808:808')).toBeNull(); // 8.8.8.8
+    });
+
     it('sees through the NAT64 prefix', () => {
       expect(classifyBlockedAddress('64:ff9b::10.0.0.1')).toBe('private');
     });
@@ -90,6 +113,19 @@ describe('url-safety', () => {
       await expect(
         assertPublicWebhookTarget('http://169.254.169.254/latest/meta-data/'),
       ).rejects.toBeInstanceOf(UnsafeWebhookTargetError);
+      expect(lookup).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['http://[::ffff:127.0.0.1]/'],
+      ['http://[::ffff:169.254.169.254]/latest/meta-data/'],
+      ['http://[::ffff:7f00:1]/'],
+      ['http://[64:ff9b::a9fe:a9fe]/'],
+      ['http://[2002:7f00:1::]/'],
+    ])('rejects the IPv4-in-IPv6 target %s as it arrives through a real URL', async (url) => {
+      await expect(assertPublicWebhookTarget(url)).rejects.toBeInstanceOf(
+        UnsafeWebhookTargetError,
+      );
       expect(lookup).not.toHaveBeenCalled();
     });
 

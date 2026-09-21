@@ -19,6 +19,13 @@ const { lookup: dnsLookup } = require('node:dns/promises') as {
 };
 const PUBLIC_ADDRESS = [{ address: '93.184.216.34', family: 4 }];
 
+// These specs drive delivery through a mocked global.fetch. webhookFetch is the
+// real client and has its own spec against a live server (webhook-http.spec.ts);
+// here it is routed to that mock so the assertions below stay about the service.
+jest.mock('./webhook-http', () => ({
+  webhookFetch: (...args: any[]) => (global.fetch as any)(...args),
+}));
+
 describe('WebhookDispatcherService', () => {
   let service: WebhookDispatcherService;
   let prisma: any;

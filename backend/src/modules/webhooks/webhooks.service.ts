@@ -16,6 +16,7 @@ import {
   assertPublicWebhookTarget,
   UnsafeWebhookTargetError,
 } from './url-safety';
+import { webhookFetch } from './webhook-http';
 
 /** Matches the dispatcher so a test delivery behaves like a real one. */
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -174,17 +175,15 @@ export class WebhooksService {
     let errorMessage: string | null = null;
 
     try {
-      // Re-checked here, not just on save: a hostname that passed validation
-      // can point somewhere else by the time it is dialled.
+      // Fails early with a readable error. The check that actually binds is
+      // inside webhookFetch, on the address the socket dials: this one can be
+      // answered differently from the lookup the connection makes.
       await assertPublicWebhookTarget(webhook.url);
 
-      const response = await fetch(webhook.url, {
+      const response = await webhookFetch(webhook.url, {
         method: 'POST',
         headers,
         body,
-        // A public URL that redirects to 127.0.0.1 would otherwise walk
-        // straight past the target check.
-        redirect: 'manual',
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 

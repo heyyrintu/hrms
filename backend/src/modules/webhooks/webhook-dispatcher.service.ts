@@ -4,6 +4,7 @@ import { NotificationType, WebhookLogStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { assertPublicWebhookTarget } from './url-safety';
+import { webhookFetch } from './webhook-http';
 
 /** How long a single delivery attempt may take before it is abandoned. */
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -143,16 +144,15 @@ export class WebhookDispatcherService {
     body: string,
   ): Promise<AttemptResult> {
     try {
-      // Checked before every attempt, not just when the webhook was saved: a
-      // hostname can resolve publicly on save and to 127.0.0.1 at delivery.
+      // Fails early with a readable error. The check that actually binds is
+      // inside webhookFetch, on the address the socket dials: this one can be
+      // answered differently from the lookup the connection makes.
       await assertPublicWebhookTarget(url);
 
-      const response = await fetch(url, {
+      const response = await webhookFetch(url, {
         method: 'POST',
         headers,
         body,
-        // Not followed, or a public URL could redirect inside the perimeter.
-        redirect: 'manual',
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 
