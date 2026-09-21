@@ -1,6 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { LoanType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Decimal } from '@prisma/client/runtime/library';
+import {
+  LoansService,
+  PayrollRepaymentLine,
+} from '../loans/loans.service';
 import {
   Section10AllowancesInput,
   StatutoryService,
@@ -67,6 +72,14 @@ export interface PayslipData {
   otPay: Decimal;
   /** Indian statutory deductions and employer contributions for the month. */
   statutory: StatutoryResult;
+  /**
+   * The loan and salary-advance instalments this payslip actually deducted,
+   * after the clamp below — not what the schedule asked for. The payroll run
+   * hands exactly these to `LoansService.recordPayrollRepayments` once the
+   * payslip row exists, so what a loan is credited with is always what the
+   * employee was actually charged.
+   */
+  loanRepayments: PayrollRepaymentLine[];
 }
 
 /** Round to paise, half-up, which is the commercial convention. */
@@ -76,9 +89,12 @@ function money(value: Decimal): Decimal {
 
 @Injectable()
 export class PayrollCalculationService {
+  private readonly logger = new Logger(PayrollCalculationService.name);
+
   constructor(
     private prisma: PrismaService,
     private statutoryService: StatutoryService,
+    private loansService: LoansService,
   ) {}
 
   async calculateForEmployee(
@@ -264,7 +280,28 @@ export class PayrollCalculationService {
       if (amount.gt(0)) deductions.push({ name, amount });
     }
 
-    const allDeductions = money(totalDeductions.add(statutory.totalEmployeeDeductions));
+    // 10. Loan and salary-advance instalments, taken after the statutory
+    // deductions so the clamp below only ever eats into take-home pay.
+    const statutoryAndComponents = money(
+      totalDeductions.add(statutory.totalEmployeeDeductions),
+    );
+    const loanRepayments = this.applyLoanDeductions(
+      employeeId,
+      deductions,
+      money(grossPay.sub(statutoryAndComponents)),
+      await this.loansService.getPayrollDeductions(
+        tenantId,
+        employeeId,
+        month,
+        year,
+      ),
+    );
+    const loanTotal = loanRepayments.reduce(
+      (sum, line) => sum.add(new Decimal(line.amount)),
+      new Decimal(0),
+    );
+
+    const allDeductions = money(statutoryAndComponents.add(loanTotal));
     const netPay = money(grossPay.sub(allDeductions));
 
     return {
@@ -282,7 +319,71 @@ export class PayrollCalculationService {
       netPay,
       otPay,
       statutory,
+      loanRepayments,
     };
+  }
+
+  /**
+   * Push one deduction line per outstanding instalment and report what was
+   * actually taken.
+   *
+   * Payroll may not pay an employee a negative salary to service a loan. Where
+   * the instalments together exceed what is left after every other deduction,
+   * they are reduced — the last scheduled line first, so the oldest loan is
+   * serviced in preference to the newest — until net pay lands exactly on
+   * zero. The shortfall is logged rather than swallowed, because a loan that
+   * silently misses an instalment falls behind its schedule and nothing else
+   * in the system would say so.
+   *
+   * The amounts returned are the reduced ones. They are what gets written back
+   * against each loan, so a clamped month reduces the balance by what the
+   * payslip shows and no more.
+   */
+  private applyLoanDeductions(
+    employeeId: string,
+    deductions: { name: string; amount: Decimal }[],
+    netBeforeLoans: Decimal,
+    scheduled: { lines: { loanId: string; type: LoanType; amount: number }[] },
+  ): PayrollRepaymentLine[] {
+    if (scheduled.lines.length === 0) return [];
+
+    // A payslip already at or below zero can service nothing at all.
+    const available = Decimal.max(netBeforeLoans, new Decimal(0));
+    const applied = scheduled.lines.map((line) => ({
+      ...line,
+      amount: new Decimal(line.amount),
+    }));
+
+    const requested = applied.reduce(
+      (sum, line) => sum.add(line.amount),
+      new Decimal(0),
+    );
+    let shortfall = requested.sub(available);
+    if (shortfall.gt(0)) {
+      this.logger.warn(
+        `Loan instalments for employee ${employeeId} exceed net pay by ${shortfall.toFixed(2)}; deductions reduced so net pay is not negative`,
+      );
+      for (let i = applied.length - 1; i >= 0 && shortfall.gt(0); i--) {
+        const cut = Decimal.min(applied[i].amount, shortfall);
+        applied[i].amount = applied[i].amount.sub(cut);
+        shortfall = shortfall.sub(cut);
+      }
+    }
+
+    const recorded: PayrollRepaymentLine[] = [];
+    for (const line of applied) {
+      const amount = money(line.amount);
+      if (amount.lte(0)) continue;
+      deductions.push({
+        name:
+          line.type === LoanType.SALARY_ADVANCE
+            ? 'Salary advance recovery'
+            : 'Loan EMI',
+        amount,
+      });
+      recorded.push({ loanId: line.loanId, amount: amount.toNumber() });
+    }
+    return recorded;
   }
 
   /**

@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { createMockPrismaService } from '../../test/helpers';
 import { Decimal } from '@prisma/client/runtime/library';
 import { StatutoryService } from './statutory/statutory.service';
+import { LoansService } from '../loans/loans.service';
 
 const zero = () => new Decimal(0);
 
@@ -26,6 +27,7 @@ describe('PayrollCalculationService', () => {
   let service: PayrollCalculationService;
   let prisma: any;
   let statutory: { compute: jest.Mock };
+  let loans: { getPayrollDeductions: jest.Mock };
 
   const tenantId = 'tenant-1';
   const employeeId = 'emp-1';
@@ -41,12 +43,22 @@ describe('PayrollCalculationService', () => {
           provide: StatutoryService,
           useValue: { compute: jest.fn().mockResolvedValue(noStatutory()) },
         },
+        {
+          provide: LoansService,
+          useValue: {
+            // No loans by default, so these tests stay about the base pay maths.
+            getPayrollDeductions: jest
+              .fn()
+              .mockResolvedValue({ total: 0, lines: [] }),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<PayrollCalculationService>(PayrollCalculationService);
     prisma = module.get(PrismaService);
     statutory = module.get(StatutoryService);
+    loans = module.get(LoansService);
   });
 
   it('should be defined', () => {
@@ -748,6 +760,7 @@ describe('PayrollCalculationService - section 10 allowances actually paid', () =
   let service: PayrollCalculationService;
   let prisma: any;
   let statutory: { compute: jest.Mock };
+  let loans: { getPayrollDeductions: jest.Mock };
 
   const tenantId = 'tenant-1';
   const employeeId = 'emp-1';
@@ -787,12 +800,22 @@ describe('PayrollCalculationService - section 10 allowances actually paid', () =
           provide: StatutoryService,
           useValue: { compute: jest.fn().mockResolvedValue(noStatutory()) },
         },
+        {
+          provide: LoansService,
+          useValue: {
+            // No loans by default, so these tests stay about the base pay maths.
+            getPayrollDeductions: jest
+              .fn()
+              .mockResolvedValue({ total: 0, lines: [] }),
+          },
+        },
       ],
     }).compile();
 
     service = module.get<PayrollCalculationService>(PayrollCalculationService);
     prisma = module.get(PrismaService);
     statutory = module.get(StatutoryService);
+    loans = module.get(LoansService);
   });
 
   it('tells the statutory engine what it actually paid under each marked head', async () => {
@@ -919,5 +942,169 @@ describe('PayrollCalculationService - section 10 allowances actually paid', () =
     await service.calculateForEmployee(tenantId, employeeId, month, year);
 
     expect(statutory.compute.mock.calls[0][0].section10Allowances).toBeUndefined();
+  });
+});
+
+describe('PayrollCalculationService - loan and salary advance recovery', () => {
+  let service: PayrollCalculationService;
+  let prisma: any;
+  let loans: { getPayrollDeductions: jest.Mock };
+
+  const tenantId = 'tenant-1';
+  const employeeId = 'emp-1';
+  const month = 1; // January
+  const year = 2026;
+
+  /** A full month of attendance, so nothing is pro-rated away. */
+  function fullAttendance() {
+    prisma.holiday.findMany.mockResolvedValue([]);
+    prisma.attendanceRecord.findMany.mockResolvedValue(
+      Array.from({ length: 22 }, (_, i) => ({
+        status: 'PRESENT', date: new Date(2026, 0, i + 1),
+        otMinutesApproved: 0, otMinutesCalculated: 0,
+      })),
+    );
+    prisma.leaveRequest.findMany.mockResolvedValue([]);
+  }
+
+  /** A flat salary with no components, so net pay is exactly the base pay. */
+  function salaryOf(basePay: number) {
+    return {
+      id: 'es-1',
+      tenantId,
+      employeeId,
+      basePay,
+      isActive: true,
+      salaryStructure: { id: 'ss-1', name: 'Flat', components: [] },
+      employee: { otMultiplier: 1.5, payType: 'MONTHLY', hourlyRate: null },
+    };
+  }
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        PayrollCalculationService,
+        { provide: PrismaService, useValue: createMockPrismaService() },
+        {
+          provide: StatutoryService,
+          useValue: { compute: jest.fn().mockResolvedValue(noStatutory()) },
+        },
+        {
+          provide: LoansService,
+          useValue: {
+            getPayrollDeductions: jest
+              .fn()
+              .mockResolvedValue({ total: 0, lines: [] }),
+          },
+        },
+      ],
+    }).compile();
+
+    service = module.get<PayrollCalculationService>(PayrollCalculationService);
+    prisma = module.get(PrismaService);
+    loans = module.get(LoansService);
+    prisma.employeeSalary.findFirst.mockResolvedValue(salaryOf(20000));
+    fullAttendance();
+  });
+
+  it('shows the instalment as a deduction line and takes it off net pay', async () => {
+    loans.getPayrollDeductions.mockResolvedValue({
+      total: 5000,
+      lines: [{ loanId: 'loan-1', type: 'LOAN', amount: 5000 }],
+    });
+
+    const result = await service.calculateForEmployee(
+      tenantId, employeeId, month, year,
+    );
+
+    expect(loans.getPayrollDeductions).toHaveBeenCalledWith(
+      tenantId, employeeId, month, year,
+    );
+    expect(toPlainAmounts(result!.deductions)).toEqual([
+      { name: 'Loan EMI', amount: 5000 },
+    ]);
+    expect(Number(result!.totalDeductions)).toBe(5000);
+    expect(Number(result!.netPay)).toBe(15000);
+    expect(result!.loanRepayments).toEqual([{ loanId: 'loan-1', amount: 5000 }]);
+  });
+
+  it('names a salary advance recovery differently from a loan instalment', async () => {
+    loans.getPayrollDeductions.mockResolvedValue({
+      total: 3500,
+      lines: [
+        { loanId: 'loan-1', type: 'LOAN', amount: 2000 },
+        { loanId: 'adv-1', type: 'SALARY_ADVANCE', amount: 1500 },
+      ],
+    });
+
+    const result = await service.calculateForEmployee(
+      tenantId, employeeId, month, year,
+    );
+
+    expect(toPlainAmounts(result!.deductions)).toEqual([
+      { name: 'Loan EMI', amount: 2000 },
+      { name: 'Salary advance recovery', amount: 1500 },
+    ]);
+    expect(Number(result!.netPay)).toBe(16500);
+  });
+
+  it('clamps the instalments so net pay lands on zero rather than going negative', async () => {
+    // 20000 of pay against 25000 of scheduled instalments. Payroll may not pay
+    // a negative salary to service a loan.
+    loans.getPayrollDeductions.mockResolvedValue({
+      total: 25000,
+      lines: [
+        { loanId: 'loan-1', type: 'LOAN', amount: 18000 },
+        { loanId: 'adv-1', type: 'SALARY_ADVANCE', amount: 7000 },
+      ],
+    });
+
+    const result = await service.calculateForEmployee(
+      tenantId, employeeId, month, year,
+    );
+
+    // The last line is cut first, so the older loan keeps its full instalment.
+    expect(toPlainAmounts(result!.deductions)).toEqual([
+      { name: 'Loan EMI', amount: 18000 },
+      { name: 'Salary advance recovery', amount: 2000 },
+    ]);
+    expect(Number(result!.netPay)).toBe(0);
+    // What is recorded against each loan is what was actually charged.
+    expect(result!.loanRepayments).toEqual([
+      { loanId: 'loan-1', amount: 18000 },
+      { loanId: 'adv-1', amount: 2000 },
+    ]);
+  });
+
+  it('drops a line entirely when the clamp leaves nothing for it', async () => {
+    loans.getPayrollDeductions.mockResolvedValue({
+      total: 26000,
+      lines: [
+        { loanId: 'loan-1', type: 'LOAN', amount: 20000 },
+        { loanId: 'adv-1', type: 'SALARY_ADVANCE', amount: 6000 },
+      ],
+    });
+
+    const result = await service.calculateForEmployee(
+      tenantId, employeeId, month, year,
+    );
+
+    expect(toPlainAmounts(result!.deductions)).toEqual([
+      { name: 'Loan EMI', amount: 20000 },
+    ]);
+    expect(Number(result!.netPay)).toBe(0);
+    expect(result!.loanRepayments).toEqual([
+      { loanId: 'loan-1', amount: 20000 },
+    ]);
+  });
+
+  it('records nothing and adds no line when the employee has no loans', async () => {
+    const result = await service.calculateForEmployee(
+      tenantId, employeeId, month, year,
+    );
+
+    expect(toPlainAmounts(result!.deductions)).toEqual([]);
+    expect(result!.loanRepayments).toEqual([]);
+    expect(Number(result!.netPay)).toBe(20000);
   });
 });

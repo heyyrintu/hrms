@@ -4,6 +4,7 @@ import { PayrollService } from './payroll.service';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createMockPrismaService } from '../../test/helpers';
+import { LoansService } from '../loans/loans.service';
 import { PayrollRunStatus, Prisma, UserRole } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 
@@ -11,6 +12,7 @@ describe('PayrollService', () => {
   let service: PayrollService;
   let prisma: any;
   let calculationService: any;
+  let loansService: any;
 
   const tenantId = 'tenant-1';
 
@@ -18,18 +20,24 @@ describe('PayrollService', () => {
     const mockCalculationService = {
       calculateForEmployee: jest.fn(),
     };
+    const mockLoansService = {
+      clearPayrollRepayments: jest.fn().mockResolvedValue(undefined),
+      recordPayrollRepayments: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PayrollService,
         { provide: PrismaService, useValue: createMockPrismaService() },
         { provide: PayrollCalculationService, useValue: mockCalculationService },
+        { provide: LoansService, useValue: mockLoansService },
       ],
     }).compile();
 
     service = module.get<PayrollService>(PayrollService);
     prisma = module.get(PrismaService);
     calculationService = module.get(PayrollCalculationService);
+    loansService = module.get(LoansService);
   });
 
   it('should be defined', () => {
@@ -902,5 +910,161 @@ describe('PayrollService', () => {
         'PROCESSING',
       );
     }
+  });
+  // ============================================
+  // Loan recovery
+  // ============================================
+
+  describe('loan recovery', () => {
+    const runId = 'run-1';
+    const draftRun = {
+      id: runId,
+      tenantId,
+      month: 1,
+      year: 2026,
+      status: PayrollRunStatus.DRAFT,
+    };
+
+    const zeroStatutory = {
+      pfWages: new Decimal(0), pfEmployee: new Decimal(0), pfEmployer: new Decimal(0),
+      epsEmployer: new Decimal(0), edliEmployer: new Decimal(0),
+      pfAdminEmployer: new Decimal(0), esiWages: new Decimal(0),
+      esiEmployee: new Decimal(0), esiEmployer: new Decimal(0),
+      professionalTax: new Decimal(0), lwfEmployee: new Decimal(0),
+      lwfEmployer: new Decimal(0), tds: new Decimal(0),
+      taxComputation: null, totalEmployeeDeductions: new Decimal(0),
+    };
+
+    function slipFor(employeeId: string, loanRepayments: unknown[]) {
+      return {
+        employeeId,
+        workingDays: 22, presentDays: 22, leaveDays: 0, lopDays: 0,
+        otHours: new Decimal(0), basePay: new Decimal(20000),
+        earnings: [],
+        deductions: [{ name: 'Loan EMI', amount: new Decimal(5000) }],
+        grossPay: new Decimal(20000),
+        totalDeductions: new Decimal(5000),
+        netPay: new Decimal(15000),
+        otPay: new Decimal(0),
+        statutory: zeroStatutory,
+        loanRepayments,
+      };
+    }
+
+    /** A DRAFT run that computes one payslip for `emp-1`. */
+    function draftRunProducing(loanRepayments: unknown[]) {
+      prisma.payrollRun.findFirst.mockResolvedValue(draftRun);
+      prisma.employee.findMany.mockResolvedValue([{ id: 'emp-1' }]);
+      prisma.payslip.deleteMany.mockResolvedValue({});
+      prisma.payslip.createMany.mockResolvedValue({ count: 1 });
+      prisma.payslip.findMany.mockResolvedValue([
+        { id: 'slip-1', employeeId: 'emp-1' },
+      ]);
+      prisma.payrollRun.update.mockResolvedValue({ id: runId });
+      calculationService.calculateForEmployee.mockResolvedValue(
+        slipFor('emp-1', loanRepayments),
+      );
+    }
+
+    it('records the instalments once, against the payslip that deducted them', async () => {
+      draftRunProducing([{ loanId: 'loan-1', amount: 5000 }]);
+
+      await service.processRun(tenantId, runId);
+
+      expect(loansService.recordPayrollRepayments).toHaveBeenCalledTimes(1);
+      expect(loansService.recordPayrollRepayments).toHaveBeenCalledWith(
+        tenantId,
+        'emp-1',
+        1,
+        2026,
+        'slip-1',
+        [{ loanId: 'loan-1', amount: 5000 }],
+      );
+    });
+
+    it('does not call the loans service at all when nobody had an instalment', async () => {
+      draftRunProducing([]);
+
+      await service.processRun(tenantId, runId);
+
+      expect(loansService.recordPayrollRepayments).not.toHaveBeenCalled();
+      // The payslip ids are not even looked up when there is nothing to record.
+      expect(prisma.payslip.findMany).not.toHaveBeenCalled();
+    });
+
+    it('retries a 409 exactly once, because the balance moved under the first try', async () => {
+      draftRunProducing([{ loanId: 'loan-1', amount: 5000 }]);
+      loansService.recordPayrollRepayments
+        .mockRejectedValueOnce(new ConflictException('balance moved'))
+        .mockResolvedValueOnce(undefined);
+
+      await service.processRun(tenantId, runId);
+
+      expect(loansService.recordPayrollRepayments).toHaveBeenCalledTimes(2);
+    });
+
+    it('lets a second 409 surface rather than silently losing the repayment', async () => {
+      draftRunProducing([{ loanId: 'loan-1', amount: 5000 }]);
+      loansService.recordPayrollRepayments.mockRejectedValue(
+        new ConflictException('balance moved'),
+      );
+
+      await expect(service.processRun(tenantId, runId)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(loansService.recordPayrollRepayments).toHaveBeenCalledTimes(2);
+    });
+
+    it('reverses the previous attempt before recomputing, so the EMI is not lost', async () => {
+      // getPayrollDeductions skips a loan that already has a row for the
+      // month. Without the reversal the recomputed payslip would show no
+      // instalment at all and pay the whole salary out.
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        id: runId, tenantId, month: 3, year: 2026,
+        status: PayrollRunStatus.COMPUTED,
+        totalGross: new Decimal(0), totalDeductions: new Decimal(0),
+        totalNet: new Decimal(0), processedCount: 1,
+      });
+      prisma.payslip.findMany.mockResolvedValue([
+        { id: 'slip-1', employeeId: 'emp-1' },
+      ]);
+      prisma.payslip.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.payslip.createMany.mockResolvedValue({ count: 1 });
+      prisma.payrollRun.update.mockResolvedValue({
+        id: runId, status: PayrollRunStatus.COMPUTED,
+        totalGross: new Decimal(0), totalDeductions: new Decimal(0),
+        totalNet: new Decimal(0), processedCount: 1,
+      });
+      calculationService.calculateForEmployee.mockResolvedValue(
+        slipFor('emp-1', [{ loanId: 'loan-1', amount: 5000 }]),
+      );
+
+      await service.recomputeRun(tenantId, runId);
+
+      expect(loansService.clearPayrollRepayments).toHaveBeenCalledWith(
+        tenantId, 3, 2026,
+      );
+      // Reversed first, re-recorded from the figures this recompute produced.
+      const clearedAt =
+        loansService.clearPayrollRepayments.mock.invocationCallOrder[0];
+      const recordedAt =
+        loansService.recordPayrollRepayments.mock.invocationCallOrder[0];
+      expect(clearedAt).toBeLessThan(recordedAt);
+    });
+
+    it('reverses the abandoned attempt when a stuck run is reset', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        id: runId, tenantId, month: 4, year: 2026,
+        status: PayrollRunStatus.PROCESSING,
+      });
+      prisma.payslip.deleteMany.mockResolvedValue({});
+      prisma.payrollRun.update.mockResolvedValue({});
+
+      await service.resetRun(tenantId, runId);
+
+      expect(loansService.clearPayrollRepayments).toHaveBeenCalledWith(
+        tenantId, 4, 2026,
+      );
+    });
   });
 });

@@ -591,6 +591,65 @@ export class LoansService {
     }
   }
 
+  /**
+   * Undo the payroll-sourced repayments recorded for a month, putting each
+   * loan back where it stood before them.
+   *
+   * A payroll run can be reset or recomputed, which throws its payslips away
+   * and regenerates them. The repayment rows the previous attempt wrote would
+   * otherwise outlive the payslip that caused them, and two things go wrong:
+   * `getPayrollDeductions` skips a loan that already has a row for the month,
+   * so the regenerated payslip would show no instalment at all and pay the
+   * employee their whole salary; and where the recompute clamps differently,
+   * the surviving row credits a figure the new payslip never deducted.
+   *
+   * Reversing is safe to call when there is nothing to reverse, and there is
+   * at most one payroll run per tenant and month, so the month alone
+   * identifies the rows this run owns.
+   */
+  async clearPayrollRepayments(
+    tenantId: string,
+    month: number,
+    year: number,
+  ): Promise<void> {
+    const rows = await this.prisma.loanRepayment.findMany({
+      where: { tenantId, month, year, source: RepaymentSource.PAYROLL },
+      include: {
+        loan: { select: { id: true, outstandingAmount: true, status: true } },
+      },
+    });
+    if (rows.length === 0) return;
+
+    await this.prisma.$transaction(async (tx: any) => {
+      for (const row of rows as any[]) {
+        await tx.loanRepayment.delete({ where: { id: row.id } });
+
+        const current = Number(row.loan.outstandingAmount);
+        const restored = round2(current + Number(row.amount));
+
+        // Guarded on the balance that was read, exactly as applyRepayment is:
+        // a manual repayment landing at the same moment must not be erased by
+        // this reversal writing a figure computed before it.
+        const result = await tx.employeeLoan.updateMany({
+          where: { id: row.loanId, tenantId, outstandingAmount: current },
+          data: {
+            outstandingAmount: restored,
+            // A loan this repayment closed is owed money again, so it goes
+            // back to ACTIVE or payroll would never look at it a second time.
+            ...(row.loan.status === LoanStatus.CLOSED
+              ? { status: LoanStatus.ACTIVE, closedAt: null }
+              : {}),
+          },
+        });
+        if ((result?.count ?? 0) === 0) {
+          throw new ConflictException(
+            `The balance of loan ${row.loanId} changed while its payroll repayment was being reversed. Try again.`,
+          );
+        }
+      }
+    });
+  }
+
   // ============================================
   // Internals
   // ============================================
