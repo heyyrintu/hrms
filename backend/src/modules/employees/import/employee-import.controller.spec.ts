@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { EXCEPTION_FILTERS_METADATA } from '@nestjs/common/constants';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -8,6 +9,7 @@ import { ROLES_KEY } from '../../../common/decorators/roles.decorator';
 import { mockHrAdmin } from '../../../test/helpers';
 import { EmployeeImportController } from './employee-import.controller';
 import { EmployeeImportService } from './employee-import.service';
+import { MulterExceptionFilter } from './multer-error.filter';
 import {
   EMPLOYEE_IMPORT_TEMPLATE,
   IMPORT_COLUMNS,
@@ -64,6 +66,18 @@ describe('EmployeeImportController', () => {
           UserRole.SUPER_ADMIN,
         ]);
       }
+    });
+  });
+
+  describe('multer error handling', () => {
+    it('applies the multer exception filter to the upload endpoint', () => {
+      // Without this the interceptor's own abort (oversized file) escapes as a
+      // 500, because the backend installs no global exception filter.
+      const filters = Reflect.getMetadata(
+        EXCEPTION_FILTERS_METADATA,
+        EmployeeImportController.prototype.import,
+      );
+      expect(filters).toEqual([MulterExceptionFilter]);
     });
   });
 

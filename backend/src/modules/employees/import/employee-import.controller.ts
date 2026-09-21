@@ -7,6 +7,7 @@ import {
   Query,
   Res,
   UploadedFile,
+  UseFilters,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
@@ -27,6 +28,7 @@ import { Roles } from '../../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../../common/types/jwt-payload.type';
 import { EmployeeImportService } from './employee-import.service';
+import { MulterExceptionFilter } from './multer-error.filter';
 import {
   EMPLOYEE_IMPORT_TEMPLATE,
   ImportEmployeesDto,
@@ -85,6 +87,9 @@ export class EmployeeImportController {
   @ApiResponse({ status: 400, description: 'Invalid file or invalid rows' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
+  // The filter turns multer's own abort (which happens inside the interceptor,
+  // before this handler runs) into a 400 instead of a 500.
+  @UseFilters(MulterExceptionFilter)
   @UseInterceptors(
     FileInterceptor('file', { limits: { fileSize: MAX_IMPORT_FILE_SIZE } }),
   )

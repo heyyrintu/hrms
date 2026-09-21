@@ -163,10 +163,19 @@ describe('EmployeeImportService', () => {
       );
     });
 
-    it('scopes the lookup to the caller tenant', async () => {
-      await dryRun(csv('E1,Asha,Rao,a@x.com,2026-03-15'));
-      expect((prisma.employee.findMany as jest.Mock).mock.calls[0][0].where.tenantId).toBe(TENANT);
-      expect((prisma.user.findMany as jest.Mock).mock.calls[0][0].where.tenantId).toBe(TENANT);
+    it('scopes every validation lookup to the caller tenant', async () => {
+      await dryRun(csv('E1,Asha,Rao,a@x.com,2026-03-15,ENG,SDE,HQ,M1'));
+
+      // Every read that decides whether a row is valid must be tenant-scoped,
+      // or one tenant's codes could satisfy another tenant's import.
+      const models = ['employee', 'user', 'department', 'designation', 'branch'] as const;
+      for (const model of models) {
+        const mock = prisma[model].findMany as jest.Mock;
+        expect(mock).toHaveBeenCalled();
+        for (const [args] of mock.mock.calls) {
+          expect(args.where.tenantId).toBe(TENANT);
+        }
+      }
     });
   });
 
@@ -328,6 +337,37 @@ describe('EmployeeImportService', () => {
         /initialPassword/,
       );
       expect(prisma.employee.create).not.toHaveBeenCalled();
+    });
+
+    it('scopes every creation-time lookup to the caller tenant', async () => {
+      (prisma.department.findMany as jest.Mock).mockResolvedValue([{ id: 'd1', code: 'ENG' }]);
+      (prisma.designation.findMany as jest.Mock).mockResolvedValue([{ id: 'g1', name: 'SDE' }]);
+      (prisma.branch.findMany as jest.Mock).mockResolvedValue([{ id: 'b1', name: 'HQ' }]);
+      (prisma.employee.findMany as jest.Mock).mockResolvedValue([
+        { id: 'mgr-1', employeeCode: 'M1', email: 'm@x.com' },
+      ]);
+
+      await realRun(csv('E1,Asha,Rao,a@x.com,2026-03-15,ENG,SDE,HQ,M1'));
+
+      // createAll re-reads the lookup tables to turn codes into ids, including
+      // the manager lookup; each of those reads must be tenant-scoped too.
+      const models = ['employee', 'department', 'designation', 'branch'] as const;
+      for (const model of models) {
+        const mock = prisma[model].findMany as jest.Mock;
+        expect(mock.mock.calls.length).toBeGreaterThanOrEqual(2);
+        for (const [args] of mock.mock.calls) {
+          expect(args.where.tenantId).toBe(TENANT);
+        }
+      }
+
+      // The manager resolved to the existing tenant employee, not a stranger.
+      expect((prisma.employee.create as jest.Mock).mock.calls[0][0].data).toMatchObject({
+        tenantId: TENANT,
+        managerId: 'mgr-1',
+        departmentId: 'd1',
+        designationId: 'g1',
+        branchId: 'b1',
+      });
     });
 
     it('writes one audit log entry for the import', async () => {
