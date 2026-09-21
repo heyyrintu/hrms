@@ -3,6 +3,10 @@ import { Cron } from '@nestjs/schedule';
 import { LeaveCarryForwardService } from './leave-carry-forward.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AccrualTriggerType } from '@prisma/client';
+import { zonedDateOnlyUtc } from '../attendance/rules/late-mark';
+
+/** The zone the cron fires in; the year it closes must be read in the same one. */
+const CARRY_FORWARD_TZ = 'Asia/Kolkata';
 
 @Injectable()
 export class LeaveCarryForwardCronService {
@@ -15,16 +19,23 @@ export class LeaveCarryForwardCronService {
 
   /**
    * Run at 3 AM on 1 January. The year being closed is the one that just
-   * ended, so `fromYear = now.getFullYear() - 1`.
+   * ended, so `fromYear` is the cron's own calendar year minus one.
+   *
+   * That year has to be read in `CARRY_FORWARD_TZ`, not the server's zone:
+   * 03:00 IST on 1 Jan 2027 is the instant 2026-12-31T21:30:00Z, so a
+   * UTC-hosted box reading `new Date().getFullYear()` would say 2026 and
+   * close 2025 a second time — which `runCarryForward` reports as
+   * `alreadyRan`, so 2026 would silently never be carried forward at all.
    */
   @Cron('0 3 1 1 *', {
     name: 'year-end-leave-carry-forward',
-    timeZone: 'Asia/Kolkata',
+    timeZone: CARRY_FORWARD_TZ,
   })
   async handleYearEndCarryForward() {
     this.logger.log('Starting year-end leave carry-forward cron job...');
 
-    const fromYear = new Date().getFullYear() - 1;
+    const fromYear =
+      zonedDateOnlyUtc(new Date(), CARRY_FORWARD_TZ).getUTCFullYear() - 1;
 
     try {
       const tenants = await this.prisma.tenant.findMany({
