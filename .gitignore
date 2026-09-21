@@ -70,3 +70,4 @@ backend/prisma/import-employees*.ts
 # Scratch files
 c[0-9]*.txt
 pr_body_tmp.md
+.superpowers/
