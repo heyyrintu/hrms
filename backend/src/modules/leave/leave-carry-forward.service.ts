@@ -12,11 +12,21 @@ import {
   Prisma,
 } from '@prisma/client';
 
+/**
+ * A PENDING run older than this is assumed abandoned (crashed process) and may
+ * be resumed rather than blocking the tenant-year forever.
+ */
+const PENDING_RUN_TTL_MS = 60 * 60 * 1000;
+
 export interface CarryForwardResult {
   runId: string;
   processedCount: number;
   failedCount: number;
-  /** True when a run already existed for (tenantId, fromYear); nothing was written. */
+  /**
+   * True when a COMPLETED (or in-flight PENDING) run already existed for
+   * (tenantId, fromYear); nothing was written. A FAILED run is resumed
+   * instead, and reports `false`.
+   */
   alreadyRan: boolean;
 }
 
@@ -31,8 +41,10 @@ interface CarryForwardError {
  * is written into the `carriedOver` column of the `fromYear + 1` balance.
  *
  * Idempotency lives on `LeaveCarryForwardRun`, which is unique on
- * (tenantId, fromYear): a second call for the same year finds the run, writes
- * nothing and reports `alreadyRan: true`.
+ * (tenantId, fromYear): a second call for the same year finds the COMPLETED
+ * run, writes nothing and reports `alreadyRan: true`. A FAILED run (or a
+ * PENDING one abandoned by a crashed process) is resumed under the same row
+ * rather than blocking that tenant-year forever.
  */
 @Injectable()
 export class LeaveCarryForwardService {
@@ -55,16 +67,61 @@ export class LeaveCarryForwardService {
       where: { tenantId_fromYear: { tenantId, fromYear } },
     });
 
+    let run: { id: string };
+
     if (existing) {
-      return {
-        runId: existing.id,
-        processedCount: existing.processedCount,
-        failedCount: existing.failedCount,
-        alreadyRan: true,
-      };
+      // A COMPLETED run is final, and a PENDING run that is still fresh is
+      // another trigger mid-flight; both are no-ops. A FAILED run -- or a
+      // PENDING one abandoned by a crashed process -- is resumed under the
+      // same row so a transient failure cannot block the tenant-year forever.
+      const stalePendingCutoff = new Date(Date.now() - PENDING_RUN_TTL_MS);
+      const resumable =
+        existing.status === CarryForwardRunStatus.FAILED ||
+        (existing.status === CarryForwardRunStatus.PENDING &&
+          new Date(existing.startedAt) < stalePendingCutoff);
+
+      if (!resumable) {
+        return {
+          runId: existing.id,
+          processedCount: existing.processedCount,
+          failedCount: existing.failedCount,
+          alreadyRan: true,
+        };
+      }
+
+      // Claim conditionally on the status we saw: two concurrent resumes would
+      // otherwise both enter the sweep and double-count the same employees.
+      const claimed = await this.prisma.leaveCarryForwardRun.updateMany({
+        where: { id: existing.id, status: existing.status },
+        data: {
+          status: CarryForwardRunStatus.PENDING,
+          processedCount: 0,
+          failedCount: 0,
+          errorLog: Prisma.DbNull,
+          completedAt: null,
+          startedAt: new Date(),
+          triggerType,
+          triggeredById,
+        },
+      });
+
+      if (claimed.count === 0) {
+        // Someone else claimed it first; re-read so the caller sees their counts.
+        const winner = await this.prisma.leaveCarryForwardRun.findUnique({
+          where: { tenantId_fromYear: { tenantId, fromYear } },
+        });
+        return {
+          runId: winner?.id ?? existing.id,
+          processedCount: winner?.processedCount ?? 0,
+          failedCount: winner?.failedCount ?? 0,
+          alreadyRan: true,
+        };
+      }
+
+      run = { id: existing.id };
+      return this.sweep(tenantId, fromYear, toYear, run);
     }
 
-    let run: { id: string };
     try {
       run = await this.prisma.leaveCarryForwardRun.create({
         data: {
@@ -92,6 +149,19 @@ export class LeaveCarryForwardService {
       throw error;
     }
 
+    return this.sweep(tenantId, fromYear, toYear, run);
+  }
+
+  /**
+   * The actual carry-forward pass, run under an already-claimed PENDING run row
+   * (freshly created, or a FAILED/stale one reset for a retry).
+   */
+  private async sweep(
+    tenantId: string,
+    fromYear: number,
+    toYear: number,
+    run: { id: string },
+  ): Promise<CarryForwardResult> {
     try {
       const leaveTypes = await this.prisma.leaveType.findMany({
         where: { tenantId, isActive: true, carryForward: true },

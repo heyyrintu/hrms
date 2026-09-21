@@ -3,6 +3,7 @@ import {
   AccrualTriggerType,
   CarryForwardRunStatus,
   NotificationType,
+  Prisma,
 } from '@prisma/client';
 import { LeaveCarryForwardService } from './leave-carry-forward.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -245,7 +246,7 @@ describe('LeaveCarryForwardService.runCarryForward', () => {
     expect(result.failedCount).toBe(0);
   });
 
-  it('returns alreadyRan and writes nothing when a run exists for the same year', async () => {
+  it('returns alreadyRan and writes nothing when a COMPLETED run exists for the year', async () => {
     prisma.leaveCarryForwardRun.findUnique.mockResolvedValue({
       id: 'run-existing',
       tenantId,
@@ -334,6 +335,201 @@ describe('LeaveCarryForwardService.runCarryForward', () => {
         }),
       }),
     );
+  });
+
+  it('resumes a FAILED run under the same row instead of blocking the year', async () => {
+    prisma.leaveCarryForwardRun.findUnique.mockResolvedValue({
+      id: 'run-failed',
+      tenantId,
+      fromYear,
+      toYear,
+      status: CarryForwardRunStatus.FAILED,
+      processedCount: 0,
+      failedCount: 4,
+      startedAt: new Date('2026-01-01T12:00:00Z'),
+    });
+    prisma.leaveCarryForwardRun.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await service.runCarryForward(
+      tenantId,
+      fromYear,
+      AccrualTriggerType.MANUAL_ADMIN,
+      'user-1',
+    );
+
+    // No second row: the FAILED one is claimed and reset.
+    expect(prisma.leaveCarryForwardRun.create).not.toHaveBeenCalled();
+    expect(prisma.leaveCarryForwardRun.updateMany).toHaveBeenCalledWith({
+      where: { id: 'run-failed', status: CarryForwardRunStatus.FAILED },
+      data: expect.objectContaining({
+        status: CarryForwardRunStatus.PENDING,
+        processedCount: 0,
+        failedCount: 0,
+        completedAt: null,
+        triggerType: AccrualTriggerType.MANUAL_ADMIN,
+        triggeredById: 'user-1',
+      }),
+    });
+    // ...and the sweep actually runs and completes under that row.
+    expect(prisma.leaveBalance.create).toHaveBeenCalled();
+    expect(prisma.leaveCarryForwardRun.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'run-failed' },
+        data: expect.objectContaining({
+          status: CarryForwardRunStatus.COMPLETED,
+          processedCount: 1,
+          failedCount: 0,
+        }),
+      }),
+    );
+    expect(result).toEqual({
+      runId: 'run-failed',
+      processedCount: 1,
+      failedCount: 0,
+      alreadyRan: false,
+    });
+  });
+
+  it('clears the previous errorLog when resuming a FAILED run', async () => {
+    prisma.leaveCarryForwardRun.findUnique.mockResolvedValue({
+      id: 'run-failed',
+      tenantId,
+      fromYear,
+      toYear,
+      status: CarryForwardRunStatus.FAILED,
+      processedCount: 0,
+      failedCount: 4,
+      startedAt: new Date('2026-01-01T12:00:00Z'),
+    });
+    prisma.leaveCarryForwardRun.updateMany.mockResolvedValue({ count: 1 });
+
+    await service.runCarryForward(tenantId, fromYear, AccrualTriggerType.CRON_JOB);
+
+    const [{ data }] = prisma.leaveCarryForwardRun.updateMany.mock.calls[0];
+    expect(data.errorLog).toBe(Prisma.DbNull);
+  });
+
+  it('leaves a fresh PENDING run alone as an in-flight trigger', async () => {
+    prisma.leaveCarryForwardRun.findUnique.mockResolvedValue({
+      id: 'run-pending',
+      tenantId,
+      fromYear,
+      toYear,
+      status: CarryForwardRunStatus.PENDING,
+      processedCount: 2,
+      failedCount: 0,
+      startedAt: new Date(),
+    });
+
+    const result = await service.runCarryForward(
+      tenantId,
+      fromYear,
+      AccrualTriggerType.MANUAL_ADMIN,
+      'user-1',
+    );
+
+    expect(result.alreadyRan).toBe(true);
+    expect(prisma.leaveCarryForwardRun.updateMany).not.toHaveBeenCalled();
+    expect(prisma.leaveBalance.create).not.toHaveBeenCalled();
+  });
+
+  it('resumes a PENDING run abandoned more than an hour ago', async () => {
+    prisma.leaveCarryForwardRun.findUnique.mockResolvedValue({
+      id: 'run-stale',
+      tenantId,
+      fromYear,
+      toYear,
+      status: CarryForwardRunStatus.PENDING,
+      processedCount: 0,
+      failedCount: 0,
+      startedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    });
+    prisma.leaveCarryForwardRun.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await service.runCarryForward(
+      tenantId,
+      fromYear,
+      AccrualTriggerType.CRON_JOB,
+    );
+
+    expect(prisma.leaveCarryForwardRun.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'run-stale', status: CarryForwardRunStatus.PENDING },
+      }),
+    );
+    expect(result.alreadyRan).toBe(false);
+  });
+
+  it('backs off when another process claims the FAILED run first', async () => {
+    prisma.leaveCarryForwardRun.findUnique
+      .mockResolvedValueOnce({
+        id: 'run-failed',
+        tenantId,
+        fromYear,
+        toYear,
+        status: CarryForwardRunStatus.FAILED,
+        processedCount: 0,
+        failedCount: 4,
+        startedAt: new Date('2026-01-01T12:00:00Z'),
+      })
+      .mockResolvedValueOnce({
+        id: 'run-failed',
+        processedCount: 7,
+        failedCount: 0,
+      });
+    prisma.leaveCarryForwardRun.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await service.runCarryForward(
+      tenantId,
+      fromYear,
+      AccrualTriggerType.CRON_JOB,
+    );
+
+    expect(result).toEqual({
+      runId: 'run-failed',
+      processedCount: 7,
+      failedCount: 0,
+      alreadyRan: true,
+    });
+    expect(prisma.leaveBalance.create).not.toHaveBeenCalled();
+  });
+
+  it('treats a P2002 on create as a concurrent run and returns the winner', async () => {
+    // findUnique sees nothing (the other process has not committed yet), then
+    // the create loses the unique index and the winner is re-read.
+    prisma.leaveCarryForwardRun.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 'run-winner',
+        tenantId,
+        fromYear,
+        toYear,
+        status: CarryForwardRunStatus.PENDING,
+        processedCount: 9,
+        failedCount: 2,
+        startedAt: new Date(),
+      });
+    prisma.leaveCarryForwardRun.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: '5.0.0',
+      }),
+    );
+
+    const result = await service.runCarryForward(
+      tenantId,
+      fromYear,
+      AccrualTriggerType.CRON_JOB,
+    );
+
+    expect(result).toEqual({
+      runId: 'run-winner',
+      processedCount: 9,
+      failedCount: 2,
+      alreadyRan: true,
+    });
+    expect(prisma.leaveBalance.create).not.toHaveBeenCalled();
+    expect(notifications.notifyEmployee).not.toHaveBeenCalled();
   });
 
   it('records the run with toYear = fromYear + 1 and the trigger metadata', async () => {
