@@ -93,21 +93,24 @@ export class PasswordResetService {
 
     const passwordHash = await bcrypt.hash(dto.newPassword, 10);
 
-    await this.prisma.user.update({
-      where: { id: record.user.id },
-      data: {
-        passwordHash,
-        mustChangePassword: false,
-        // Every token minted before the reset stops working, which is the
-        // point: whoever forced the reset should not keep an old session.
-        tokenVersion: { increment: 1 },
-      },
-    });
-
-    await this.prisma.passwordResetToken.update({
-      where: { id: record.id },
-      data: { usedAt: new Date() },
-    });
+    // One transaction: a crash between the two writes would otherwise leave a
+    // token that still works against the password it just changed.
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: record.user.id },
+        data: {
+          passwordHash,
+          mustChangePassword: false,
+          // Every token minted before the reset stops working, which is the
+          // point: whoever forced the reset should not keep an old session.
+          tokenVersion: { increment: 1 },
+        },
+      }),
+      this.prisma.passwordResetToken.update({
+        where: { id: record.id },
+        data: { usedAt: new Date() },
+      }),
+    ]);
 
     return {
       message: 'Password reset. Please sign in with your new password.',
@@ -140,39 +143,55 @@ export class PasswordResetService {
   }
 
   private async issueToken(user: ResettableUser): Promise<void> {
-    // One live link per user: requesting a new one retires the old ones.
-    await this.prisma.passwordResetToken.updateMany({
-      where: { userId: user.id, usedAt: null },
-      data: { usedAt: new Date() },
-    });
-
     const rawToken = crypto.randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + TOKEN_TTL_MINUTES * 60_000);
 
-    // Only the hash is stored: a database leak must not yield usable links.
-    await this.prisma.passwordResetToken.create({
-      data: {
-        tenantId: user.tenantId,
-        userId: user.id,
-        tokenHash: this.hashToken(rawToken),
-        expiresAt,
-      },
-    });
+    // One transaction: retiring the old links and minting the new one must not
+    // half-happen, or a user is left with either two live links or none.
+    await this.prisma.$transaction([
+      // One live link per user: requesting a new one retires the old ones.
+      this.prisma.passwordResetToken.updateMany({
+        where: { userId: user.id, usedAt: null },
+        data: { usedAt: new Date() },
+      }),
+      // Only the hash is stored: a database leak must not yield usable links.
+      this.prisma.passwordResetToken.create({
+        data: {
+          tenantId: user.tenantId,
+          userId: user.id,
+          tokenHash: this.hashToken(rawToken),
+          expiresAt,
+        },
+      }),
+    ]);
 
     const frontendUrl = (
       this.configService.get<string>('FRONTEND_URL') ?? 'http://localhost:3000'
     ).replace(/\/+$/, '');
 
-    await this.emailService.sendEmail({
-      to: user.email,
-      subject: 'Reset your HRMS password',
-      template: 'password-reset',
-      context: {
-        email: user.email,
-        resetUrl: `${frontendUrl}/reset-password?token=${rawToken}`,
-        expiryMinutes: TOKEN_TTL_MINUTES,
-      },
-    });
+    // Deliberately not awaited. Waiting for an SMTP/Graph round-trip would make
+    // a request for a real account measurably slower than one for an address
+    // with no account, and that timing difference is itself the enumeration
+    // oracle this endpoint exists to avoid. Both branches now return after the
+    // same database work.
+    void this.emailService
+      .sendEmail({
+        to: user.email,
+        subject: 'Reset your HRMS password',
+        template: 'password-reset',
+        context: {
+          email: user.email,
+          resetUrl: `${frontendUrl}/reset-password?token=${rawToken}`,
+          expiryMinutes: TOKEN_TTL_MINUTES,
+        },
+      })
+      .catch((error: unknown) => {
+        this.logger.warn(
+          `Password reset email to user ${user.id} failed: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
+      });
   }
 
   private hashToken(rawToken: string): string {

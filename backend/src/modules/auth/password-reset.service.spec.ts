@@ -11,6 +11,13 @@ import { createMockPrismaService, createMockEmailService } from '../../test/help
 const sha256 = (value: string) =>
   crypto.createHash('sha256').update(value).digest('hex');
 
+/**
+ * The reset email is dispatched without being awaited, so the request path
+ * takes the same time whether or not the address has an account. Let the
+ * pending microtasks settle before asserting on it.
+ */
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+
 const activeUser = {
   id: 'user-1',
   tenantId: 'tenant-1',
@@ -79,6 +86,7 @@ describe('PasswordResetService', () => {
 
       const before = Date.now();
       await service.requestReset({ email: 'jane@acme.test' });
+      await flush();
 
       expect(prisma.passwordResetToken.create).toHaveBeenCalledTimes(1);
       const createArg = (prisma.passwordResetToken.create as jest.Mock).mock.calls[0][0];
@@ -118,6 +126,9 @@ describe('PasswordResetService', () => {
         where: { userId: 'user-1', usedAt: null },
         data: { usedAt: expect.any(Date) },
       });
+      // Retiring the old links and minting the new one go in one transaction.
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(Array.isArray((prisma.$transaction as jest.Mock).mock.calls[0][0])).toBe(true);
     });
 
     it('resolves an explicit tenantCode and issues nothing when the code is unknown', async () => {
@@ -152,6 +163,7 @@ describe('PasswordResetService', () => {
       (prisma.passwordResetToken.create as jest.Mock).mockResolvedValue({ id: 'tok' });
 
       await service.requestReset({ email: 'jane@acme.test' });
+      await flush();
 
       expect(prisma.user.findMany).toHaveBeenCalledWith({
         where: { email: 'jane@acme.test', isActive: true },
@@ -173,6 +185,22 @@ describe('PasswordResetService', () => {
       await expect(
         service.requestReset({ email: 'jane@acme.test' }),
       ).resolves.toEqual({ message: expect.any(String) });
+      // The rejection is handled inside the service, not left unhandled.
+      await flush();
+      expect(email.sendEmail).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not wait for the mail transport before answering', async () => {
+      (prisma.user.findMany as jest.Mock).mockResolvedValue([activeUser]);
+      (prisma.passwordResetToken.create as jest.Mock).mockResolvedValue({ id: 'tok-5' });
+      // A transport that never settles must not hold the response open, or the
+      // extra latency for a real account is itself an enumeration oracle.
+      (email.sendEmail as jest.Mock).mockReturnValue(new Promise(() => {}));
+
+      await expect(
+        service.requestReset({ email: 'jane@acme.test' }),
+      ).resolves.toEqual({ message: expect.any(String) });
+      expect(email.sendEmail).toHaveBeenCalledTimes(1);
     });
 
     it('returns the identical message for known and unknown emails', async () => {
@@ -281,6 +309,13 @@ describe('PasswordResetService', () => {
         where: { id: 'tok-1' },
         data: { usedAt: expect.any(Date) },
       });
+
+      // Both writes go in one transaction: a crash between them would leave a
+      // token that still works against the password it just changed.
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(
+        ((prisma.$transaction as jest.Mock).mock.calls[0][0] as unknown[]).length,
+      ).toBe(2);
     });
   });
 });
