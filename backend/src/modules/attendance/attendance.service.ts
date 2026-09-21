@@ -24,6 +24,8 @@ import {
 import { AttendanceStatus, AttendanceSource, UserRole, NotificationType } from '@prisma/client';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AttendancePolicyService } from './policy/attendance-policy.service';
+import { computeLateMark, LateMarkResult } from './rules/late-mark';
 
 @Injectable()
 export class AttendanceService {
@@ -31,6 +33,7 @@ export class AttendanceService {
     private prisma: PrismaService,
     private otCalculation: OtCalculationService,
     private notificationsService: NotificationsService,
+    private policyService: AttendancePolicyService,
   ) {}
 
   /**
@@ -78,6 +81,11 @@ export class AttendanceService {
       }
     }
 
+    // Score the punch against the shift before opening the transaction: these
+    // are two extra reads and a SERIALIZABLE transaction is the wrong place to
+    // hold them.
+    const lateMark = await this.resolveLateMark(tenantId, employeeId, today, now);
+
     // The "is there an open session?" check and the session insert must be one
     // atomic unit, otherwise two near-simultaneous taps both see "no open session"
     // and both insert. A SERIALIZABLE transaction makes the loser fail with P2034.
@@ -113,6 +121,8 @@ export class AttendanceService {
                   remarks: dto.remarks,
                   clockInLatitude: dto.latitude,
                   clockInLongitude: dto.longitude,
+                  isLate: lateMark.isLate,
+                  lateByMinutes: lateMark.isLate ? lateMark.lateByMinutes : null,
                 },
               });
             }
@@ -130,6 +140,8 @@ export class AttendanceService {
               remarks: dto.remarks,
               clockInLatitude: dto.latitude,
               clockInLongitude: dto.longitude,
+              isLate: lateMark.isLate,
+              lateByMinutes: lateMark.isLate ? lateMark.lateByMinutes : null,
               standardWorkMinutes: 480, // 8 hours default
               sessions: { create: { tenantId, inTime: now } },
             },
@@ -231,6 +243,14 @@ export class AttendanceService {
       otRule,
     );
 
+    // The day's status is finalised here, so this is where the late-mark
+    // penalty lands.
+    const penaltyStatus = await this.resolveLateMarkPenalty(
+      tenantId,
+      employeeId,
+      attendance,
+    );
+
     // Update attendance record
     await this.prisma.attendanceRecord.update({
       where: { id: attendance.id },
@@ -242,10 +262,92 @@ export class AttendanceService {
         remarks: dto.remarks || attendance.remarks,
         clockOutLatitude: dto.latitude ?? null,
         clockOutLongitude: dto.longitude ?? null,
+        ...(penaltyStatus ? { status: penaltyStatus } : {}),
       },
     });
 
     return this.getAttendanceById(tenantId, attendance.id);
+  }
+
+  /**
+   * Score a clock-in against the employee's shift for that day, falling back to
+   * the tenant policy's default shift when nobody has been given a shift.
+   */
+  private async resolveLateMark(
+    tenantId: string,
+    employeeId: string,
+    date: Date,
+    clockInAt: Date,
+  ): Promise<LateMarkResult> {
+    const assignment = await this.prisma.shiftAssignment.findFirst({
+      where: {
+        tenantId,
+        employeeId,
+        isActive: true,
+        startDate: { lte: date },
+        OR: [{ endDate: null }, { endDate: { gte: date } }],
+      },
+      orderBy: { startDate: 'desc' },
+      include: { shift: true },
+    });
+
+    if (assignment?.shift?.isActive) {
+      return computeLateMark(
+        clockInAt,
+        assignment.shift.startTime,
+        assignment.shift.graceMinutes,
+      );
+    }
+
+    const policy = await this.policyService.getOrCreate(tenantId);
+    return computeLateMark(
+      clockInAt,
+      policy.defaultShiftStart,
+      policy.defaultGraceMinutes,
+    );
+  }
+
+  /**
+   * Every Nth late mark in the calendar month costs half a day, where N is the
+   * tenant's `lateMarksPerHalfDay`. Returns the status to force, or null when
+   * the day keeps whatever status it already has.
+   *
+   * The count is taken over the month up to and including this day, so a
+   * regularisation that clears an earlier late mark shifts the penalty forward
+   * rather than stranding it.
+   */
+  private async resolveLateMarkPenalty(
+    tenantId: string,
+    employeeId: string,
+    attendance: { date: Date; isLate: boolean; status: AttendanceStatus },
+  ): Promise<AttendanceStatus | null> {
+    if (!attendance.isLate) return null;
+
+    const policy = await this.policyService.getOrCreate(tenantId);
+    const threshold = policy.lateMarksPerHalfDay;
+    if (!threshold || threshold < 1) return null;
+
+    // Already worse than a half day (ABSENT, LEAVE); do not soften it.
+    if (attendance.status !== AttendanceStatus.PRESENT &&
+        attendance.status !== AttendanceStatus.WFH) {
+      return null;
+    }
+
+    const day = new Date(attendance.date);
+    const monthStart = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), 1));
+
+    const lateCount = await this.prisma.attendanceRecord.count({
+      where: {
+        tenantId,
+        employeeId,
+        isLate: true,
+        date: { gte: monthStart, lte: day },
+      },
+    });
+
+    return lateCount > 0 && lateCount % threshold === 0
+      ? AttendanceStatus.HALF_DAY
+      : null;
   }
 
   /**

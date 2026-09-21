@@ -5,6 +5,8 @@ import { AttendanceService } from './attendance.service';
 import { OtCalculationService } from './ot-calculation.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AttendancePolicyService } from './policy/attendance-policy.service';
+import { ATTENDANCE_POLICY_DEFAULTS } from './policy/attendance-policy.service';
 import {
   createMockPrismaService,
   createMockNotificationsService,
@@ -25,11 +27,26 @@ function createMockOtCalculationService() {
   };
 }
 
+function createMockAttendancePolicyService(
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    getOrCreate: jest.fn().mockResolvedValue({
+      id: 'pol-1',
+      tenantId: 'test-tenant',
+      ...ATTENDANCE_POLICY_DEFAULTS,
+      ...overrides,
+    }),
+    update: jest.fn(),
+  };
+}
+
 describe('AttendanceService', () => {
   let service: AttendanceService;
   let prisma: any;
   let otCalc: any;
   let notifications: any;
+  let policyService: any;
 
   const tenantId = 'test-tenant';
   const employeeId = 'emp-1';
@@ -57,6 +74,10 @@ describe('AttendanceService', () => {
         { provide: PrismaService, useValue: createMockPrismaService() },
         { provide: OtCalculationService, useValue: createMockOtCalculationService() },
         { provide: NotificationsService, useValue: createMockNotificationsService() },
+        {
+          provide: AttendancePolicyService,
+          useValue: createMockAttendancePolicyService(),
+        },
       ],
     }).compile();
 
@@ -64,6 +85,7 @@ describe('AttendanceService', () => {
     prisma = module.get(PrismaService);
     otCalc = module.get(OtCalculationService);
     notifications = module.get(NotificationsService);
+    policyService = module.get(AttendancePolicyService);
   });
 
   it('should be defined', () => {
@@ -891,6 +913,201 @@ describe('AttendanceService', () => {
           }),
         }),
       );
+    });
+  });
+  // -----------------------------------------------------------
+  // Late marks (clock-in) and the half-day penalty (clock-out)
+  // -----------------------------------------------------------
+  describe('late marks', () => {
+    const mockCoords = { latitude: 12.9716, longitude: 77.5946 };
+
+    function primeClockIn() {
+      prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+      prisma.tenant.findUnique.mockResolvedValue(null);
+      prisma.attendanceRecord.findUnique.mockResolvedValue(null);
+      prisma.attendanceRecord.create.mockResolvedValue({ id: 'att-1', sessions: [] });
+      prisma.attendanceRecord.findFirst.mockResolvedValue({
+        id: 'att-1',
+        employee: mockEmployee,
+        sessions: [],
+      });
+    }
+
+    it('scores the punch against the employee shift when one is assigned', async () => {
+      primeClockIn();
+      prisma.shiftAssignment.findFirst.mockResolvedValue({
+        id: 'sa-1',
+        shift: { id: 'shift-1', startTime: '00:00', graceMinutes: 0, isActive: true },
+      });
+
+      await service.clockIn(tenantId, employeeId, { ...mockCoords });
+
+      // A 00:00 shift with no grace means any punch after midnight IST is late.
+      expect(prisma.attendanceRecord.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ isLate: true }),
+        }),
+      );
+      expect(policyService.getOrCreate).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the tenant policy when the employee has no shift', async () => {
+      primeClockIn();
+      prisma.shiftAssignment.findFirst.mockResolvedValue(null);
+      policyService.getOrCreate.mockResolvedValue({
+        ...ATTENDANCE_POLICY_DEFAULTS,
+        defaultShiftStart: '23:59',
+        defaultGraceMinutes: 0,
+      });
+
+      await service.clockIn(tenantId, employeeId, { ...mockCoords });
+
+      expect(policyService.getOrCreate).toHaveBeenCalledWith(tenantId);
+      // A 23:59 shift start means almost nothing can be late.
+      expect(prisma.attendanceRecord.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ isLate: false, lateByMinutes: null }),
+        }),
+      );
+    });
+
+    it('leaves lateByMinutes null when the punch is on time', async () => {
+      primeClockIn();
+      prisma.shiftAssignment.findFirst.mockResolvedValue(null);
+      policyService.getOrCreate.mockResolvedValue({
+        ...ATTENDANCE_POLICY_DEFAULTS,
+        defaultShiftStart: '23:59',
+      });
+
+      await service.clockIn(tenantId, employeeId, { ...mockCoords });
+
+      const data = prisma.attendanceRecord.create.mock.calls[0][0].data;
+      expect(data.isLate).toBe(false);
+      expect(data.lateByMinutes).toBeNull();
+    });
+
+    function primeClockOut(attendance: Record<string, unknown>) {
+      prisma.attendanceRecord.findUnique.mockResolvedValue({
+        id: 'att-1',
+        standardWorkMinutes: 480,
+        breakMinutes: 0,
+        remarks: null,
+        status: 'PRESENT',
+        isLate: false,
+        date: new Date('2026-03-16T00:00:00Z'),
+        sessions: [{ id: 'sess-1', inTime: new Date(), outTime: null }],
+        ...attendance,
+      });
+      prisma.attendanceSession.update.mockResolvedValue({});
+      prisma.employee.findUnique.mockResolvedValue(mockEmployee);
+      prisma.attendanceSession.findMany.mockResolvedValue([
+        { id: 'sess-1', sessionMinutes: 0 },
+      ]);
+      prisma.attendanceRecord.update.mockResolvedValue({});
+      prisma.attendanceRecord.findFirst.mockResolvedValue({
+        id: 'att-1',
+        employee: mockEmployee,
+        sessions: [],
+      });
+    }
+
+    it('converts the day to HALF_DAY on the Nth late mark of the month', async () => {
+      primeClockOut({ isLate: true });
+      policyService.getOrCreate.mockResolvedValue({
+        ...ATTENDANCE_POLICY_DEFAULTS,
+        lateMarksPerHalfDay: 3,
+      });
+      prisma.attendanceRecord.count.mockResolvedValue(3);
+
+      await service.clockOut(tenantId, employeeId, {});
+
+      expect(prisma.attendanceRecord.count).toHaveBeenCalledWith({
+        where: {
+          tenantId,
+          employeeId,
+          isLate: true,
+          date: {
+            gte: new Date('2026-03-01T00:00:00Z'),
+            lte: new Date('2026-03-16T00:00:00Z'),
+          },
+        },
+      });
+      expect(prisma.attendanceRecord.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'HALF_DAY' }),
+        }),
+      );
+    });
+
+    it('converts again on every further multiple of N', async () => {
+      primeClockOut({ isLate: true });
+      policyService.getOrCreate.mockResolvedValue({
+        ...ATTENDANCE_POLICY_DEFAULTS,
+        lateMarksPerHalfDay: 3,
+      });
+      prisma.attendanceRecord.count.mockResolvedValue(6);
+
+      await service.clockOut(tenantId, employeeId, {});
+
+      expect(prisma.attendanceRecord.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: 'HALF_DAY' }),
+        }),
+      );
+    });
+
+    it('leaves the status alone below the threshold', async () => {
+      primeClockOut({ isLate: true });
+      policyService.getOrCreate.mockResolvedValue({
+        ...ATTENDANCE_POLICY_DEFAULTS,
+        lateMarksPerHalfDay: 3,
+      });
+      prisma.attendanceRecord.count.mockResolvedValue(2);
+
+      await service.clockOut(tenantId, employeeId, {});
+
+      const data = prisma.attendanceRecord.update.mock.calls[0][0].data;
+      expect(data.status).toBeUndefined();
+    });
+
+    it('does nothing when the tenant has no late-mark threshold', async () => {
+      primeClockOut({ isLate: true });
+      policyService.getOrCreate.mockResolvedValue({
+        ...ATTENDANCE_POLICY_DEFAULTS,
+        lateMarksPerHalfDay: null,
+      });
+
+      await service.clockOut(tenantId, employeeId, {});
+
+      expect(prisma.attendanceRecord.count).not.toHaveBeenCalled();
+      const data = prisma.attendanceRecord.update.mock.calls[0][0].data;
+      expect(data.status).toBeUndefined();
+    });
+
+    it('does not count the month when the day was not late', async () => {
+      primeClockOut({ isLate: false });
+      policyService.getOrCreate.mockResolvedValue({
+        ...ATTENDANCE_POLICY_DEFAULTS,
+        lateMarksPerHalfDay: 1,
+      });
+
+      await service.clockOut(tenantId, employeeId, {});
+
+      expect(prisma.attendanceRecord.count).not.toHaveBeenCalled();
+    });
+
+    it('never softens a day that is already worse than a half day', async () => {
+      primeClockOut({ isLate: true, status: 'LEAVE' });
+      policyService.getOrCreate.mockResolvedValue({
+        ...ATTENDANCE_POLICY_DEFAULTS,
+        lateMarksPerHalfDay: 1,
+      });
+
+      await service.clockOut(tenantId, employeeId, {});
+
+      expect(prisma.attendanceRecord.count).not.toHaveBeenCalled();
+      const data = prisma.attendanceRecord.update.mock.calls[0][0].data;
+      expect(data.status).toBeUndefined();
     });
   });
 });
