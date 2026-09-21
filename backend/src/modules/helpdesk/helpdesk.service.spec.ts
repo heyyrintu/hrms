@@ -174,6 +174,45 @@ describe('HelpdeskService', () => {
   });
 
   // ============================================
+  // listAgents
+  // ============================================
+
+  describe('listAgents', () => {
+    it('returns only active HR users of the tenant, named by their employee', async () => {
+      prisma.user.findMany.mockResolvedValue([
+        {
+          id: 'user-hr',
+          email: 'hr@test.com',
+          employeeId: 'emp-hr',
+          employee: { firstName: 'Nina', lastName: 'Shah' },
+        },
+        {
+          id: 'user-bot',
+          email: 'bot@test.com',
+          employeeId: null,
+          employee: null,
+        },
+      ]);
+
+      const agents = await service.listAgents(tenantId);
+
+      expect(prisma.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            tenantId,
+            isActive: true,
+            role: { in: [UserRole.HR_ADMIN, UserRole.SUPER_ADMIN] },
+          }),
+        }),
+      );
+      expect(agents).toEqual([
+        { id: 'user-hr', email: 'hr@test.com', employeeId: 'emp-hr', name: 'Nina Shah' },
+        { id: 'user-bot', email: 'bot@test.com', employeeId: null, name: 'bot@test.com' },
+      ]);
+    });
+  });
+
+  // ============================================
   // createTicket
   // ============================================
 

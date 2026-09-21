@@ -17,6 +17,7 @@ const mockService = {
   changeStatus: jest.fn(),
   addComment: jest.fn(),
   getStats: jest.fn(),
+  listAgents: jest.fn(),
 };
 
 describe('HelpdeskController', () => {
@@ -216,6 +217,16 @@ describe('HelpdeskController', () => {
         { content: 'Escalated', isInternal: true },
         hrUser,
       );
+    });
+  });
+
+  describe('listAgents', () => {
+    it('scopes the agent list to the caller tenant', async () => {
+      service.listAgents.mockResolvedValue([]);
+
+      await controller.listAgents(hrUser);
+
+      expect(service.listAgents).toHaveBeenCalledWith('tenant-1');
     });
   });
 

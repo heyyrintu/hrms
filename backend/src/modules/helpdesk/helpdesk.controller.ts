@@ -92,6 +92,22 @@ export class HelpdeskController {
     return this.helpdeskService.updateCategory(user.tenantId, id, dto);
   }
 
+  /**
+   * GET /api/helpdesk/agents
+   *
+   * Who a ticket may be assigned to. Not in the original endpoint list, but
+   * the assignment UI needs User ids and nothing else in the API exposes them.
+   */
+  @Get('agents')
+  @Roles(UserRole.HR_ADMIN, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Users a ticket can be assigned to' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  async listAgents(@CurrentUser() user: AuthenticatedUser) {
+    return this.helpdeskService.listAgents(user.tenantId);
+  }
+
   // ============================================
   // Stats
   // ============================================

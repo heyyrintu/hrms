@@ -168,6 +168,37 @@ export class HelpdeskService {
     return this.prisma.hrTicketCategory.update({ where: { id }, data });
   }
 
+  /**
+   * The people a ticket can be handed to: the tenant's active HR users.
+   * `assignedToId` is a User id, so this returns users rather than employees,
+   * with the employee name attached where there is one.
+   */
+  async listAgents(tenantId: string) {
+    const users = await this.prisma.user.findMany({
+      where: {
+        tenantId,
+        isActive: true,
+        role: { in: [UserRole.HR_ADMIN, UserRole.SUPER_ADMIN] },
+      },
+      select: {
+        id: true,
+        email: true,
+        employeeId: true,
+        employee: { select: { firstName: true, lastName: true } },
+      },
+      orderBy: { email: 'asc' },
+    } as any);
+
+    return (users as any[]).map((u) => ({
+      id: u.id,
+      email: u.email,
+      employeeId: u.employeeId,
+      name: u.employee
+        ? `${u.employee.firstName} ${u.employee.lastName}`
+        : u.email,
+    }));
+  }
+
   // ============================================
   // Tickets
   // ============================================

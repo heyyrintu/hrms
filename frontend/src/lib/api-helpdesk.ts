@@ -72,6 +72,14 @@ export interface HelpdeskStats {
   avgResolutionHours: number | null;
 }
 
+/** Someone a ticket can be handed to. `id` is a User id, not an Employee id. */
+export interface HelpdeskAgent {
+  id: string;
+  email: string;
+  employeeId?: string | null;
+  name: string;
+}
+
 export interface TicketListParams {
   status?: TicketStatus;
   priority?: TicketPriority;
@@ -126,8 +134,9 @@ export const helpdeskApi = {
       isInternal,
     }),
 
-  // Stats
+  // Stats and agents
   getStats: () => api.get<HelpdeskStats>('/helpdesk/stats'),
+  getAgents: () => api.get<HelpdeskAgent[]>('/helpdesk/agents'),
 };
 
 export const statusLabels: Record<TicketStatus, string> = {
