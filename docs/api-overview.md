@@ -52,21 +52,27 @@ curl http://localhost:3001/api/employees \
 | Module | Base Path | Description |
 |--------|-----------|-------------|
 | Auth | `/api/auth` | Login, registration, profile |
+| Password Reset | `/api/auth/forgot-password`, `/api/auth/reset-password` | Request a reset link, redeem a single-use token (both unauthenticated) |
 | Employees | `/api/employees` | Employee CRUD, 360 view, direct reports |
+| Employee Import | `/api/employees/import` | Bulk CSV import: template download, dry run, commit |
 | Departments | `/api/departments` | Department hierarchy |
 | Companies | `/api/companies` | Multi-tenant company management |
-| Attendance | `/api/attendance` | Clock in/out, OT, payable hours |
+| Attendance | `/api/attendance` | Clock in/out, OT, payable hours, `POST /mark-absent` sweep |
+| Attendance Policy | `/api/attendance-policy` | Per-tenant grace period, late marks, auto-absent and absent-is-LOP settings |
 | Leave | `/api/leave` | Leave types, balances, requests, approvals |
+| Leave Carry-Forward | `/api/leave/carry-forward` | Year-end carry-forward preview, run, and run history |
 | Admin | `/api/admin` | Dashboard stats, OT rules |
 | Holidays | `/api/holidays` | Holiday management |
 | Shifts | `/api/shifts` | Shift definitions and assignments |
 | Announcements | `/api/announcements` | Company announcements |
 | Payroll | `/api/payroll` | Salary structures, payroll runs, payslips |
+| Loans | `/api/loans` | Loans and salary advances: request, approve, disburse, schedule, repayments |
 | Expenses | `/api/expenses` | Expense categories and claims |
 | Performance | `/api/performance` | Review cycles, reviews, goals |
 | Onboarding | `/api/onboarding` | Templates, processes, tasks |
 | Notifications | `/api/notifications` | In-app notifications |
 | Documents | `/api/employees/:id/documents` | Employee documents |
+| Helpdesk | `/api/helpdesk` | HR tickets and categories, SLA due dates, assignment, comments |
 | Self-Service | `/api/self-service` | Profile changes, change requests |
 | Audit | `/api/audit` | Audit logs |
 | Reports | `/api/reports` | Report generation |

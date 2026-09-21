@@ -24,14 +24,17 @@
 
 ### Core HR
 - **Employee Management** — CRUD operations, org structure, Employee 360 view, direct reports
+- **Bulk Employee Import** — CSV upload with per-row validation, a dry run, and a downloadable error report
 - **Department Hierarchy** — Nested departments with tree view
 - **Multi-Tenant Company Management** — Tenant isolation with company CRUD and status toggling
+- **Forgot/Reset Password** — Self-service reset by emailed single-use token
 
 ### Time & Attendance
 - **Clock In/Out** — Multiple sessions per day with automatic status tracking
 - **Overtime (OT)** — Configurable OT rules, payable hours calculation, manager approval workflow
 - **Shift Management** — Create shifts, assign to employees (individual or bulk)
 - **Holiday Management** — Public/company holidays with bulk creation support
+- **Attendance Policy** — Per-tenant late marks, grace period, auto-absent sweep, and whether an absence costs a day's pay
 
 ### Leave Management
 - **Leave Types & Balances** — Admin-configurable leave types with per-employee balance tracking
@@ -39,12 +42,14 @@
 - **Leave Calendar** — Visual calendar view of team leave
 - **Leave Analytics** — Admin dashboard with leave usage statistics
 - **Bulk Operations** — Bulk approval and balance initialization
+- **Year-End Carry-Forward** — Per-leave-type carry-forward with caps, encashment, and a resumable run
 
 ### Payroll & Finance
 - **Salary Structures** — Define salary components (basic, allowances, deductions)
 - **Employee Salary Assignment** — Assign structures to employees
 - **Payroll Runs** — Create, process, approve, and mark payroll runs as paid
 - **Payslip Generation** — Auto-generated payslips viewable by employees
+- **Loans & Salary Advances** — Request, approve, disburse, and recover instalments automatically in the payroll run
 - **Expense Management** — Expense categories, claim submission, approval, and reimbursement tracking
 
 ### Performance
@@ -63,6 +68,7 @@
 - **Audit Logging** — Track all system actions with entity history
 - **Document Management** — Employee document upload, verification, and download
 - **Self-Service** — Employee profile changes with HR approval workflow
+- **HR Helpdesk** — Employee tickets by category with SLA due dates, assignment, comments, and breach tracking
 - **Reports** — Attendance, leave, and employee reports with Excel export
 
 ## Tech Stack
