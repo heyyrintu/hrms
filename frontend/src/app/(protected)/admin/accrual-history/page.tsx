@@ -5,7 +5,8 @@ import { Card } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { accrualApi } from '@/lib/api';
-import { RefreshCw, Plus, Calculator, ChevronRight, Clock } from 'lucide-react';
+import { carryForwardApi, CarryForwardRun } from '@/lib/api-carry-forward';
+import { RefreshCw, Plus, Calculator, ChevronRight, Clock, ArrowRightLeft } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface AccrualRun {
@@ -72,9 +73,56 @@ export default function AccrualHistoryPage() {
     year: currentDate.getFullYear(),
   });
 
+  // Carry-forward closes the PREVIOUS year, so that is the sensible default.
+  const [carryForwardRuns, setCarryForwardRuns] = useState<CarryForwardRun[]>([]);
+  const [carryForwardYear, setCarryForwardYear] = useState(
+    currentDate.getFullYear() - 1,
+  );
+  const [runningCarryForward, setRunningCarryForward] = useState(false);
+
   useEffect(() => {
     loadRuns();
+    loadCarryForwardRuns();
   }, []);
+
+  const loadCarryForwardRuns = async () => {
+    try {
+      const response = await carryForwardApi.getRuns();
+      setCarryForwardRuns(response.data || []);
+    } catch (error: any) {
+      toast.error(
+        error.response?.data?.message || 'Failed to load carry-forward runs',
+      );
+    }
+  };
+
+  const handleRunCarryForward = async () => {
+    setRunningCarryForward(true);
+    try {
+      const response = await carryForwardApi.run(carryForwardYear);
+      const result = response.data;
+
+      if (result.alreadyRan) {
+        toast.success(
+          `Carry-forward for ${carryForwardYear} has already run; nothing changed`,
+        );
+      } else {
+        toast.success(
+          `Carry-forward complete: ${result.processedCount} processed, ${result.failedCount} failed`,
+          { duration: 5000 },
+        );
+      }
+
+      await loadCarryForwardRuns();
+    } catch (error: any) {
+      toast.error(
+        error.response?.data?.message || 'Failed to run carry-forward',
+        { duration: 6000 },
+      );
+    } finally {
+      setRunningCarryForward(false);
+    }
+  };
 
   const loadRuns = async () => {
     setLoading(true);
@@ -285,6 +333,110 @@ export default function AccrualHistoryPage() {
             </table>
           </div>
         )}
+      </Card>
+
+      {/* Year-end carry-forward */}
+      <Card>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h2 className="text-lg font-semibold text-warm-900 flex items-center gap-2">
+              <ArrowRightLeft className="w-5 h-5 text-primary-600" />
+              Leave Carry-forward
+            </h2>
+            <p className="text-warm-600 text-sm mt-1">
+              Carries unused balances of a closing year into the next year. Runs
+              once per year; a repeat run changes nothing.
+            </p>
+          </div>
+          <div className="flex items-end gap-2">
+            <div>
+              <label
+                htmlFor="carryForwardYear"
+                className="block text-sm font-medium text-warm-700 mb-1"
+              >
+                From year
+              </label>
+              <input
+                id="carryForwardYear"
+                type="number"
+                value={carryForwardYear}
+                onChange={(e) => setCarryForwardYear(Number(e.target.value))}
+                className="w-32 rounded-lg border border-warm-300 px-3 py-2 focus:border-primary-500 focus:outline-none"
+              />
+            </div>
+            <Button onClick={handleRunCarryForward} disabled={runningCarryForward}>
+              {runningCarryForward ? 'Running...' : 'Run year-end carry-forward'}
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-4 overflow-x-auto">
+          {carryForwardRuns.length === 0 ? (
+            <p className="text-sm text-warm-500 py-4">
+              No carry-forward runs yet
+            </p>
+          ) : (
+            <table className="min-w-full divide-y divide-warm-200">
+              <thead className="bg-warm-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-warm-500">
+                    From
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-warm-500">
+                    To
+                  </th>
+                  <th className="px-4 py-3 text-center text-xs font-medium uppercase text-warm-500">
+                    Status
+                  </th>
+                  <th className="px-4 py-3 text-center text-xs font-medium uppercase text-warm-500">
+                    Processed
+                  </th>
+                  <th className="px-4 py-3 text-center text-xs font-medium uppercase text-warm-500">
+                    Failed
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase text-warm-500">
+                    Started
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-warm-100 bg-white">
+                {carryForwardRuns.map((run) => (
+                  <tr key={run.id} className="hover:bg-warm-50">
+                    <td className="px-4 py-3 font-medium text-warm-900">
+                      {run.fromYear}
+                    </td>
+                    <td className="px-4 py-3 text-warm-900">{run.toYear}</td>
+                    <td className="px-4 py-3 text-center">
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                          STATUS_COLORS[run.status as keyof typeof STATUS_COLORS] ||
+                          'text-warm-600 bg-warm-50'
+                        }`}
+                      >
+                        {run.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-center font-semibold text-primary-600">
+                      {run.processedCount}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {run.failedCount > 0 ? (
+                        <span className="font-semibold text-red-600">
+                          {run.failedCount}
+                        </span>
+                      ) : (
+                        <span className="text-warm-400">-</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-warm-900">
+                      {new Date(run.startedAt).toLocaleDateString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </Card>
 
       {/* Calculate Modal */}
