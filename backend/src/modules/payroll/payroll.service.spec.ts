@@ -692,6 +692,51 @@ describe('PayrollService', () => {
       });
     });
 
+    it('reverses the run loan repayments before deleting a COMPUTED run', async () => {
+      // A COMPUTED run has already written LoanRepayment rows and decremented
+      // every borrower's balance. LoanRepayment.payslipId carries no FK, so
+      // deleting the payslips would leave those credits standing for money
+      // nobody was charged.
+      const run = {
+        id: 'run-1',
+        tenantId,
+        month: 3,
+        year: 2026,
+        status: PayrollRunStatus.COMPUTED,
+      };
+      prisma.payrollRun.findFirst.mockResolvedValue(run);
+      prisma.payslip.deleteMany.mockResolvedValue({});
+      prisma.payrollRun.delete.mockResolvedValue({});
+
+      await service.deleteRun(tenantId, 'run-1', UserRole.SUPER_ADMIN);
+
+      expect(loansService.clearPayrollRepayments).toHaveBeenCalledWith(
+        tenantId,
+        3,
+        2026,
+      );
+      // And it has to happen first: after the payslips are gone there is no
+      // longer any record of what to reverse.
+      expect(
+        loansService.clearPayrollRepayments.mock.invocationCallOrder[0],
+      ).toBeLessThan(prisma.payslip.deleteMany.mock.invocationCallOrder[0]);
+    });
+
+    it('does not reverse anything when the run is refused', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        id: 'run-1',
+        tenantId,
+        month: 3,
+        year: 2026,
+        status: PayrollRunStatus.PAID,
+      });
+
+      await expect(
+        service.deleteRun(tenantId, 'run-1', UserRole.SUPER_ADMIN),
+      ).rejects.toThrow(BadRequestException);
+      expect(loansService.clearPayrollRepayments).not.toHaveBeenCalled();
+    });
+
     it('should throw NotFoundException when run not found', async () => {
       prisma.payrollRun.findFirst.mockResolvedValue(null);
 

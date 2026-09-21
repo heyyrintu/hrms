@@ -633,6 +633,13 @@ export class PayrollService {
       throw new BadRequestException('Only DRAFT runs can be deleted');
     }
 
+    // Deleting the payslips deletes the evidence that anyone was charged an
+    // instalment, so the instalments have to go back to the loans first.
+    // `LoanRepayment.payslipId` carries no FK, so nothing cascades: without
+    // this the borrower's balance stays reduced for money never deducted.
+    // A no-op when the run never reached COMPUTED.
+    await this.loansService.clearPayrollRepayments(tenantId, run.month, run.year);
+
     // Both writes together: a half-deleted run would leave orphaned payslips.
     await this.prisma.$transaction(async (tx) => {
       await tx.payslip.deleteMany({ where: { payrollRunId: id } });
