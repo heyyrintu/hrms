@@ -107,6 +107,15 @@ class EnvironmentVariables {
   @IsOptional()
   BIOMETRIC_ALLOWED_IPS?: string;
 
+  // Lets webhooks target private, loopback and link-local addresses. Off
+  // unless set to 'true', and ignored outright in production: a webhook that
+  // may reach 169.254.169.254 or localhost turns the admin webhook tester
+  // into a read primitive against internal infrastructure. Development only,
+  // for pointing a webhook at your own machine.
+  @IsString()
+  @IsOptional()
+  WEBHOOK_ALLOW_PRIVATE_TARGETS?: string;
+
   // Publishes /api/docs. Defaults to on only in development; set explicitly
   // rather than relying on NODE_ENV being present in every deployment.
   @IsString()

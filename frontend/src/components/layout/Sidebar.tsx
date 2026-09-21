@@ -47,6 +47,8 @@ import {
   FileSearch,
   FolderCheck,
   Table2,
+  MessageSquare,
+  Webhook,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -96,6 +98,7 @@ const sections: NavSection[] = [
       { name: 'My Tax Proofs', href: '/my-tax-proofs', icon: <FolderCheck className="h-[18px] w-[18px]" /> },
       { name: 'Expenses', href: '/expenses', icon: <Wallet className="h-[18px] w-[18px]" /> },
       { name: 'My Letters', href: '/my-letters', icon: <FileText className="h-[18px] w-[18px]" /> },
+      { name: 'Feedback', href: '/feedback', icon: <MessageSquare className="h-[18px] w-[18px]" /> },
       { name: 'My Profile', href: '/my-profile', icon: <UserCircle className="h-[18px] w-[18px]" /> },
       { name: 'Notifications', href: '/notifications', icon: <Bell className="h-[18px] w-[18px]" /> },
       { name: 'My Onboarding', href: '/onboarding/my-tasks', icon: <ClipboardList className="h-[18px] w-[18px]" /> },
@@ -139,6 +142,7 @@ const sections: NavSection[] = [
           { name: 'My Reviews', href: '/performance', icon: <Star className="h-4 w-4" /> },
           { name: 'Team Reviews', href: '/performance/team', icon: <Users className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
           { name: 'Review Cycles', href: '/performance/cycles', icon: <Target className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
+          { name: 'Improvement Plans', href: '/performance/improvement-plans', icon: <ClipboardCheck className="h-4 w-4" /> },
         ],
       },
     ],
@@ -195,6 +199,7 @@ const sections: NavSection[] = [
           { name: 'Biometric Devices', href: '/admin/biometric-devices', icon: <Cpu className="h-4 w-4" /> },
           { name: 'Statutory Payroll', href: '/admin/statutory', icon: <Scale className="h-4 w-4" /> },
           { name: 'Tax Slabs', href: '/admin/slabs', icon: <Table2 className="h-4 w-4" /> },
+          { name: 'Webhooks', href: '/admin/webhooks', icon: <Webhook className="h-4 w-4" /> },
         ],
       },
     ],

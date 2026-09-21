@@ -36,6 +36,9 @@ import { LettersModule } from './modules/letters/letters.module';
 import { ExitModule } from './modules/exit/exit.module';
 import { BiometricModule } from './modules/biometric/biometric.module';
 import { HealthModule } from './modules/health/health.module';
+import { FeedbackModule } from './modules/feedback/feedback.module';
+import { WebhooksModule } from './modules/webhooks/webhooks.module';
+import { PipModule } from './modules/pip/pip.module';
 
 @Module({
   imports: [
@@ -82,6 +85,9 @@ import { HealthModule } from './modules/health/health.module';
     ExitModule,
     BiometricModule,
     HealthModule,
+    FeedbackModule,
+    WebhooksModule,
+    PipModule,
   ],
 })
 export class AppModule {}

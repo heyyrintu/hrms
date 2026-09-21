@@ -1573,9 +1573,6 @@ enum FeedbackVisibility {
   PUBLIC
 }
 
-// NOT IMPLEMENTED. This table is defined but nothing in backend/src reads or
-// writes it: there is no service, controller or route behind it. Kept because
-// dropping a table is irreversible, but do not assume the feature exists.
 model Feedback {
   id         String             @id @default(uuid())
   tenantId   String
@@ -1609,9 +1606,6 @@ enum PIPStatus {
   TERMINATED
 }
 
-// NOT IMPLEMENTED. This table is defined but nothing in backend/src reads or
-// writes it: there is no service, controller or route behind it. Kept because
-// dropping a table is irreversible, but do not assume the feature exists.
 model ImprovementPlan {
   id          String    @id @default(uuid())
   tenantId    String
@@ -1637,9 +1631,6 @@ model ImprovementPlan {
   @@map("improvement_plans")
 }
 
-// NOT IMPLEMENTED. This table is defined but nothing in backend/src reads or
-// writes it: there is no service, controller or route behind it. Kept because
-// dropping a table is irreversible, but do not assume the feature exists.
 model ImprovementPlanGoal {
   id          String    @id @default(uuid())
   planId      String
@@ -1661,9 +1652,6 @@ model ImprovementPlanGoal {
 // WEBHOOKS
 // ============================================
 
-// NOT IMPLEMENTED. This table is defined but nothing in backend/src reads or
-// writes it: there is no service, controller or route behind it. Kept because
-// dropping a table is irreversible, but do not assume the feature exists.
 model Webhook {
   id          String   @id @default(uuid())
   tenantId    String
@@ -1688,9 +1676,6 @@ enum WebhookLogStatus {
   RETRYING
 }
 
-// NOT IMPLEMENTED. This table is defined but nothing in backend/src reads or
-// writes it: there is no service, controller or route behind it. Kept because
-// dropping a table is irreversible, but do not assume the feature exists.
 model WebhookLog {
   id           String           @id @default(uuid())
   tenantId     String
