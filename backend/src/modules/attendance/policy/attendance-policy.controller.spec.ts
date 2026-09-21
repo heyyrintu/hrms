@@ -18,6 +18,15 @@ describe('AttendancePolicyController', () => {
     controller = module.get(AttendancePolicyController);
   });
 
+  it('sits on its own prefix, not under /attendance', () => {
+    // `AttendanceController` owns `GET /attendance/:employeeId`. Nesting this
+    // controller under that prefix would only resolve while it happened to be
+    // registered first, so the path is pinned here.
+    expect(Reflect.getMetadata('path', AttendancePolicyController)).toBe(
+      'attendance-policy',
+    );
+  });
+
   it('reads the policy for the caller tenant, never a tenant from the request', async () => {
     const policy = { id: 'pol-1', tenantId: mockHrAdmin.tenantId };
     policyService.getOrCreate.mockResolvedValue(policy);

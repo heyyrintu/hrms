@@ -60,6 +60,12 @@ export class AutoAbsentService {
         status: 'ACTIVE',
         // End of the day, so someone who joined that morning still counts.
         joinDate: { lte: endOfDateOnlyUtc(day) },
+        // Somebody who has already left must never be marked absent. `status`
+        // alone is not enough: a record can sit at ACTIVE with an exit date
+        // set until the separation is finalised. `gt` rather than `gte` keeps
+        // the leaver's own exit day out of the sweep, because a false ABSENT
+        // costs a day's pay and a missing one costs nothing.
+        OR: [{ exitDate: null }, { exitDate: { gt: day } }],
       },
       select: { id: true },
     });

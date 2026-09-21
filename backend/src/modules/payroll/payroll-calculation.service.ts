@@ -130,21 +130,22 @@ export class PayrollCalculationService {
       year,
     );
 
-    // 3. Get attendance data for the month
+    // 3. Get leave data (approved paid and unpaid, excluding holidays). This
+    // runs before attendance because the days it already charged as unpaid
+    // leave must not be charged a second time as absences.
+    const {
+      paidLeaveDays,
+      lopDays: leaveLopDays,
+      lopDates,
+    } = await this.getLeaveData(tenantId, employeeId, month, year, holidayDates);
+
+    // 4. Get attendance data for the month
     const { presentDays, otMinutes, absentLopDays } = await this.getAttendanceData(
       tenantId,
       employeeId,
       month,
       year,
-    );
-
-    // 4. Get leave data (approved paid and unpaid, excluding holidays)
-    const { paidLeaveDays, lopDays: leaveLopDays } = await this.getLeaveData(
-      tenantId,
-      employeeId,
-      month,
-      year,
-      holidayDates,
+      lopDates,
     );
 
     // Days marked ABSENT are loss of pay in their own right when the tenant's
@@ -364,6 +365,9 @@ export class PayrollCalculationService {
     employeeId: string,
     month: number,
     year: number,
+    /** Days already charged as unpaid leave; an ABSENT row on one of these
+     * days is the same lost day, not a second one. */
+    lopDates: Set<string> = new Set(),
   ): Promise<{ presentDays: number; otMinutes: number; absentLopDays: number }> {
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0);
@@ -383,8 +387,12 @@ export class PayrollCalculationService {
 
     for (const r of records) {
       if (r.status === 'ABSENT') {
-        // An absence earns nothing and contributes no OT.
-        absentDays += 1;
+        // An absence earns nothing and contributes no OT. A day that approved
+        // unpaid leave already charged is skipped outright: one missing day
+        // may only cost one day's pay, however it came to be recorded twice.
+        if (!lopDates.has(new Date(r.date).toISOString().split('T')[0])) {
+          absentDays += 1;
+        }
         continue;
       }
       if (r.status === 'HALF_DAY') {
@@ -417,7 +425,7 @@ export class PayrollCalculationService {
     month: number,
     year: number,
     holidayDates: Set<string>,
-  ): Promise<{ paidLeaveDays: number; lopDays: number }> {
+  ): Promise<{ paidLeaveDays: number; lopDays: number; lopDates: Set<string> }> {
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0);
 
@@ -436,6 +444,9 @@ export class PayrollCalculationService {
 
     let paidLeaveDays = 0;
     let lopDays = 0;
+    // The exact days charged as unpaid leave, so attendance can avoid
+    // double-charging them.
+    const lopDates = new Set<string>();
 
     for (const lr of leaveRequests) {
       // Calculate overlap with this month
@@ -447,22 +458,26 @@ export class PayrollCalculationService {
       );
 
       // Count weekdays in overlap range, excluding holidays
+      const isPaid = lr.leaveType.isPaid;
       let days = 0;
       const current = new Date(overlapStart);
       while (current <= overlapEnd) {
         const day = current.getDay();
         const dateStr = current.toISOString().split('T')[0];
-        if (day !== 0 && day !== 6 && !holidayDates.has(dateStr)) days++;
+        if (day !== 0 && day !== 6 && !holidayDates.has(dateStr)) {
+          days++;
+          if (!isPaid) lopDates.add(dateStr);
+        }
         current.setDate(current.getDate() + 1);
       }
 
-      if (lr.leaveType.isPaid) {
+      if (isPaid) {
         paidLeaveDays += days;
       } else {
         lopDays += days;
       }
     }
 
-    return { paidLeaveDays, lopDays };
+    return { paidLeaveDays, lopDays, lopDates };
   }
 }

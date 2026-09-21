@@ -12,14 +12,10 @@ import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [NotificationsModule],
-  // AttendancePolicyController is registered first on purpose: Nest matches
-  // routes in registration order and AttendanceController owns
-  // `GET /attendance/:employeeId`, which would otherwise swallow
-  // `GET /attendance/policy`.
   controllers: [
-    AttendancePolicyController,
     AttendanceController,
     RegularizationController,
+    AttendancePolicyController,
   ],
   providers: [
     AttendanceService,

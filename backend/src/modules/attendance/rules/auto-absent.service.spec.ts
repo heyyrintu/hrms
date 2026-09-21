@@ -80,11 +80,47 @@ describe('AutoAbsentService', () => {
           tenantId,
           status: 'ACTIVE',
           joinDate: { lte: expect.any(Date) },
+          OR: [{ exitDate: null }, { exitDate: { gt: workdayUtcMidnight } }],
         },
         select: { id: true },
       });
       const where = prisma.employee.findMany.mock.calls[0][0].where;
       expect(where.joinDate.lte.toISOString()).toBe('2026-03-16T23:59:59.999Z');
+    });
+
+    it('leaves out anyone who had already exited', async () => {
+      // The exit filter is pushed into the query, so the mock honours the
+      // `where` it is handed rather than asserting on its shape. That way the
+      // test fails if the clause stops excluding a past leaver.
+      const roster = [
+        { id: 'still-here', exitDate: null },
+        { id: 'leaves-later', exitDate: new Date('2026-04-01T00:00:00Z') },
+        { id: 'already-gone', exitDate: new Date('2026-03-10T00:00:00Z') },
+      ];
+      prisma.employee.findMany.mockImplementation(async ({ where }: any) =>
+        roster
+          .filter((e) =>
+            where.OR.some(
+              (clause: any) =>
+                (clause.exitDate === null && e.exitDate === null) ||
+                (clause.exitDate?.gt != null &&
+                  e.exitDate != null &&
+                  e.exitDate > clause.exitDate.gt),
+            ),
+          )
+          .map((e) => ({ id: e.id })),
+      );
+      prisma.attendanceRecord.createMany.mockResolvedValue({ count: 2 });
+
+      await expect(service.markAbsentForDate(tenantId, workday)).resolves.toEqual({
+        marked: 2,
+        skipped: 0,
+      });
+
+      const marked = prisma.attendanceRecord.createMany.mock.calls[0][0].data.map(
+        (row: any) => row.employeeId,
+      );
+      expect(marked).toEqual(['still-here', 'leaves-later']);
     });
 
     it('does nothing on a Saturday', async () => {

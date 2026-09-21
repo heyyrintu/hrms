@@ -452,6 +452,70 @@ describe('PayrollCalculationService', () => {
       expect(result!.lopDays).toBe(2);
     });
 
+    it('charges one LOP day, not two, when an absence and unpaid leave land on the same day', async () => {
+      // A manually created ABSENT row and an approved unpaid leave can both
+      // describe the same missing Wednesday. The employee lost one day of pay,
+      // so payroll must charge one.
+      prisma.holiday.findMany.mockResolvedValue([]);
+      prisma.attendancePolicy.findUnique.mockResolvedValue({ absentIsLop: true });
+
+      prisma.attendanceRecord.findMany.mockResolvedValue([
+        ...Array.from({ length: 19 }, (_, i) => ({
+          status: 'PRESENT',
+          date: new Date(2026, 0, i + 1),
+          otMinutesApproved: 0,
+          otMinutesCalculated: 0,
+        })),
+        {
+          status: 'ABSENT',
+          date: new Date(2026, 0, 21),
+          otMinutesApproved: null,
+          otMinutesCalculated: 0,
+        },
+      ]);
+      prisma.leaveRequest.findMany.mockResolvedValue([
+        {
+          startDate: new Date(2026, 0, 21),
+          endDate: new Date(2026, 0, 21),
+          status: 'APPROVED',
+          leaveType: { isPaid: false },
+        },
+      ]);
+
+      const result = await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+      expect(result!.lopDays).toBe(1);
+    });
+
+    it('still charges an absence that a paid leave covers a different day of', async () => {
+      // Paid leave never enters the LOP set, so an absence elsewhere in the
+      // month is untouched by it.
+      prisma.holiday.findMany.mockResolvedValue([]);
+      prisma.attendancePolicy.findUnique.mockResolvedValue({ absentIsLop: true });
+
+      prisma.attendanceRecord.findMany.mockResolvedValue([
+        {
+          status: 'ABSENT',
+          date: new Date(2026, 0, 20),
+          otMinutesApproved: null,
+          otMinutesCalculated: 0,
+        },
+      ]);
+      prisma.leaveRequest.findMany.mockResolvedValue([
+        {
+          startDate: new Date(2026, 0, 21),
+          endDate: new Date(2026, 0, 21),
+          status: 'APPROVED',
+          leaveType: { isPaid: true },
+        },
+      ]);
+
+      const result = await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+      expect(result!.lopDays).toBe(1);
+      expect(result!.leaveDays).toBe(2); // paid(1) + lop(1)
+    });
+
     it('does not charge LOP for absences when the tenant policy says not to', async () => {
       prisma.holiday.findMany.mockResolvedValue([]);
       prisma.leaveRequest.findMany.mockResolvedValue([]);

@@ -10,13 +10,13 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../../common/types/jwt-payload.type';
 
 /**
- * Registered ahead of `AttendanceController` in the module, because that
- * controller owns `GET /attendance/:employeeId` and Nest matches routes in
- * registration order — otherwise `policy` would be read as an employee id.
+ * Deliberately its own top-level prefix rather than `attendance/policy`:
+ * `AttendanceController` owns `GET /attendance/:employeeId`, so a nested path
+ * would only resolve while this controller happened to be registered first.
  */
 @ApiTags('attendance')
 @ApiBearerAuth()
-@Controller('attendance/policy')
+@Controller('attendance-policy')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
 export class AttendancePolicyController {
@@ -24,7 +24,7 @@ export class AttendancePolicyController {
 
   /**
    * Read the tenant's attendance policy, creating defaults on first read.
-   * GET /api/attendance/policy
+   * GET /api/attendance-policy
    */
   @Get()
   @ApiOperation({ summary: 'Get the tenant attendance policy' })
@@ -37,7 +37,7 @@ export class AttendancePolicyController {
 
   /**
    * Update the tenant's attendance policy.
-   * PUT /api/attendance/policy
+   * PUT /api/attendance-policy
    */
   @Put()
   @ApiOperation({ summary: 'Update the tenant attendance policy' })

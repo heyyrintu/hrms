@@ -27,9 +27,11 @@ export interface MarkAbsentResult {
 }
 
 export const attendancePolicyApi = {
-  get: () => api.get<AttendancePolicy>('/attendance/policy'),
+  // Its own prefix, not `/attendance/policy`: the attendance controller owns
+  // `GET /attendance/:employeeId` and would swallow a nested path.
+  get: () => api.get<AttendancePolicy>('/attendance-policy'),
   update: (data: AttendancePolicyUpdate) =>
-    api.put<AttendancePolicy>('/attendance/policy', data),
+    api.put<AttendancePolicy>('/attendance-policy', data),
   /** Sweep one past day for absentees. `date` is YYYY-MM-DD. */
   markAbsent: (date: string) =>
     api.post<MarkAbsentResult>('/attendance/mark-absent', { date }),
