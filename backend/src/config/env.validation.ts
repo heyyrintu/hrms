@@ -43,6 +43,12 @@ class EnvironmentVariables {
   @IsOptional()
   DEFAULT_TENANT_ID?: string;
 
+  // Public base URL of the Next.js app. Used to build the links that go out by
+  // email (password reset, and anything else that points a user back at the UI).
+  @IsString()
+  @IsOptional()
+  FRONTEND_URL?: string = 'http://localhost:3000';
+
   @IsString()
   @IsOptional()
   LOG_LEVEL?: string = 'debug';

@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { PasswordResetService } from './password-reset.service';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { UserRole } from '@prisma/client';
 
@@ -11,16 +12,26 @@ const mockAuthService = {
   getProfile: jest.fn(),
 };
 
+const mockPasswordResetService = {
+  requestReset: jest.fn(),
+  resetPassword: jest.fn(),
+};
+
 describe('AuthController', () => {
   let controller: AuthController;
   let service: typeof mockAuthService;
+  let passwordReset: typeof mockPasswordResetService;
 
   beforeEach(async () => {
     Object.values(mockAuthService).forEach((fn) => fn.mockReset());
+    Object.values(mockPasswordResetService).forEach((fn) => fn.mockReset());
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AuthController],
-      providers: [{ provide: AuthService, useValue: mockAuthService }],
+      providers: [
+        { provide: AuthService, useValue: mockAuthService },
+        { provide: PasswordResetService, useValue: mockPasswordResetService },
+      ],
     })
       // The throttler needs its module wiring; unit tests only assert the metadata.
       .overrideGuard(ThrottlerGuard)
@@ -29,6 +40,7 @@ describe('AuthController', () => {
 
     controller = module.get<AuthController>(AuthController);
     service = module.get(AuthService);
+    passwordReset = module.get(PasswordResetService);
   });
 
   it('should be defined', () => {
@@ -136,6 +148,42 @@ describe('AuthController', () => {
       await expect(controller.getProfile(user)).rejects.toThrow(
         'User not found',
       );
+    });
+  });
+  describe('forgotPassword', () => {
+    it('delegates to the password reset service and returns its message', async () => {
+      const dto = { email: 'jane@acme.test' };
+      passwordReset.requestReset.mockResolvedValue({ message: 'If an account exists...' });
+
+      const result = await controller.forgotPassword(dto as any);
+
+      expect(passwordReset.requestReset).toHaveBeenCalledWith(dto);
+      expect(result).toEqual({ message: 'If an account exists...' });
+    });
+
+    it('declares a 3-per-minute throttle on the forgot-password handler', () => {
+      const keys = Reflect.getMetadataKeys(controller.forgotPassword) as string[];
+      expect(keys.some((k) => String(k).startsWith('THROTTLER:LIMIT'))).toBe(true);
+    });
+  });
+
+  describe('resetPassword', () => {
+    it('delegates to the password reset service', async () => {
+      const dto = { token: 'a'.repeat(64), newPassword: 'newpassword1' };
+      passwordReset.resetPassword.mockResolvedValue({ message: 'Password reset.' });
+
+      const result = await controller.resetPassword(dto as any);
+
+      expect(passwordReset.resetPassword).toHaveBeenCalledWith(dto);
+      expect(result).toEqual({ message: 'Password reset.' });
+    });
+
+    it('propagates a rejected token', async () => {
+      passwordReset.resetPassword.mockRejectedValue(new Error('invalid or expired'));
+
+      await expect(
+        controller.resetPassword({ token: 'x', newPassword: 'newpassword1' } as any),
+      ).rejects.toThrow('invalid or expired');
     });
   });
 });
