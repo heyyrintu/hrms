@@ -9,7 +9,7 @@ import {
   Badge, getStatusBadgeVariant, Select, Input, Button,
   Modal, ModalFooter, FormRow, FormGrid, FormError, FormSuccess
 } from '@/components/ui';
-import { Search, Plus, Eye, Edit2, Trash2, UserPlus, Phone, Mail, Calendar, Building2, Users, Download, Filter, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, Plus, Eye, Edit2, Trash2, UserPlus, Upload, Phone, Mail, Calendar, Building2, Users, Download, Filter, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { employeesApi, departmentsApi, designationsApi } from '@/lib/api';
 import { Employee, Department, Designation, EmploymentType, EmployeeStatus, PayType, PaginatedResponse, UserRole } from '@/types';
 import { useAuth } from '@/contexts/AuthContext';
@@ -419,6 +419,12 @@ export default function EmployeesPage() {
           <p className="text-warm-500">Manage and view employee information</p>
         </div>
         <div className="flex gap-2">
+          {isAdmin && (
+            <Button variant="secondary" onClick={() => router.push('/employees/import')}>
+              <Upload className="h-4 w-4 mr-2" />
+              Import CSV
+            </Button>
+          )}
           {isAdmin && (
             <Button onClick={() => router.push('/employees/new')}>
               <UserPlus className="h-4 w-4 mr-2" />
