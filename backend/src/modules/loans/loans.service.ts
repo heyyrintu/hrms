@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -361,7 +362,14 @@ export class LoansService {
     return this.serialize(updated);
   }
 
-  /** A repayment made outside payroll. */
+  /**
+   * A repayment made outside payroll.
+   *
+   * The duplicate check, the row and the balance decrement all run in one
+   * interactive transaction. Split across separate calls, a repayment could be
+   * written and then the decrement lost, leaving a loan that has been paid but
+   * still shows the full balance.
+   */
   async recordRepayment(tenantId: string, id: string, dto: RecordRepaymentDto) {
     const loan = await this.findOwnedOrFail(tenantId, id);
 
@@ -378,39 +386,52 @@ export class LoansService {
       );
     }
 
-    const existing = await this.prisma.loanRepayment.findFirst({
-      where: {
-        loanId: id,
-        month: dto.month,
-        year: dto.year,
-        source: RepaymentSource.MANUAL,
-      },
-      select: { id: true },
-    });
-    if (existing) {
-      throw new BadRequestException(
-        'A manual repayment is already recorded for that month',
-      );
-    }
+    const repayment = await this.prisma.$transaction(async (tx: any) => {
+      const existing = await tx.loanRepayment.findFirst({
+        where: {
+          tenantId,
+          loanId: id,
+          month: dto.month,
+          year: dto.year,
+          source: RepaymentSource.MANUAL,
+        },
+        select: { id: true },
+      });
+      if (existing) {
+        throw new BadRequestException(
+          'A manual repayment is already recorded for that month',
+        );
+      }
 
-    const repayment = await this.prisma.loanRepayment.create({
-      data: {
+      const created = await tx.loanRepayment.create({
+        data: {
+          tenantId,
+          loanId: id,
+          month: dto.month,
+          year: dto.year,
+          amount: dto.amount,
+          source: RepaymentSource.MANUAL,
+          note: dto.note,
+        },
+      });
+
+      const { applied } = await this.applyRepayment(
+        tx,
         tenantId,
-        loanId: id,
-        month: dto.month,
-        year: dto.year,
-        amount: dto.amount,
-        source: RepaymentSource.MANUAL,
-        note: dto.note,
-      },
-    });
+        loan,
+        dto.amount,
+      );
+      if (!applied) {
+        // Somebody else moved the balance between the read and the write.
+        // Rolling back is the only safe answer: the alternative is a
+        // repayment row whose decrement silently went missing.
+        throw new ConflictException(
+          'The loan balance changed while the repayment was being recorded. Try again.',
+        );
+      }
 
-    await this.applyRepayment(
-      this.prisma,
-      tenantId,
-      loan,
-      round2(outstanding - dto.amount),
-    );
+      return created;
+    });
 
     return { ...repayment, amount: Number(repayment.amount) };
   }
@@ -509,6 +530,23 @@ export class LoansService {
         if (!loan) continue;
         if (line.amount <= 0) continue;
 
+        // Payroll retries. Without this read the second run collides with the
+        // unique (loanId, month, year, source) index, and because everything
+        // here is one transaction that collision would abort the *whole* set
+        // of repayments, not just the duplicate line. A line already written
+        // is skipped entirely: no row, no second decrement.
+        const existing = await tx.loanRepayment.findFirst({
+          where: {
+            tenantId,
+            loanId: loan.id,
+            month,
+            year,
+            source: RepaymentSource.PAYROLL,
+          },
+          select: { id: true },
+        });
+        if (existing) continue;
+
         const amount = round2(
           Math.min(line.amount, Number(loan.outstandingAmount)),
         );
@@ -526,9 +564,18 @@ export class LoansService {
           },
         });
 
-        const remaining = round2(Number(loan.outstandingAmount) - amount);
-        await this.applyRepayment(tx, tenantId, loan, remaining);
-        if (remaining <= 0) closed.push(loan);
+        const { applied, settled } = await this.applyRepayment(
+          tx,
+          tenantId,
+          loan,
+          amount,
+        );
+        if (!applied) {
+          throw new ConflictException(
+            `The balance of loan ${loan.id} changed while payroll repayments were being recorded. Try again.`,
+          );
+        }
+        if (settled) closed.push(loan);
       }
     });
 
@@ -552,17 +599,26 @@ export class LoansService {
    * Write the new balance, closing the loan when nothing is left. Shared by
    * the manual and payroll paths so "fully repaid" means the same thing in
    * both, and takes the client explicitly so it can run inside a transaction.
+   *
+   * The write is a conditional `updateMany` matched on the balance that was
+   * read, not a plain `update`. Two repayments landing at once would otherwise
+   * both compute `outstanding - amount` from the same starting figure and the
+   * second would overwrite the first, wiping out a real repayment. When the
+   * balance has moved, `count` comes back 0 and the caller decides — both
+   * callers roll the transaction back.
    */
   private async applyRepayment(
     client: any,
     tenantId: string,
     loan: any,
-    remaining: number,
-  ) {
+    amount: number,
+  ): Promise<{ applied: boolean; settled: boolean }> {
+    const current = Number(loan.outstandingAmount);
+    const remaining = round2(current - amount);
     const settled = remaining <= 0;
 
-    await client.employeeLoan.update({
-      where: { id: loan.id },
+    const result = await client.employeeLoan.updateMany({
+      where: { id: loan.id, tenantId, outstandingAmount: current },
       data: {
         outstandingAmount: settled ? 0 : remaining,
         ...(settled
@@ -571,7 +627,7 @@ export class LoansService {
       },
     });
 
-    return settled;
+    return { applied: (result?.count ?? 0) > 0, settled };
   }
 
   private async findOwnedOrFail(tenantId: string, id: string) {

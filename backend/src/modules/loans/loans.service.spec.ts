@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
@@ -79,6 +80,10 @@ describe('LoansService', () => {
     service = module.get<LoansService>(LoansService);
     prisma = module.get(PrismaService);
     notifications = module.get(NotificationsService);
+
+    // The balance decrement is a conditional updateMany; unless a test says
+    // otherwise it matched the row it read.
+    prisma.employeeLoan.updateMany.mockResolvedValue({ count: 1 });
   });
 
   it('should be defined', () => {
@@ -661,8 +666,8 @@ describe('LoansService', () => {
           payslipId: 'payslip-1',
         },
       });
-      expect(prisma.employeeLoan.update).toHaveBeenCalledWith({
-        where: { id: loanId },
+      expect(prisma.employeeLoan.updateMany).toHaveBeenCalledWith({
+        where: { id: loanId, tenantId, outstandingAmount: 132000 },
         data: { outstandingAmount: 121000 },
       });
     });
@@ -681,8 +686,8 @@ describe('LoansService', () => {
         [{ loanId, amount: 11000 }],
       );
 
-      expect(prisma.employeeLoan.update).toHaveBeenCalledWith({
-        where: { id: loanId },
+      expect(prisma.employeeLoan.updateMany).toHaveBeenCalledWith({
+        where: { id: loanId, tenantId, outstandingAmount: 11000 },
         data: expect.objectContaining({
           outstandingAmount: 0,
           status: LoanStatus.CLOSED,
@@ -750,7 +755,7 @@ describe('LoansService', () => {
       );
 
       expect(prisma.loanRepayment.create).not.toHaveBeenCalled();
-      expect(prisma.employeeLoan.update).not.toHaveBeenCalled();
+      expect(prisma.employeeLoan.updateMany).not.toHaveBeenCalled();
     });
 
     it('does nothing at all when there are no lines', async () => {
@@ -787,6 +792,149 @@ describe('LoansService', () => {
         },
       });
     });
+    // ------------------------------------------
+    // Idempotency: payroll retries the same month
+    // ------------------------------------------
+
+    it('checks for an existing PAYROLL row before writing, scoped by tenant', async () => {
+      prisma.employeeLoan.findMany.mockResolvedValue([
+        storedLoan({ status: LoanStatus.ACTIVE }),
+      ]);
+      prisma.loanRepayment.findFirst.mockResolvedValue(null);
+
+      await service.recordPayrollRepayments(
+        tenantId,
+        employeeId,
+        3,
+        2026,
+        'payslip-1',
+        [{ loanId, amount: 11000 }],
+      );
+
+      expect(prisma.loanRepayment.findFirst).toHaveBeenCalledWith({
+        where: {
+          tenantId,
+          loanId,
+          month: 3,
+          year: 2026,
+          source: RepaymentSource.PAYROLL,
+        },
+        select: { id: true },
+      });
+    });
+
+    it('is a no-op on a second run for the same month', async () => {
+      prisma.employeeLoan.findMany.mockResolvedValue([
+        storedLoan({ status: LoanStatus.ACTIVE }),
+      ]);
+      // The first run already wrote this instalment.
+      prisma.loanRepayment.findFirst.mockResolvedValue({ id: 'already-written' });
+
+      await service.recordPayrollRepayments(
+        tenantId,
+        employeeId,
+        3,
+        2026,
+        'payslip-1',
+        [{ loanId, amount: 11000 }],
+      );
+
+      expect(prisma.loanRepayment.create).not.toHaveBeenCalled();
+      expect(prisma.employeeLoan.updateMany).not.toHaveBeenCalled();
+      expect(notifications.notifyEmployee).not.toHaveBeenCalled();
+    });
+
+    it('inserts only the lines that are missing on a mixed retry', async () => {
+      const secondLoanId = 'loan-2';
+      prisma.employeeLoan.findMany.mockResolvedValue([
+        storedLoan({ status: LoanStatus.ACTIVE }),
+        storedLoan({
+          id: secondLoanId,
+          status: LoanStatus.ACTIVE,
+          outstandingAmount: 30000,
+          emiAmount: 10000,
+        }),
+      ]);
+      // The first loan was written last time; the second was not.
+      prisma.loanRepayment.findFirst.mockImplementation(async ({ where }: any) =>
+        where.loanId === loanId ? { id: 'already-written' } : null,
+      );
+
+      await service.recordPayrollRepayments(
+        tenantId,
+        employeeId,
+        3,
+        2026,
+        'payslip-1',
+        [
+          { loanId, amount: 11000 },
+          { loanId: secondLoanId, amount: 10000 },
+        ],
+      );
+
+      expect(prisma.loanRepayment.create).toHaveBeenCalledTimes(1);
+      expect(prisma.loanRepayment.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ loanId: secondLoanId, amount: 10000 }),
+      });
+      expect(prisma.employeeLoan.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.employeeLoan.updateMany).toHaveBeenCalledWith({
+        where: { id: secondLoanId, tenantId, outstandingAmount: 30000 },
+        data: { outstandingAmount: 20000 },
+      });
+    });
+
+    it('rolls back rather than losing a decrement when the balance moved', async () => {
+      prisma.employeeLoan.findMany.mockResolvedValue([
+        storedLoan({ status: LoanStatus.ACTIVE }),
+      ]);
+      prisma.loanRepayment.findFirst.mockResolvedValue(null);
+      // Somebody else changed the balance between the read and the write.
+      prisma.employeeLoan.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.recordPayrollRepayments(
+          tenantId,
+          employeeId,
+          3,
+          2026,
+          'payslip-1',
+          [{ loanId, amount: 11000 }],
+        ),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('does every write inside one transaction', async () => {
+      const order: string[] = [];
+      prisma.employeeLoan.findMany.mockResolvedValue([
+        storedLoan({ status: LoanStatus.ACTIVE }),
+      ]);
+      prisma.loanRepayment.findFirst.mockResolvedValue(null);
+      prisma.$transaction.mockImplementation(async (cb: any) => {
+        order.push('tx:start');
+        const result = await cb(prisma);
+        order.push('tx:end');
+        return result;
+      });
+      prisma.loanRepayment.create.mockImplementation(async () => {
+        order.push('create');
+        return { id: 'r1', amount: 11000 };
+      });
+      prisma.employeeLoan.updateMany.mockImplementation(async () => {
+        order.push('updateMany');
+        return { count: 1 };
+      });
+
+      await service.recordPayrollRepayments(
+        tenantId,
+        employeeId,
+        3,
+        2026,
+        'payslip-1',
+        [{ loanId, amount: 11000 }],
+      );
+
+      expect(order).toEqual(['tx:start', 'create', 'updateMany', 'tx:end']);
+    });
   });
 
   // ============================================
@@ -817,8 +965,8 @@ describe('LoansService', () => {
           note: 'NEFT ref 123',
         }),
       });
-      expect(prisma.employeeLoan.update).toHaveBeenCalledWith({
-        where: { id: loanId },
+      expect(prisma.employeeLoan.updateMany).toHaveBeenCalledWith({
+        where: { id: loanId, tenantId, outstandingAmount: 132000 },
         data: { outstandingAmount: 127000 },
       });
       expect(result.amount).toBe(5000);
@@ -878,13 +1026,93 @@ describe('LoansService', () => {
         amount: 500,
       });
 
-      expect(prisma.employeeLoan.update).toHaveBeenCalledWith({
-        where: { id: loanId },
+      expect(prisma.employeeLoan.updateMany).toHaveBeenCalledWith({
+        where: { id: loanId, tenantId, outstandingAmount: 500 },
         data: expect.objectContaining({
           outstandingAmount: 0,
           status: LoanStatus.CLOSED,
         }),
       });
+    });
+    it('does the duplicate check and both writes inside one transaction', async () => {
+      const order: string[] = [];
+      prisma.employeeLoan.findFirst.mockResolvedValue(
+        storedLoan({ status: LoanStatus.ACTIVE }),
+      );
+      prisma.$transaction.mockImplementation(async (cb: any) => {
+        order.push('tx:start');
+        const result = await cb(prisma);
+        order.push('tx:end');
+        return result;
+      });
+      prisma.loanRepayment.findFirst.mockImplementation(async () => {
+        order.push('findFirst');
+        return null;
+      });
+      prisma.loanRepayment.create.mockImplementation(async () => {
+        order.push('create');
+        return { id: 'r1', amount: 5000 };
+      });
+      prisma.employeeLoan.updateMany.mockImplementation(async () => {
+        order.push('updateMany');
+        return { count: 1 };
+      });
+
+      await service.recordRepayment(tenantId, loanId, {
+        month: 3,
+        year: 2026,
+        amount: 5000,
+      });
+
+      expect(order).toEqual([
+        'tx:start',
+        'findFirst',
+        'create',
+        'updateMany',
+        'tx:end',
+      ]);
+    });
+
+    it('scopes the duplicate check to the tenant', async () => {
+      prisma.employeeLoan.findFirst.mockResolvedValue(
+        storedLoan({ status: LoanStatus.ACTIVE }),
+      );
+      prisma.loanRepayment.findFirst.mockResolvedValue(null);
+      prisma.loanRepayment.create.mockResolvedValue({ id: 'r1', amount: 5000 });
+
+      await service.recordRepayment(tenantId, loanId, {
+        month: 3,
+        year: 2026,
+        amount: 5000,
+      });
+
+      expect(prisma.loanRepayment.findFirst).toHaveBeenCalledWith({
+        where: {
+          tenantId,
+          loanId,
+          month: 3,
+          year: 2026,
+          source: RepaymentSource.MANUAL,
+        },
+        select: { id: true },
+      });
+    });
+
+    it('refuses rather than losing the decrement when the balance moved', async () => {
+      prisma.employeeLoan.findFirst.mockResolvedValue(
+        storedLoan({ status: LoanStatus.ACTIVE }),
+      );
+      prisma.loanRepayment.findFirst.mockResolvedValue(null);
+      prisma.loanRepayment.create.mockResolvedValue({ id: 'r1', amount: 5000 });
+      prisma.employeeLoan.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.recordRepayment(tenantId, loanId, {
+          month: 3,
+          year: 2026,
+          amount: 5000,
+        }),
+      ).rejects.toThrow(ConflictException);
     });
   });
 
