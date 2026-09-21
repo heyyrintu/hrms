@@ -500,7 +500,7 @@ export class HelpdeskService {
   ) {
     const ticket = await this.prisma.hrTicket.findFirst({
       where: { id, tenantId },
-      select: { id: true, employeeId: true, assignedToId: true },
+      select: { id: true, employeeId: true, assignedToId: true, status: true },
     });
 
     if (!ticket) {
@@ -519,17 +519,35 @@ export class HelpdeskService {
       throw new ForbiddenException('Only HR and the assignee may post internal notes');
     }
 
-    return this.prisma.hrTicketComment.create({
-      data: {
-        tenantId,
-        ticketId: id,
-        authorId: user.userId,
-        content: dto.content,
-        isInternal,
-      },
-      include: {
-        author: { select: assigneeSelect },
-      },
+    const data = {
+      tenantId,
+      ticketId: id,
+      authorId: user.userId,
+      content: dto.content,
+      isInternal,
+    };
+    const include = { author: { select: assigneeSelect } };
+
+    // The ticket was parked waiting on this person, and they have just
+    // answered: the reply IS the un-park. HR and the assignee commenting on a
+    // parked ticket changes nothing, because it is still the employee's turn.
+    const unparks =
+      actor === 'OWNER' && ticket.status === TicketStatus.WAITING_ON_EMPLOYEE;
+
+    if (!unparks) {
+      return this.prisma.hrTicketComment.create({ data, include });
+    }
+
+    // Both writes or neither, so a reply can never be recorded against a
+    // ticket that stayed parked. The update is conditioned on the status we
+    // read, so a concurrent change by HR wins rather than being clobbered.
+    return this.prisma.$transaction(async (tx: any) => {
+      const comment = await tx.hrTicketComment.create({ data, include });
+      await tx.hrTicket.updateMany({
+        where: { id, tenantId, status: TicketStatus.WAITING_ON_EMPLOYEE },
+        data: { status: TicketStatus.IN_PROGRESS },
+      });
+      return comment;
     });
   }
 

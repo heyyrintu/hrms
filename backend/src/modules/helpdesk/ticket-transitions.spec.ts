@@ -21,8 +21,12 @@ describe('ticket-transitions', () => {
     [TicketStatus.RESOLVED, TicketStatus.IN_PROGRESS],
   ];
 
-  /** The owner of a ticket may only accept the resolution or reopen it. */
+  /**
+   * The owner may hand a parked ticket back, accept the resolution, or reopen
+   * it. Nothing else.
+   */
   const ownerTransitions: Array<[TicketStatus, TicketStatus]> = [
+    [TicketStatus.WAITING_ON_EMPLOYEE, TicketStatus.IN_PROGRESS],
     [TicketStatus.RESOLVED, TicketStatus.CLOSED],
     [TicketStatus.RESOLVED, TicketStatus.IN_PROGRESS],
   ];
@@ -74,6 +78,12 @@ describe('ticket-transitions', () => {
       );
     });
 
+    it('lets the owner un-park a ticket that was waiting on them', () => {
+      expect(
+        canTransition(TicketStatus.WAITING_ON_EMPLOYEE, TicketStatus.IN_PROGRESS, 'OWNER'),
+      ).toBe(true);
+    });
+
     it('lets the owner close or reopen a resolved ticket', () => {
       expect(canTransition(TicketStatus.RESOLVED, TicketStatus.CLOSED, 'OWNER')).toBe(true);
       expect(canTransition(TicketStatus.RESOLVED, TicketStatus.IN_PROGRESS, 'OWNER')).toBe(true);
@@ -93,6 +103,12 @@ describe('ticket-transitions', () => {
 
     it('gives the owner nothing to do on an open ticket', () => {
       expect(allowedNextStatuses(TicketStatus.OPEN, 'OWNER')).toEqual([]);
+    });
+
+    it('gives the owner the un-park action on a waiting ticket', () => {
+      expect(allowedNextStatuses(TicketStatus.WAITING_ON_EMPLOYEE, 'OWNER')).toEqual([
+        TicketStatus.IN_PROGRESS,
+      ]);
     });
 
     it('gives the owner close and reopen on a resolved ticket', () => {

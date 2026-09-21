@@ -482,6 +482,16 @@ describe('HelpdeskService', () => {
       );
     });
 
+    it('offers the owner the un-park action on a parked ticket', async () => {
+      prisma.hrTicket.findFirst.mockResolvedValue(
+        withComments({ status: TicketStatus.WAITING_ON_EMPLOYEE }),
+      );
+
+      const result = await service.findById(tenantId, 'ticket-1', ownerUser);
+
+      expect(result.allowedStatuses).toEqual([TicketStatus.IN_PROGRESS]);
+    });
+
     it('tells the caller which statuses they may move to', async () => {
       prisma.hrTicket.findFirst.mockResolvedValue(
         withComments({ status: TicketStatus.RESOLVED }),
@@ -751,6 +761,121 @@ describe('HelpdeskService', () => {
       await expect(
         service.addComment(tenantId, 'ticket-1', { content: 'hi' }, strangerUser),
       ).rejects.toThrow(ForbiddenException);
+    });
+
+    // A ticket parked on the employee is un-parked by the employee answering.
+    // The reply and the status move have to land together, or a reply can be
+    // recorded against a ticket nobody is working.
+    describe('un-parking a WAITING_ON_EMPLOYEE ticket', () => {
+      it('moves the ticket back to IN_PROGRESS when the owner replies', async () => {
+        prisma.hrTicket.findFirst.mockResolvedValue(
+          ticketFixture({ status: TicketStatus.WAITING_ON_EMPLOYEE }),
+        );
+        prisma.hrTicketComment.create.mockResolvedValue({ id: 'c-1' });
+        prisma.hrTicket.updateMany.mockResolvedValue({ count: 1 });
+
+        await service.addComment(
+          tenantId,
+          'ticket-1',
+          { content: 'Here is the document you asked for' },
+          ownerUser,
+        );
+
+        expect(prisma.$transaction).toHaveBeenCalled();
+        expect(prisma.hrTicketComment.create).toHaveBeenCalled();
+        expect(prisma.hrTicket.updateMany).toHaveBeenCalledWith({
+          where: {
+            id: 'ticket-1',
+            tenantId,
+            status: TicketStatus.WAITING_ON_EMPLOYEE,
+          },
+          data: { status: TicketStatus.IN_PROGRESS },
+        });
+      });
+
+      it('still returns the comment it created', async () => {
+        prisma.hrTicket.findFirst.mockResolvedValue(
+          ticketFixture({ status: TicketStatus.WAITING_ON_EMPLOYEE }),
+        );
+        prisma.hrTicketComment.create.mockResolvedValue({ id: 'c-1' });
+        prisma.hrTicket.updateMany.mockResolvedValue({ count: 1 });
+
+        const result = await service.addComment(
+          tenantId,
+          'ticket-1',
+          { content: 'Attached' },
+          ownerUser,
+        );
+
+        expect(result).toEqual({ id: 'c-1' });
+      });
+
+      it('leaves the status alone when HR comments on a parked ticket', async () => {
+        prisma.hrTicket.findFirst.mockResolvedValue(
+          ticketFixture({ status: TicketStatus.WAITING_ON_EMPLOYEE }),
+        );
+        prisma.hrTicketComment.create.mockResolvedValue({ id: 'c-2' });
+
+        await service.addComment(
+          tenantId,
+          'ticket-1',
+          { content: 'Chasing you again' },
+          hrUser,
+        );
+
+        expect(prisma.hrTicket.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('leaves the status alone when the assignee comments on a parked ticket', async () => {
+        prisma.hrTicket.findFirst.mockResolvedValue(
+          ticketFixture({
+            status: TicketStatus.WAITING_ON_EMPLOYEE,
+            assignedToId: agentUserId,
+          }),
+        );
+        prisma.hrTicketComment.create.mockResolvedValue({ id: 'c-3' });
+
+        await service.addComment(
+          tenantId,
+          'ticket-1',
+          { content: 'Still waiting' },
+          agentUser,
+        );
+
+        expect(prisma.hrTicket.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('leaves the status alone when the owner comments on an OPEN ticket', async () => {
+        prisma.hrTicket.findFirst.mockResolvedValue(
+          ticketFixture({ status: TicketStatus.OPEN }),
+        );
+        prisma.hrTicketComment.create.mockResolvedValue({ id: 'c-4' });
+
+        await service.addComment(
+          tenantId,
+          'ticket-1',
+          { content: 'Any update?' },
+          ownerUser,
+        );
+
+        expect(prisma.hrTicket.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('leaves the status alone when the owner comments on a resolved ticket', async () => {
+        prisma.hrTicket.findFirst.mockResolvedValue(
+          ticketFixture({ status: TicketStatus.RESOLVED }),
+        );
+        prisma.hrTicketComment.create.mockResolvedValue({ id: 'c-5' });
+
+        await service.addComment(
+          tenantId,
+          'ticket-1',
+          { content: 'Thanks' },
+          ownerUser,
+        );
+
+        expect(prisma.hrTicket.updateMany).not.toHaveBeenCalled();
+      });
     });
   });
 

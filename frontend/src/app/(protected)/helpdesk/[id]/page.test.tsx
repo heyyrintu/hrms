@@ -117,6 +117,51 @@ describe('HelpdeskTicketPage', () => {
     expect(screen.queryByText('Waiting on you')).not.toBeInTheDocument();
   });
 
+  it('offers the owner the un-park action on a ticket waiting on them', async () => {
+    mockApi.getTicket.mockResolvedValue({
+      data: detail({
+        status: 'WAITING_ON_EMPLOYEE',
+        actor: 'OWNER',
+        allowedStatuses: ['IN_PROGRESS'],
+      }),
+    } as any);
+
+    render(<HelpdeskTicketPage />);
+
+    fireEvent.click(await screen.findByText('In progress'));
+
+    await waitFor(() =>
+      expect(mockApi.changeStatus).toHaveBeenCalledWith('ticket-1', 'IN_PROGRESS'),
+    );
+  });
+
+  it('reloads after a comment, so an un-parked status is picked up', async () => {
+    mockApi.getTicket.mockResolvedValue({
+      data: detail({
+        status: 'WAITING_ON_EMPLOYEE',
+        actor: 'OWNER',
+        allowedStatuses: ['IN_PROGRESS'],
+      }),
+    } as any);
+
+    render(<HelpdeskTicketPage />);
+    await screen.findByText(/#12 Payslip missing/);
+
+    fireEvent.change(screen.getByLabelText('Add a comment'), {
+      target: { value: 'Here is the document' },
+    });
+    fireEvent.click(screen.getByText('Post comment'));
+
+    await waitFor(() =>
+      expect(mockApi.addComment).toHaveBeenCalledWith(
+        'ticket-1',
+        'Here is the document',
+        false,
+      ),
+    );
+    await waitFor(() => expect(mockApi.getTicket).toHaveBeenCalledTimes(2));
+  });
+
   it('offers no status buttons when the actor may do nothing', async () => {
     mockApi.getTicket.mockResolvedValue({
       data: detail({ status: 'OPEN', allowedStatuses: [] }),

@@ -25,14 +25,19 @@ const STAFF_TRANSITIONS: Readonly<Record<TicketStatus, readonly TicketStatus[]>>
 };
 
 /**
- * What the person who raised the ticket may do: accept the resolution, or
- * say it is not fixed. They may not start, park or resolve their own ticket —
- * that would let anyone mark their own request done.
+ * What the person who raised the ticket may do: hand a parked ticket back,
+ * accept the resolution, or say it is not fixed. They may not start or resolve
+ * their own ticket — that would let anyone mark their own request done.
+ *
+ * WAITING_ON_EMPLOYEE is theirs to clear, because the ticket is parked
+ * precisely because it is waiting on them; without this row an employee who
+ * replies could not un-park their own ticket and would sit there until HR
+ * happened to notice.
  */
 const OWNER_TRANSITIONS: Readonly<Record<TicketStatus, readonly TicketStatus[]>> = {
   [TicketStatus.OPEN]: [],
   [TicketStatus.IN_PROGRESS]: [],
-  [TicketStatus.WAITING_ON_EMPLOYEE]: [],
+  [TicketStatus.WAITING_ON_EMPLOYEE]: [TicketStatus.IN_PROGRESS],
   [TicketStatus.RESOLVED]: [TicketStatus.CLOSED, TicketStatus.IN_PROGRESS],
   [TicketStatus.CLOSED]: [],
 };
