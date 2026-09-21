@@ -4,7 +4,7 @@
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-18%2B-green.svg)
-![Tests](https://img.shields.io/badge/tests-1078%20passing-brightgreen.svg)
+![Tests](https://img.shields.io/badge/tests-2784%20passing-brightgreen.svg)
 
 ## Table of Contents
 
@@ -98,7 +98,7 @@
 - **Lucide React** for icons
 
 ### Testing
-- **Jest** — 1078 tests (823 backend + 255 frontend), 100% passing
+- **Jest** — 2784 tests (2078 backend + 706 frontend), 100% passing
 - **@testing-library/react** for frontend component testing
 - **@nestjs/testing** for backend unit testing
 
@@ -564,11 +564,11 @@ hrms/
 The project has comprehensive test coverage:
 
 ```bash
-# Run backend tests (823 tests)
+# Run backend tests (2078 tests)
 cd backend
 npm test
 
-# Run frontend tests (255 tests)
+# Run frontend tests (706 tests)
 cd frontend
 npm test
 
@@ -579,7 +579,7 @@ npm run test:cov
 npm run test:watch
 ```
 
-**Total: 1078 tests, 100% passing**
+**Total: 2784 tests, 100% passing**
 
 ## Documentation
 
