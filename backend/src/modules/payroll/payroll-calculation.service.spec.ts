@@ -396,6 +396,115 @@ describe('PayrollCalculationService', () => {
       expect(result!.leaveDays).toBe(1); // total: paid(0) + lop(1)
     });
 
+    it('counts ABSENT attendance rows as LOP days', async () => {
+      prisma.holiday.findMany.mockResolvedValue([]);
+      prisma.leaveRequest.findMany.mockResolvedValue([]);
+      prisma.attendancePolicy.findUnique.mockResolvedValue({ absentIsLop: true });
+
+      prisma.attendanceRecord.findMany.mockResolvedValue([
+        ...Array.from({ length: 18 }, (_, i) => ({
+          status: 'PRESENT',
+          date: new Date(2026, 0, i + 1),
+          otMinutesApproved: 0,
+          otMinutesCalculated: 0,
+        })),
+        { status: 'ABSENT', date: new Date(2026, 0, 20), otMinutesApproved: null, otMinutesCalculated: 0 },
+        { status: 'ABSENT', date: new Date(2026, 0, 21), otMinutesApproved: null, otMinutesCalculated: 0 },
+      ]);
+
+      const result = await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+      expect(result).not.toBeNull();
+      // Absences earn nothing, so they never raise presentDays.
+      expect(result!.presentDays).toBe(18);
+      expect(result!.lopDays).toBe(2);
+      expect(prisma.attendancePolicy.findUnique).toHaveBeenCalledWith({
+        where: { tenantId },
+        select: { absentIsLop: true },
+      });
+    });
+
+    it('adds absent LOP on top of unpaid-leave LOP', async () => {
+      prisma.holiday.findMany.mockResolvedValue([]);
+      prisma.attendancePolicy.findUnique.mockResolvedValue({ absentIsLop: true });
+
+      prisma.attendanceRecord.findMany.mockResolvedValue([
+        ...Array.from({ length: 19 }, (_, i) => ({
+          status: 'PRESENT',
+          date: new Date(2026, 0, i + 1),
+          otMinutesApproved: 0,
+          otMinutesCalculated: 0,
+        })),
+        { status: 'ABSENT', date: new Date(2026, 0, 20), otMinutesApproved: null, otMinutesCalculated: 0 },
+      ]);
+      // 1 day unpaid leave (Wednesday 2026-01-21)
+      prisma.leaveRequest.findMany.mockResolvedValue([
+        {
+          startDate: new Date(2026, 0, 21),
+          endDate: new Date(2026, 0, 21),
+          status: 'APPROVED',
+          leaveType: { isPaid: false },
+        },
+      ]);
+
+      const result = await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+      expect(result!.lopDays).toBe(2);
+    });
+
+    it('does not charge LOP for absences when the tenant policy says not to', async () => {
+      prisma.holiday.findMany.mockResolvedValue([]);
+      prisma.leaveRequest.findMany.mockResolvedValue([]);
+      prisma.attendancePolicy.findUnique.mockResolvedValue({ absentIsLop: false });
+
+      prisma.attendanceRecord.findMany.mockResolvedValue([
+        { status: 'ABSENT', date: new Date(2026, 0, 20), otMinutesApproved: null, otMinutesCalculated: 0 },
+        { status: 'ABSENT', date: new Date(2026, 0, 21), otMinutesApproved: null, otMinutesCalculated: 0 },
+      ]);
+
+      const result = await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+      expect(result!.lopDays).toBe(0);
+    });
+
+    it('treats a missing policy row as absent-is-LOP, matching the schema default', async () => {
+      prisma.holiday.findMany.mockResolvedValue([]);
+      prisma.leaveRequest.findMany.mockResolvedValue([]);
+      prisma.attendancePolicy.findUnique.mockResolvedValue(null);
+
+      prisma.attendanceRecord.findMany.mockResolvedValue([
+        { status: 'ABSENT', date: new Date(2026, 0, 20), otMinutesApproved: null, otMinutesCalculated: 0 },
+      ]);
+
+      const result = await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+      expect(result!.lopDays).toBe(1);
+    });
+
+    it('does not read the policy when nobody was absent', async () => {
+      prisma.holiday.findMany.mockResolvedValue([]);
+      prisma.leaveRequest.findMany.mockResolvedValue([]);
+      prisma.attendancePolicy.findUnique.mockClear();
+      prisma.attendanceRecord.findMany.mockResolvedValue([
+        { status: 'PRESENT', date: new Date(2026, 0, 2), otMinutesApproved: 0, otMinutesCalculated: 0 },
+      ]);
+
+      await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+      expect(prisma.attendancePolicy.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('asks the database for ABSENT rows alongside the present ones', async () => {
+      prisma.holiday.findMany.mockResolvedValue([]);
+      prisma.leaveRequest.findMany.mockResolvedValue([]);
+      prisma.attendanceRecord.findMany.mockResolvedValue([]);
+
+      await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+      const where = prisma.attendanceRecord.findMany.mock.calls[0][0].where;
+      expect(where.status.in).toEqual(['PRESENT', 'WFH', 'HALF_DAY', 'ABSENT']);
+    });
+
     it('should account for holidays in working day calculation', async () => {
       // One weekday holiday: e.g., Wednesday Jan 14, 2026
       prisma.holiday.findMany.mockResolvedValue([

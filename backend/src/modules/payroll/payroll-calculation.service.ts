@@ -131,7 +131,7 @@ export class PayrollCalculationService {
     );
 
     // 3. Get attendance data for the month
-    const { presentDays, otMinutes } = await this.getAttendanceData(
+    const { presentDays, otMinutes, absentLopDays } = await this.getAttendanceData(
       tenantId,
       employeeId,
       month,
@@ -139,13 +139,17 @@ export class PayrollCalculationService {
     );
 
     // 4. Get leave data (approved paid and unpaid, excluding holidays)
-    const { paidLeaveDays, lopDays } = await this.getLeaveData(
+    const { paidLeaveDays, lopDays: leaveLopDays } = await this.getLeaveData(
       tenantId,
       employeeId,
       month,
       year,
       holidayDates,
     );
+
+    // Days marked ABSENT are loss of pay in their own right when the tenant's
+    // attendance policy says so, on top of any unpaid leave.
+    const lopDays = leaveLopDays + absentLopDays;
 
     // Total leave days (paid + unpaid)
     const totalLeaveDays = paidLeaveDays + lopDays;
@@ -360,7 +364,7 @@ export class PayrollCalculationService {
     employeeId: string,
     month: number,
     year: number,
-  ): Promise<{ presentDays: number; otMinutes: number }> {
+  ): Promise<{ presentDays: number; otMinutes: number; absentLopDays: number }> {
     const startDate = new Date(year, month - 1, 1);
     const endDate = new Date(year, month, 0);
 
@@ -369,15 +373,22 @@ export class PayrollCalculationService {
         tenantId,
         employeeId,
         date: { gte: startDate, lte: endDate },
-        status: { in: ['PRESENT', 'WFH', 'HALF_DAY'] },
+        status: { in: ['PRESENT', 'WFH', 'HALF_DAY', 'ABSENT'] },
       },
     });
 
     let presentDays = 0;
     let otMinutes = 0;
+    let absentDays = 0;
 
     for (const r of records) {
+      if (r.status === 'ABSENT') {
+        // An absence earns nothing and contributes no OT.
+        absentDays += 1;
+        continue;
+      }
       if (r.status === 'HALF_DAY') {
+        // Half days stay half present; they do not also book half a LOP day.
         presentDays += 0.5;
       } else {
         presentDays += 1;
@@ -386,7 +397,18 @@ export class PayrollCalculationService {
       otMinutes += r.otMinutesApproved ?? r.otMinutesCalculated;
     }
 
-    return { presentDays, otMinutes };
+    // Only ask for the policy when there is something for it to decide.
+    let absentLopDays = 0;
+    if (absentDays > 0) {
+      const policy = await this.prisma.attendancePolicy.findUnique({
+        where: { tenantId },
+        select: { absentIsLop: true },
+      });
+      // No policy row yet means the schema default, which is "absent costs pay".
+      if (policy?.absentIsLop ?? true) absentLopDays = absentDays;
+    }
+
+    return { presentDays, otMinutes, absentLopDays };
   }
 
   private async getLeaveData(
