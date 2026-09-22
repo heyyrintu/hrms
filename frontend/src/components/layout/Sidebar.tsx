@@ -49,6 +49,10 @@ import {
   Table2,
   MessageSquare,
   Webhook,
+  Banknote,
+  LifeBuoy,
+  Upload,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -102,12 +106,15 @@ const sections: NavSection[] = [
       { name: 'My Profile', href: '/my-profile', icon: <UserCircle className="h-[18px] w-[18px]" /> },
       { name: 'Notifications', href: '/notifications', icon: <Bell className="h-[18px] w-[18px]" /> },
       { name: 'My Onboarding', href: '/onboarding/my-tasks', icon: <ClipboardList className="h-[18px] w-[18px]" /> },
+      { name: 'Loans & Advances', href: '/loans', icon: <Banknote className="h-[18px] w-[18px]" /> },
+      { name: 'HR Helpdesk', href: '/helpdesk', icon: <LifeBuoy className="h-[18px] w-[18px]" /> },
     ],
   },
   {
     label: 'PEOPLE & ORG',
     items: [
       { name: 'Employees', href: '/employees', icon: <Users className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
+      { name: 'Import Employees', href: '/employees/import', icon: <Upload className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
       { name: 'Org Chart', href: '/org-chart', icon: <Network className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
       { name: 'Onboarding', href: '/onboarding', icon: <ClipboardList className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
       { name: 'Exit Management', href: '/exit-management', icon: <LogOut className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
@@ -128,6 +135,7 @@ const sections: NavSection[] = [
           { name: 'Form 16', href: '/payroll/form16', icon: <FileCheck2 className="h-4 w-4" /> },
           { name: 'Tax Declarations', href: '/payroll/declarations', icon: <ReceiptText className="h-4 w-4" /> },
           { name: 'Proof Review', href: '/payroll/proofs', icon: <FileSearch className="h-4 w-4" /> },
+          { name: 'Loans & Advances', href: '/payroll/loans', icon: <Banknote className="h-4 w-4" /> },
         ],
       },
     ],
@@ -161,6 +169,7 @@ const sections: NavSection[] = [
           { name: 'Expense Claims', href: '/approvals/expenses', icon: <Wallet className="h-4 w-4" /> },
           { name: 'Comp-Off', href: '/approvals/comp-off', icon: <CalendarPlus className="h-4 w-4" /> },
           { name: 'Regularization', href: '/approvals/regularization', icon: <ClipboardEdit className="h-4 w-4" /> },
+          { name: 'Loans', href: '/approvals/loans', icon: <Banknote className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
         ],
       },
     ],
@@ -200,6 +209,9 @@ const sections: NavSection[] = [
           { name: 'Statutory Payroll', href: '/admin/statutory', icon: <Scale className="h-4 w-4" /> },
           { name: 'Tax Slabs', href: '/admin/slabs', icon: <Table2 className="h-4 w-4" /> },
           { name: 'Webhooks', href: '/admin/webhooks', icon: <Webhook className="h-4 w-4" /> },
+          { name: 'Attendance Policy', href: '/admin/attendance-policy', icon: <SlidersHorizontal className="h-4 w-4" /> },
+          { name: 'Helpdesk Queue', href: '/admin/helpdesk', icon: <LifeBuoy className="h-4 w-4" /> },
+          { name: 'Helpdesk Categories', href: '/admin/helpdesk/categories', icon: <Tags className="h-4 w-4" /> },
         ],
       },
     ],

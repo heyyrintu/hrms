@@ -123,4 +123,68 @@ describe('AttendancePage', () => {
     expect(screen.getByText('My Attendance')).toBeInTheDocument();
     expect(screen.getByText('Team Attendance')).toBeInTheDocument();
   });
+  it('flags a late day with the minutes it ran over', async () => {
+    const { api } = require('@/lib/api');
+    api.get.mockResolvedValueOnce({
+      data: [
+        {
+          id: 'att-1',
+          date: '2026-02-10T00:00:00.000Z',
+          status: 'PRESENT',
+          workedMinutes: 480,
+          otMinutesCalculated: 0,
+          isLate: true,
+          lateByMinutes: 27,
+        },
+      ],
+    });
+
+    render(<AttendancePage />);
+
+    // The date-utils mock maps every calendar cell to the same day, so the
+    // record lands on each row; one match is all this assertion needs.
+    expect((await screen.findAllByText('Late (+27 min)')).length).toBeGreaterThan(0);
+  });
+
+  it('falls back to a bare Late badge when the minutes are missing', async () => {
+    const { api } = require('@/lib/api');
+    api.get.mockResolvedValueOnce({
+      data: [
+        {
+          id: 'att-1',
+          date: '2026-02-10T00:00:00.000Z',
+          status: 'PRESENT',
+          workedMinutes: 480,
+          otMinutesCalculated: 0,
+          isLate: true,
+          lateByMinutes: null,
+        },
+      ],
+    });
+
+    render(<AttendancePage />);
+
+    expect((await screen.findAllByText('Late')).length).toBeGreaterThan(0);
+  });
+
+  it('shows no late badge on an on-time day', async () => {
+    const { api } = require('@/lib/api');
+    api.get.mockResolvedValueOnce({
+      data: [
+        {
+          id: 'att-1',
+          date: '2026-02-10T00:00:00.000Z',
+          status: 'PRESENT',
+          workedMinutes: 480,
+          otMinutesCalculated: 0,
+          isLate: false,
+        },
+      ],
+    });
+
+    render(<AttendancePage />);
+
+    await waitFor(() => expect(api.get).toHaveBeenCalled());
+    expect(screen.queryByText(/^Late/)).not.toBeInTheDocument();
+  });
 });

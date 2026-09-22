@@ -3,6 +3,53 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { OtCalculationService } from '../attendance/ot-calculation.service';
 import { RegisterDeviceDto, UpdateDeviceDto } from './dto/biometric.dto';
 import { isPrismaError, PRISMA_UNIQUE_VIOLATION } from '../../common/utils/prisma-errors';
+import {
+  zonedDateOnlyUtc,
+  DEFAULT_ATTENDANCE_TIME_ZONE,
+} from '../attendance/rules/late-mark';
+
+
+/**
+ * The instant at which `tz` shows the given wall clock.
+ *
+ * Measures the zone's offset at the candidate instant and corrects by it. One
+ * pass is exact for a fixed-offset zone such as Asia/Kolkata; for a DST zone
+ * it is exact everywhere except inside the one ambiguous hour of a transition,
+ * where either answer is defensible.
+ */
+function zonedWallClockToUtc(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+  tz: string,
+): Date {
+  const guess = Date.UTC(year, month - 1, day, hour, minute, second);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(guess));
+  const at = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+
+  const shown = Date.UTC(
+    at('year'),
+    at('month') - 1,
+    at('day'),
+    at('hour'),
+    at('minute'),
+    at('second'),
+  );
+
+  return new Date(guess - (shown - guess));
+}
 
 @Injectable()
 export class BiometricService {
@@ -159,12 +206,14 @@ export class BiometricService {
       return true; // raw log was saved; device should not retry
     }
 
-    // Attendance date = calendar date of the punch in local time
-    const punchDate = new Date(
-      punchTime.getFullYear(),
-      punchTime.getMonth(),
-      punchTime.getDate(),
-    );
+    // Attendance date = the calendar date of the punch in the attendance zone,
+    // as UTC midnight. `AttendanceRecord.date` is `@db.Date`, which Prisma
+    // writes from the UTC date part, and the web clock-in path and the
+    // auto-absent sweep both key on that. Deriving it in the server's zone
+    // would put a 23:30 IST device push on the previous day on a UTC box, so
+    // the punch and the employee's own clock-in would land on two different
+    // rows.
+    const punchDate = zonedDateOnlyUtc(punchTime, DEFAULT_ATTENDANCE_TIME_ZONE);
 
     let attendanceId: string | undefined;
     let error: string | undefined;
@@ -208,7 +257,22 @@ export class BiometricService {
     if (!match) return null;
 
     const [, year, month, day, hour, minute, second] = match.map(Number);
-    const dt = new Date(year, month - 1, day, hour, minute, second);
+
+    // The device reports its own wall clock, and these devices sit in
+    // `DEFAULT_ATTENDANCE_TIME_ZONE`. Reading it as the *server's* wall clock
+    // moved the instant by the zone difference, so on a UTC-hosted box a
+    // 23:30 punch became 23:30Z — already the next day in India — and the
+    // punch landed on a different attendance row from the employee's own
+    // clock-in for the same shift.
+    const dt = zonedWallClockToUtc(
+      year,
+      month,
+      day,
+      hour,
+      minute,
+      second,
+      DEFAULT_ATTENDANCE_TIME_ZONE,
+    );
     return isNaN(dt.getTime()) ? null : dt;
   }
 

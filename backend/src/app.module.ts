@@ -39,6 +39,8 @@ import { HealthModule } from './modules/health/health.module';
 import { FeedbackModule } from './modules/feedback/feedback.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { PipModule } from './modules/pip/pip.module';
+import { LoansModule } from './modules/loans/loans.module';
+import { HelpdeskModule } from './modules/helpdesk/helpdesk.module';
 
 @Module({
   imports: [
@@ -88,6 +90,8 @@ import { PipModule } from './modules/pip/pip.module';
     FeedbackModule,
     WebhooksModule,
     PipModule,
+    LoansModule,
+    HelpdeskModule,
   ],
 })
 export class AppModule {}

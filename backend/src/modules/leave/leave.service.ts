@@ -23,6 +23,10 @@ import {
 } from './dto/leave.dto';
 import { Decimal } from '@prisma/client/runtime/library';
 import { isPrismaError, PRISMA_RECORD_NOT_FOUND } from '../../common/utils/prisma-errors';
+import {
+  zonedDateOnlyUtc,
+  DEFAULT_ATTENDANCE_TIME_ZONE,
+} from '../attendance/rules/late-mark';
 
 @Injectable()
 export class LeaveService {
@@ -819,11 +823,16 @@ export class LeaveService {
     const current = new Date(startDate);
 
     while (current <= endDate) {
-      const dayOfWeek = current.getDay();
+      // UTC throughout: `AttendanceRecord.date` is `@db.Date` and the rest of
+      // attendance keys it on the UTC midnight of the
+      // DEFAULT_ATTENDANCE_TIME_ZONE calendar day. Stepping and testing the
+      // weekday in the server's zone would write LEAVE rows on the wrong day,
+      // where the auto-absent sweep would not see them.
+      const dayOfWeek = current.getUTCDay();
 
       // Skip weekends
       if (dayOfWeek !== 0 && dayOfWeek !== 6) {
-        const dateOnly = new Date(current.getFullYear(), current.getMonth(), current.getDate());
+        const dateOnly = zonedDateOnlyUtc(current, DEFAULT_ATTENDANCE_TIME_ZONE);
 
         await this.prisma.attendanceRecord.upsert({
           where: {
@@ -847,7 +856,7 @@ export class LeaveService {
         });
       }
 
-      current.setDate(current.getDate() + 1);
+      current.setUTCDate(current.getUTCDate() + 1);
     }
   }
 

@@ -76,6 +76,15 @@ const prismaModels = [
   'improvementPlanGoal',
   'webhook',
   'webhookLog',
+  // Keka gap wave A
+  'passwordResetToken',
+  'leaveCarryForwardRun',
+  'attendancePolicy',
+  'employeeLoan',
+  'loanRepayment',
+  'hrTicketCategory',
+  'hrTicket',
+  'hrTicketComment',
 ];
 
 function createModelMock() {

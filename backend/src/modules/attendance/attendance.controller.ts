@@ -20,6 +20,8 @@ import {
   PayableHoursQueryDto,
   ManualAttendanceDto,
 } from './dto/attendance.dto';
+import { MarkAbsentDto } from './dto/update-attendance-policy.dto';
+import { AutoAbsentService } from './rules/auto-absent.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -36,6 +38,7 @@ export class AttendanceController {
   constructor(
     private attendanceService: AttendanceService,
     private prisma: PrismaService,
+    private autoAbsentService: AutoAbsentService,
   ) {}
 
   /**
@@ -139,6 +142,28 @@ export class AttendanceController {
     @Body() dto: ManualAttendanceDto,
   ) {
     return this.attendanceService.createManualAttendance(user.tenantId, dto);
+  }
+
+  /**
+   * Sweep a past day and record ABSENT for everyone who left no trace.
+   * POST /api/attendance/mark-absent
+   */
+  @Post('mark-absent')
+  @ApiOperation({ summary: 'Mark absentees for a given day' })
+  @ApiResponse({ status: 201, description: 'Sweep completed' })
+  @ApiResponse({ status: 400, description: 'Bad request' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  async markAbsent(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: MarkAbsentDto,
+  ) {
+    const date = new Date(dto.date);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException('date must be a valid calendar date');
+    }
+    return this.autoAbsentService.markAbsentForDate(user.tenantId, date);
   }
 
   /**

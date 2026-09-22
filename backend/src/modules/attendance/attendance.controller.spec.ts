@@ -3,6 +3,7 @@ import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { AttendanceController } from './attendance.controller';
 import { AttendanceService } from './attendance.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AutoAbsentService } from './rules/auto-absent.service';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { UserRole } from '@prisma/client';
 
@@ -17,6 +18,10 @@ const mockAttendanceService = {
   getPayableHours: jest.fn(),
   getPendingOtApprovals: jest.fn(),
   approveOt: jest.fn(),
+};
+
+const mockAutoAbsentService = {
+  markAbsentForDate: jest.fn(),
 };
 
 const mockPrismaService = {
@@ -71,6 +76,7 @@ describe('AttendanceController', () => {
       providers: [
         { provide: AttendanceService, useValue: mockAttendanceService },
         { provide: PrismaService, useValue: mockPrismaService },
+        { provide: AutoAbsentService, useValue: mockAutoAbsentService },
       ],
     }).compile();
 
@@ -434,6 +440,34 @@ describe('AttendanceController', () => {
 
       expect(service.approveOt).toHaveBeenCalledWith('tenant-1', 'att-1', dto);
       expect(result).toEqual(mockResult);
+    });
+  });
+  // ==========================================
+  // markAbsent
+  // ==========================================
+  describe('markAbsent', () => {
+    it('sweeps the caller tenant for the given day', async () => {
+      mockAutoAbsentService.markAbsentForDate.mockResolvedValue({
+        marked: 3,
+        skipped: 1,
+      });
+
+      const result = await controller.markAbsent(adminUser, { date: '2026-03-16' });
+
+      expect(mockAutoAbsentService.markAbsentForDate).toHaveBeenCalledWith(
+        'tenant-1',
+        new Date('2026-03-16'),
+      );
+      expect(result).toEqual({ marked: 3, skipped: 1 });
+    });
+
+    it('rejects a date it cannot parse', async () => {
+      mockAutoAbsentService.markAbsentForDate.mockClear();
+
+      await expect(
+        controller.markAbsent(adminUser, { date: 'not-a-date' }),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockAutoAbsentService.markAbsentForDate).not.toHaveBeenCalled();
     });
   });
 });

@@ -78,6 +78,13 @@ describe('LoginPage', () => {
     expect(screen.getByLabelText('Password')).toBeInTheDocument();
   });
 
+  it('offers a forgot-password link', () => {
+    render(<LoginPage />);
+    expect(
+      screen.getByRole('link', { name: 'Forgot password?' }),
+    ).toHaveAttribute('href', '/forgot-password');
+  });
+
   it('renders demo account information', () => {
     render(<LoginPage />);
     expect(screen.getByText(/Demo accounts/)).toBeInTheDocument();

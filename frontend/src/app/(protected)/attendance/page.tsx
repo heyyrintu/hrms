@@ -13,9 +13,20 @@ import { api, attendanceApi, employeesApi, departmentsApi } from '@/lib/api';
 import { formatDate, formatTime, formatMinutesToHoursMinutes, formatDateForApi, getMonthYear, getDaysInMonth } from '@/lib/date-utils';
 import { AttendanceRecord, Employee, Department } from '@/types';
 
+/**
+ * The late-mark columns the attendance policy writes at clock-in. Declared
+ * here rather than on the shared `AttendanceRecord` so this page can read them
+ * without every other consumer of that type having to care.
+ */
+type AttendanceRecordWithLateMark = AttendanceRecord & {
+  isLate?: boolean;
+  lateByMinutes?: number | null;
+  autoMarked?: boolean;
+};
+
 export default function AttendancePage() {
   const { isManager, isAdmin } = useAuth();
-  const [records, setRecords] = useState<AttendanceRecord[]>([]);
+  const [records, setRecords] = useState<AttendanceRecordWithLateMark[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [viewMode, setViewMode] = useState<'personal' | 'team'>('personal');
@@ -147,7 +158,9 @@ export default function AttendancePage() {
         if (selectedDepartment) params.departmentId = selectedDepartment;
       }
 
-      const response = await api.get<AttendanceRecord[] | { data: AttendanceRecord[] }>(endpoint, { params });
+      const response = await api.get<
+        AttendanceRecordWithLateMark[] | { data: AttendanceRecordWithLateMark[] }
+      >(endpoint, { params });
       const data = response.data;
       setRecords(Array.isArray(data) ? data : data.data || []);
     } catch (error) {
@@ -365,9 +378,18 @@ export default function AttendancePage() {
                   )}
                   <TableCell>
                     {record ? (
-                      <Badge variant={getStatusBadgeVariant(record.status)}>
-                        {record.status}
-                      </Badge>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Badge variant={getStatusBadgeVariant(record.status)}>
+                          {record.status}
+                        </Badge>
+                        {record.isLate && (
+                          <Badge variant="warning">
+                            {record.lateByMinutes
+                              ? `Late (+${record.lateByMinutes} min)`
+                              : 'Late'}
+                          </Badge>
+                        )}
+                      </div>
                     ) : (
                       <span className="text-warm-400">-</span>
                     )}

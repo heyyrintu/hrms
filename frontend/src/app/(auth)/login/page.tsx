@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import axios from 'axios';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button, Input, FormError } from '@/components/ui';
@@ -92,6 +93,15 @@ export default function LoginPage() {
             required
             autoComplete="current-password"
           />
+
+          <div className="flex justify-end -mt-1">
+            <Link
+              href="/forgot-password"
+              className="text-sm font-medium text-primary-600 hover:text-primary-700"
+            >
+              Forgot password?
+            </Link>
+          </div>
 
           <Button
             type="submit"

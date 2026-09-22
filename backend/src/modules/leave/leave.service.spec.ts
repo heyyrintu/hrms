@@ -577,6 +577,44 @@ describe('LeaveService', () => {
       expect(prisma.attendanceRecord.upsert).toHaveBeenCalledTimes(3);
     });
 
+    // `AttendanceRecord.date` is `@db.Date` and the auto-absent sweep keys on
+    // the UTC midnight of the IST calendar day. LEAVE rows written from
+    // server-local parts would land on a different day, where the sweep would
+    // not see them and would mark the employee ABSENT for a day they were on
+    // approved leave.
+    it('writes the LEAVE rows on UTC-midnight keys', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2025-12-31T21:30:00Z'));
+      try {
+        prisma.leaveRequest.findFirst.mockResolvedValue(mockLeaveRequest);
+        prisma.leaveRequest.update.mockResolvedValue({
+          ...mockLeaveRequest,
+          status: 'APPROVED',
+          leaveType: mockLeaveType,
+          employee: { ...mockLeaveRequest.employee, email: 'john@test.com' },
+        });
+        prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
+        prisma.leaveBalance.update.mockResolvedValue({});
+        prisma.attendanceRecord.upsert.mockResolvedValue({});
+
+        await service.approveRequest(tenantId, 'req-1', approverId, 'MANAGER', {});
+
+        const days = prisma.attendanceRecord.upsert.mock.calls.map(
+          (c: any) => c[0].where.tenantId_employeeId_date.date,
+        );
+        expect(days).toEqual([
+          new Date('2025-03-10T00:00:00.000Z'),
+          new Date('2025-03-11T00:00:00.000Z'),
+          new Date('2025-03-12T00:00:00.000Z'),
+        ]);
+        // The create branch has to agree with the key it upserts on.
+        expect(prisma.attendanceRecord.upsert.mock.calls[0][0].create.date).toEqual(
+          new Date('2025-03-10T00:00:00.000Z'),
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('should notify the employee after approval', async () => {
       prisma.leaveRequest.findFirst.mockResolvedValue(mockLeaveRequest);
       prisma.leaveRequest.update.mockResolvedValue({

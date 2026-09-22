@@ -14,12 +14,14 @@ import {
 import { PayrollRunStatus, UserRole } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { isPrismaError, PRISMA_RECORD_NOT_FOUND } from '../../common/utils/prisma-errors';
+import { LoansService, PayrollRepaymentLine } from '../loans/loans.service';
 
 @Injectable()
 export class PayrollService {
   constructor(
     private prisma: PrismaService,
     private calculationService: PayrollCalculationService,
+    private loansService: LoansService,
   ) {}
 
   // ============================================
@@ -119,6 +121,16 @@ export class PayrollService {
     }
 
     try {
+      // An earlier attempt at this month may have recorded loan instalments
+      // before failing and being reset back to DRAFT. Reverse them first, or
+      // `getPayrollDeductions` would skip every loan it already has a row for
+      // and this run would quietly pay those employees their whole salary.
+      await this.loansService.clearPayrollRepayments(
+        tenantId,
+        run.month,
+        run.year,
+      );
+
       // Get all active employees with salary assignments
       const employees = await this.prisma.employee.findMany({
         where: { tenantId, status: 'ACTIVE' },
@@ -155,7 +167,7 @@ export class PayrollService {
 
       // Replace the payslips and publish the totals atomically: a failure part
       // way through must not leave a half-generated run behind.
-      return await this.prisma.$transaction(async (tx) => {
+      const publishedRun = await this.prisma.$transaction(async (tx) => {
         await tx.payslip.deleteMany({ where: { payrollRunId: id } });
 
         if (results.length > 0) {
@@ -217,6 +229,10 @@ export class PayrollService {
           },
         });
       });
+
+      await this.recordLoanRepayments(tenantId, id, run.month, run.year, results);
+
+      return publishedRun;
     } catch (error) {
       // Revert to DRAFT on failure
       await this.prisma.payrollRun.update({
@@ -298,6 +314,16 @@ export class PayrollService {
         select: { employeeId: true },
       });
       const employees = covered.map((slip) => ({ id: slip.employeeId }));
+
+      // The instalments the previous compute recorded are reversed before
+      // anything is recalculated. They belong to payslips that are about to be
+      // deleted, and leaving them would both hide the loans from this
+      // recompute and credit a figure the new payslips never deduct.
+      await this.loansService.clearPayrollRepayments(
+        tenantId,
+        run.month,
+        run.year,
+      );
 
       // Compute every payslip first (reads only), so the write transaction
       // below stays short and cannot time out mid-run on a large tenant.
@@ -393,6 +419,8 @@ export class PayrollService {
         });
       });
 
+      await this.recordLoanRepayments(tenantId, id, run.month, run.year, results);
+
       // Tell the caller what actually changed, not just that it succeeded.
       return {
         ...updatedRun,
@@ -445,6 +473,12 @@ export class PayrollService {
       );
     }
 
+    // Loan instalments the abandoned attempt managed to record are reversed
+    // too. The payslips that justified them are about to be discarded, and a
+    // repayment with no payslip behind it is money taken off a loan that
+    // nobody was ever charged for.
+    await this.loansService.clearPayrollRepayments(tenantId, run.month, run.year);
+
     return this.prisma.$transaction(async (tx) => {
       // Any payslips from the abandoned attempt are discarded so the rerun
       // starts clean.
@@ -458,6 +492,87 @@ export class PayrollService {
         },
       });
     });
+  }
+
+  /**
+   * Credit each loan with what its payslip actually deducted.
+   *
+   * Runs after the write transaction has committed, because the repayment row
+   * carries the payslip's id and `createMany` does not hand one back — the
+   * ids are read off the committed rows. Employees whose payslip took no
+   * instalment are not passed to the loans service at all.
+   */
+  private async recordLoanRepayments(
+    tenantId: string,
+    runId: string,
+    month: number,
+    year: number,
+    results: PayslipData[],
+  ): Promise<void> {
+    const withLoans = results.filter(
+      (result) => (result.loanRepayments?.length ?? 0) > 0,
+    );
+    if (withLoans.length === 0) return;
+
+    const slips = await this.prisma.payslip.findMany({
+      where: { payrollRunId: runId, tenantId },
+      select: { id: true, employeeId: true },
+    });
+    const payslipIdFor = new Map(
+      slips.map((slip) => [slip.employeeId, slip.id]),
+    );
+
+    for (const result of withLoans) {
+      const payslipId = payslipIdFor.get(result.employeeId);
+      // No committed payslip means nothing was charged, so nothing is owed.
+      if (!payslipId) continue;
+      await this.recordRepaymentsWithOneRetry(
+        tenantId,
+        result.employeeId,
+        month,
+        year,
+        payslipId,
+        result.loanRepayments,
+      );
+    }
+  }
+
+  /**
+   * `recordPayrollRepayments` throws a 409 when a loan's balance moved under
+   * it — a manual repayment landing mid-run. The call is idempotent per
+   * (loan, month, year), so retrying re-reads the moved balance and applies
+   * the instalment against it. Once only: a second conflict is a real one and
+   * is allowed to surface rather than be swallowed into a silently unrecorded
+   * repayment.
+   */
+  private async recordRepaymentsWithOneRetry(
+    tenantId: string,
+    employeeId: string,
+    month: number,
+    year: number,
+    payslipId: string,
+    lines: PayrollRepaymentLine[],
+  ): Promise<void> {
+    try {
+      await this.loansService.recordPayrollRepayments(
+        tenantId,
+        employeeId,
+        month,
+        year,
+        payslipId,
+        lines,
+      );
+    } catch (error) {
+      if (!(error instanceof ConflictException)) throw error;
+      await this.loansService.recordPayrollRepayments(
+        tenantId,
+        employeeId,
+        month,
+        year,
+        payslipId,
+        lines,
+      );
+    }
   }
 
   async approveRun(tenantId: string, id: string) {
@@ -517,6 +632,13 @@ export class PayrollService {
     if (userRole !== UserRole.SUPER_ADMIN && run.status !== PayrollRunStatus.DRAFT) {
       throw new BadRequestException('Only DRAFT runs can be deleted');
     }
+
+    // Deleting the payslips deletes the evidence that anyone was charged an
+    // instalment, so the instalments have to go back to the loans first.
+    // `LoanRepayment.payslipId` carries no FK, so nothing cascades: without
+    // this the borrower's balance stays reduced for money never deducted.
+    // A no-op when the run never reached COMPUTED.
+    await this.loansService.clearPayrollRepayments(tenantId, run.month, run.year);
 
     // Both writes together: a half-deleted run would leave orphaned payslips.
     await this.prisma.$transaction(async (tx) => {

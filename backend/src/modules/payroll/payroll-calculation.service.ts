@@ -1,6 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { LoanType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Decimal } from '@prisma/client/runtime/library';
+import {
+  LoansService,
+  PayrollRepaymentLine,
+} from '../loans/loans.service';
 import {
   Section10AllowancesInput,
   StatutoryService,
@@ -67,6 +72,14 @@ export interface PayslipData {
   otPay: Decimal;
   /** Indian statutory deductions and employer contributions for the month. */
   statutory: StatutoryResult;
+  /**
+   * The loan and salary-advance instalments this payslip actually deducted,
+   * after the clamp below — not what the schedule asked for. The payroll run
+   * hands exactly these to `LoansService.recordPayrollRepayments` once the
+   * payslip row exists, so what a loan is credited with is always what the
+   * employee was actually charged.
+   */
+  loanRepayments: PayrollRepaymentLine[];
 }
 
 /** Round to paise, half-up, which is the commercial convention. */
@@ -74,11 +87,33 @@ function money(value: Decimal): Decimal {
   return value.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
 }
 
+/**
+ * The first and last calendar day of a month, as UTC midnights.
+ *
+ * Every date column these windows filter — `AttendanceRecord.date`,
+ * `Holiday.date`, `LeaveRequest.startDate`/`endDate` — is `@db.Date`, which
+ * Prisma reads back as UTC midnight. Building the window with
+ * `new Date(year, month - 1, 1)` used the server's own zone, so on an IST box
+ * the range ran 28 Feb 18:30Z – 30 Mar 18:30Z and the 31st of the month fell
+ * outside `lte` entirely: its attendance was dropped, its ABSENT row never
+ * charged as LOP, and its date never added to the double-charge guard.
+ */
+function monthWindowUtc(month: number, year: number): { startDate: Date; endDate: Date } {
+  return {
+    startDate: new Date(Date.UTC(year, month - 1, 1)),
+    // Day 0 of the next month is the last day of this one.
+    endDate: new Date(Date.UTC(year, month, 0)),
+  };
+}
+
 @Injectable()
 export class PayrollCalculationService {
+  private readonly logger = new Logger(PayrollCalculationService.name);
+
   constructor(
     private prisma: PrismaService,
     private statutoryService: StatutoryService,
+    private loansService: LoansService,
   ) {}
 
   async calculateForEmployee(
@@ -130,22 +165,27 @@ export class PayrollCalculationService {
       year,
     );
 
-    // 3. Get attendance data for the month
-    const { presentDays, otMinutes } = await this.getAttendanceData(
+    // 3. Get leave data (approved paid and unpaid, excluding holidays). This
+    // runs before attendance because the days it already charged as unpaid
+    // leave must not be charged a second time as absences.
+    const {
+      paidLeaveDays,
+      lopDays: leaveLopDays,
+      lopDates,
+    } = await this.getLeaveData(tenantId, employeeId, month, year, holidayDates);
+
+    // 4. Get attendance data for the month
+    const { presentDays, otMinutes, absentLopDays } = await this.getAttendanceData(
       tenantId,
       employeeId,
       month,
       year,
+      lopDates,
     );
 
-    // 4. Get leave data (approved paid and unpaid, excluding holidays)
-    const { paidLeaveDays, lopDays } = await this.getLeaveData(
-      tenantId,
-      employeeId,
-      month,
-      year,
-      holidayDates,
-    );
+    // Days marked ABSENT are loss of pay in their own right when the tenant's
+    // attendance policy says so, on top of any unpaid leave.
+    const lopDays = leaveLopDays + absentLopDays;
 
     // Total leave days (paid + unpaid)
     const totalLeaveDays = paidLeaveDays + lopDays;
@@ -259,7 +299,28 @@ export class PayrollCalculationService {
       if (amount.gt(0)) deductions.push({ name, amount });
     }
 
-    const allDeductions = money(totalDeductions.add(statutory.totalEmployeeDeductions));
+    // 10. Loan and salary-advance instalments, taken after the statutory
+    // deductions so the clamp below only ever eats into take-home pay.
+    const statutoryAndComponents = money(
+      totalDeductions.add(statutory.totalEmployeeDeductions),
+    );
+    const loanRepayments = this.applyLoanDeductions(
+      employeeId,
+      deductions,
+      money(grossPay.sub(statutoryAndComponents)),
+      await this.loansService.getPayrollDeductions(
+        tenantId,
+        employeeId,
+        month,
+        year,
+      ),
+    );
+    const loanTotal = loanRepayments.reduce(
+      (sum, line) => sum.add(new Decimal(line.amount)),
+      new Decimal(0),
+    );
+
+    const allDeductions = money(statutoryAndComponents.add(loanTotal));
     const netPay = money(grossPay.sub(allDeductions));
 
     return {
@@ -277,7 +338,71 @@ export class PayrollCalculationService {
       netPay,
       otPay,
       statutory,
+      loanRepayments,
     };
+  }
+
+  /**
+   * Push one deduction line per outstanding instalment and report what was
+   * actually taken.
+   *
+   * Payroll may not pay an employee a negative salary to service a loan. Where
+   * the instalments together exceed what is left after every other deduction,
+   * they are reduced — the last scheduled line first, so the oldest loan is
+   * serviced in preference to the newest — until net pay lands exactly on
+   * zero. The shortfall is logged rather than swallowed, because a loan that
+   * silently misses an instalment falls behind its schedule and nothing else
+   * in the system would say so.
+   *
+   * The amounts returned are the reduced ones. They are what gets written back
+   * against each loan, so a clamped month reduces the balance by what the
+   * payslip shows and no more.
+   */
+  private applyLoanDeductions(
+    employeeId: string,
+    deductions: { name: string; amount: Decimal }[],
+    netBeforeLoans: Decimal,
+    scheduled: { lines: { loanId: string; type: LoanType; amount: number }[] },
+  ): PayrollRepaymentLine[] {
+    if (scheduled.lines.length === 0) return [];
+
+    // A payslip already at or below zero can service nothing at all.
+    const available = Decimal.max(netBeforeLoans, new Decimal(0));
+    const applied = scheduled.lines.map((line) => ({
+      ...line,
+      amount: new Decimal(line.amount),
+    }));
+
+    const requested = applied.reduce(
+      (sum, line) => sum.add(line.amount),
+      new Decimal(0),
+    );
+    let shortfall = requested.sub(available);
+    if (shortfall.gt(0)) {
+      this.logger.warn(
+        `Loan instalments for employee ${employeeId} exceed net pay by ${shortfall.toFixed(2)}; deductions reduced so net pay is not negative`,
+      );
+      for (let i = applied.length - 1; i >= 0 && shortfall.gt(0); i--) {
+        const cut = Decimal.min(applied[i].amount, shortfall);
+        applied[i].amount = applied[i].amount.sub(cut);
+        shortfall = shortfall.sub(cut);
+      }
+    }
+
+    const recorded: PayrollRepaymentLine[] = [];
+    for (const line of applied) {
+      const amount = money(line.amount);
+      if (amount.lte(0)) continue;
+      deductions.push({
+        name:
+          line.type === LoanType.SALARY_ADVANCE
+            ? 'Salary advance recovery'
+            : 'Loan EMI',
+        amount,
+      });
+      recorded.push({ loanId: line.loanId, amount: amount.toNumber() });
+    }
+    return recorded;
   }
 
   /**
@@ -322,14 +447,13 @@ export class PayrollCalculationService {
     month: number,
     year: number,
   ): Promise<{ workingDays: number; holidayDates: Set<string> }> {
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0); // Last day of month
-    const totalDaysInMonth = endDate.getDate();
+    const { startDate, endDate } = monthWindowUtc(month, year);
+    const totalDaysInMonth = endDate.getUTCDate();
 
     // Count weekends (Saturday + Sunday)
     let weekendDays = 0;
     for (let d = 1; d <= totalDaysInMonth; d++) {
-      const day = new Date(year, month - 1, d).getDay();
+      const day = new Date(Date.UTC(year, month - 1, d)).getUTCDay();
       if (day === 0 || day === 6) weekendDays++;
     }
 
@@ -345,7 +469,7 @@ export class PayrollCalculationService {
     const holidayDates = new Set<string>();
     for (const h of holidayRecords) {
       const hDate = new Date(h.date);
-      const day = hDate.getDay();
+      const day = hDate.getUTCDay();
       if (day !== 0 && day !== 6) {
         holidayDates.add(hDate.toISOString().split('T')[0]);
       }
@@ -360,24 +484,37 @@ export class PayrollCalculationService {
     employeeId: string,
     month: number,
     year: number,
-  ): Promise<{ presentDays: number; otMinutes: number }> {
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0);
+    /** Days already charged as unpaid leave; an ABSENT row on one of these
+     * days is the same lost day, not a second one. */
+    lopDates: Set<string> = new Set(),
+  ): Promise<{ presentDays: number; otMinutes: number; absentLopDays: number }> {
+    const { startDate, endDate } = monthWindowUtc(month, year);
 
     const records = await this.prisma.attendanceRecord.findMany({
       where: {
         tenantId,
         employeeId,
         date: { gte: startDate, lte: endDate },
-        status: { in: ['PRESENT', 'WFH', 'HALF_DAY'] },
+        status: { in: ['PRESENT', 'WFH', 'HALF_DAY', 'ABSENT'] },
       },
     });
 
     let presentDays = 0;
     let otMinutes = 0;
+    let absentDays = 0;
 
     for (const r of records) {
+      if (r.status === 'ABSENT') {
+        // An absence earns nothing and contributes no OT. A day that approved
+        // unpaid leave already charged is skipped outright: one missing day
+        // may only cost one day's pay, however it came to be recorded twice.
+        if (!lopDates.has(new Date(r.date).toISOString().split('T')[0])) {
+          absentDays += 1;
+        }
+        continue;
+      }
       if (r.status === 'HALF_DAY') {
+        // Half days stay half present; they do not also book half a LOP day.
         presentDays += 0.5;
       } else {
         presentDays += 1;
@@ -386,7 +523,18 @@ export class PayrollCalculationService {
       otMinutes += r.otMinutesApproved ?? r.otMinutesCalculated;
     }
 
-    return { presentDays, otMinutes };
+    // Only ask for the policy when there is something for it to decide.
+    let absentLopDays = 0;
+    if (absentDays > 0) {
+      const policy = await this.prisma.attendancePolicy.findUnique({
+        where: { tenantId },
+        select: { absentIsLop: true },
+      });
+      // No policy row yet means the schema default, which is "absent costs pay".
+      if (policy?.absentIsLop ?? true) absentLopDays = absentDays;
+    }
+
+    return { presentDays, otMinutes, absentLopDays };
   }
 
   private async getLeaveData(
@@ -395,9 +543,8 @@ export class PayrollCalculationService {
     month: number,
     year: number,
     holidayDates: Set<string>,
-  ): Promise<{ paidLeaveDays: number; lopDays: number }> {
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0);
+  ): Promise<{ paidLeaveDays: number; lopDays: number; lopDates: Set<string> }> {
+    const { startDate, endDate } = monthWindowUtc(month, year);
 
     const leaveRequests = await this.prisma.leaveRequest.findMany({
       where: {
@@ -414,6 +561,9 @@ export class PayrollCalculationService {
 
     let paidLeaveDays = 0;
     let lopDays = 0;
+    // The exact days charged as unpaid leave, so attendance can avoid
+    // double-charging them.
+    const lopDates = new Set<string>();
 
     for (const lr of leaveRequests) {
       // Calculate overlap with this month
@@ -425,22 +575,28 @@ export class PayrollCalculationService {
       );
 
       // Count weekdays in overlap range, excluding holidays
+      const isPaid = lr.leaveType.isPaid;
       let days = 0;
       const current = new Date(overlapStart);
       while (current <= overlapEnd) {
-        const day = current.getDay();
+        // UTC throughout, to match the UTC-midnight window and the
+        // `toISOString()` key the attendance side guards on.
+        const day = current.getUTCDay();
         const dateStr = current.toISOString().split('T')[0];
-        if (day !== 0 && day !== 6 && !holidayDates.has(dateStr)) days++;
-        current.setDate(current.getDate() + 1);
+        if (day !== 0 && day !== 6 && !holidayDates.has(dateStr)) {
+          days++;
+          if (!isPaid) lopDates.add(dateStr);
+        }
+        current.setUTCDate(current.getUTCDate() + 1);
       }
 
-      if (lr.leaveType.isPaid) {
+      if (isPaid) {
         paidLeaveDays += days;
       } else {
         lopDays += days;
       }
     }
 
-    return { paidLeaveDays, lopDays };
+    return { paidLeaveDays, lopDays, lopDates };
   }
 }
