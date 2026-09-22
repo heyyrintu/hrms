@@ -16,8 +16,8 @@ export const IMPORT_COLUMNS = [
   'email',
   'joinDate',
   'departmentCode',
-  'designationCode',
-  'branchCode',
+  'designationName',
+  'branchName',
   'managerEmployeeCode',
   'employmentType',
   'phone',
@@ -25,6 +25,17 @@ export const IMPORT_COLUMNS = [
   'gender',
   'role',
 ] as const;
+
+/**
+ * Header spellings retired in favour of the canonical ones above, still
+ * accepted so a CSV written against the first release keeps importing.
+ * Designation and Branch are matched by *name* — there is no code column on
+ * either model — so `*Code` actively misled the operator.
+ */
+export const IMPORT_COLUMN_ALIASES: Record<string, string> = {
+  designationcode: 'designationName',
+  branchcode: 'branchName',
+};
 
 export const REQUIRED_IMPORT_COLUMNS = [
   'employeeCode',
