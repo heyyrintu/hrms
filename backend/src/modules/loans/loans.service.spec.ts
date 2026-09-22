@@ -566,9 +566,82 @@ describe('LoansService', () => {
       expect(result).toEqual({ total: 0, lines: [] });
     });
 
-    it('skips a month outside the tenure', async () => {
+    it('proposes nothing for a month before the loan starts', async () => {
       prisma.employeeLoan.findMany.mockResolvedValue([
         { ...storedLoan({ status: LoanStatus.ACTIVE }), repayments: [] },
+      ]);
+
+      const result = await service.getPayrollDeductions(
+        tenantId,
+        employeeId,
+        12,
+        2025,
+      );
+
+      expect(result).toEqual({ total: 0, lines: [] });
+    });
+
+    // The net-pay clamp in payroll reduces an instalment rather than deferring
+    // it, so a short month leaves a residual the schedule has no row for.
+    // Without arrears the loan would finish its tenure ACTIVE and never be
+    // collected again.
+    it('collects arrears past the tenure when a balance survives', async () => {
+      prisma.employeeLoan.findMany.mockResolvedValue([
+        {
+          ...storedLoan({
+            status: LoanStatus.ACTIVE,
+            outstandingAmount: 4000,
+          }),
+          repayments: [],
+        },
+      ]);
+
+      const result = await service.getPayrollDeductions(
+        tenantId,
+        employeeId,
+        3,
+        2027,
+      );
+
+      expect(result).toEqual({
+        total: 4000,
+        lines: [{ loanId, type: LoanType.LOAN, amount: 4000 }],
+      });
+    });
+
+    it('caps an arrears catch-up at one EMI', async () => {
+      prisma.employeeLoan.findMany.mockResolvedValue([
+        {
+          ...storedLoan({
+            status: LoanStatus.ACTIVE,
+            outstandingAmount: 30000,
+          }),
+          repayments: [],
+        },
+      ]);
+
+      const result = await service.getPayrollDeductions(
+        tenantId,
+        employeeId,
+        3,
+        2027,
+      );
+
+      expect(result).toEqual({
+        total: 11000,
+        lines: [{ loanId, type: LoanType.LOAN, amount: 11000 }],
+      });
+    });
+
+    it('proposes nothing past the tenure once the balance is clear', async () => {
+      prisma.employeeLoan.findMany.mockResolvedValue([
+        {
+          ...storedLoan({
+            status: LoanStatus.ACTIVE,
+            outstandingAmount: 0,
+          }),
+          repayments: [],
+        },
       ]);
 
       const result = await service.getPayrollDeductions(
@@ -579,6 +652,53 @@ describe('LoansService', () => {
       );
 
       expect(result).toEqual({ total: 0, lines: [] });
+    });
+
+    it('still respects idempotency in an arrears month', async () => {
+      prisma.employeeLoan.findMany.mockResolvedValue([
+        {
+          ...storedLoan({
+            status: LoanStatus.ACTIVE,
+            outstandingAmount: 4000,
+          }),
+          repayments: [{ id: 'already-paid' }],
+        },
+      ]);
+
+      const result = await service.getPayrollDeductions(
+        tenantId,
+        employeeId,
+        3,
+        2027,
+      );
+
+      expect(result).toEqual({ total: 0, lines: [] });
+    });
+
+    // A scheduled month catches up a short prior month only as far as the
+    // schedule's own EMI; the residual beyond that rolls into arrears.
+    it('caps a scheduled month at the outstanding balance', async () => {
+      prisma.employeeLoan.findMany.mockResolvedValue([
+        {
+          ...storedLoan({
+            status: LoanStatus.ACTIVE,
+            outstandingAmount: 6500,
+          }),
+          repayments: [],
+        },
+      ]);
+
+      const result = await service.getPayrollDeductions(
+        tenantId,
+        employeeId,
+        3,
+        2026,
+      );
+
+      expect(result).toEqual({
+        total: 6500,
+        lines: [{ loanId, type: LoanType.LOAN, amount: 6500 }],
+      });
     });
 
     it('never deducts more than is outstanding', async () => {

@@ -108,6 +108,23 @@ export class LoansService {
     };
   }
 
+  /**
+   * Is `(month, year)` at or after the loan's first instalment?
+   *
+   * Used to tell "the loan has not started yet" (nothing due) apart from
+   * "the tenure is over but a balance survives" (arrears).
+   */
+  private hasStarted(
+    loan: { startMonth: number; startYear: number },
+    month: number,
+    year: number,
+  ): boolean {
+    return (
+      year > loan.startYear ||
+      (year === loan.startYear && month >= loan.startMonth)
+    );
+  }
+
   /** The schedule for a stored loan, from its own terms. */
   buildSchedule(loan: {
     principal: unknown;
@@ -469,16 +486,27 @@ export class LoansService {
     for (const loan of loans) {
       if (loan.repayments && loan.repayments.length > 0) continue;
 
+      const outstanding = Number(loan.outstandingAmount);
+      if (!(outstanding > 0)) continue;
+
       const row = this.buildSchedule(loan).find(
         (r) => r.month === month && r.year === year,
       );
-      if (!row) continue;
 
-      // The final instalment can exceed what is left when earlier repayments
-      // were made by hand, so never deduct more than is owed.
-      const amount = round2(
-        Math.min(row.emi, Number(loan.outstandingAmount)),
-      );
+      // A month with no schedule row is either before the loan starts —
+      // nothing is due yet — or past the tenure with a balance still
+      // standing, which means an earlier instalment was short (the net-pay
+      // clamp in payroll reduces an EMI rather than deferring it). Carry the
+      // residual forward as arrears instead of abandoning it: without this a
+      // loan clamped in month 3 of 6 finishes ACTIVE with a balance nothing
+      // will ever collect.
+      if (!row && !this.hasStarted(loan, month, year)) continue;
+
+      // Never deduct more than is owed: the final instalment can exceed the
+      // balance when earlier repayments were made by hand, and an arrears
+      // catch-up is bounded by the balance by definition.
+      const due = row ? row.emi : Number(loan.emiAmount);
+      const amount = round2(Math.min(due, outstanding));
       if (amount <= 0) continue;
 
       lines.push({ loanId: loan.id, type: loan.type, amount });
