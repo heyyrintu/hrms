@@ -6,6 +6,7 @@ import { AuditService } from '../../audit/audit.service';
 import { CsvParseError, isBlankRow, parseCsv } from './csv-parser';
 import {
   IMPORT_COLUMNS,
+  IMPORT_COLUMN_ALIASES,
   ImportEmployeesResult,
   ImportRowError,
   MAX_IMPORT_FILE_SIZE,
@@ -39,8 +40,8 @@ interface ParsedRow {
   email: string;
   joinDate: string;
   departmentCode: string;
-  designationCode: string;
-  branchCode: string;
+  designationName: string;
+  branchName: string;
   managerEmployeeCode: string;
   employmentType: string;
   phone: string;
@@ -178,7 +179,8 @@ export class EmployeeImportService {
     const index: Record<string, number> = {};
     header.forEach((raw, i) => {
       const key = raw.trim().toLowerCase();
-      const known = IMPORT_COLUMNS.find((c) => c.toLowerCase() === key);
+      const aliased = IMPORT_COLUMN_ALIASES[key] ?? key;
+      const known = IMPORT_COLUMNS.find((c) => c.toLowerCase() === aliased.toLowerCase());
       if (known && index[known] === undefined) {
         index[known] = i;
       }
@@ -205,11 +207,16 @@ export class EmployeeImportService {
       employeeCode: at('employeeCode'),
       firstName: at('firstName'),
       lastName: at('lastName'),
-      email: at('email').toLowerCase(),
+      // Stored exactly as the operator typed it, because nothing else in the
+      // system normalises case — EmployeesService.create writes the address
+      // verbatim and AuthService.login matches it exactly. Normalising here
+      // would create an account nobody can log in to. The duplicate checks
+      // below are case-insensitive instead, so the collision is *caught*.
+      email: at('email'),
       joinDate: at('joinDate'),
       departmentCode: at('departmentCode'),
-      designationCode: at('designationCode'),
-      branchCode: at('branchCode'),
+      designationName: at('designationName'),
+      branchName: at('branchName'),
       managerEmployeeCode: at('managerEmployeeCode'),
       employmentType: at('employmentType').toUpperCase(),
       phone: at('phone'),
@@ -227,38 +234,52 @@ export class EmployeeImportService {
     const employeeCodes = rows.map((r) => r.employeeCode).filter(Boolean);
     const managerCodes = rows.map((r) => r.managerEmployeeCode).filter(Boolean);
     const emails = rows.map((r) => r.email).filter(Boolean);
+    const uniqueEmails = [...new Set(emails)];
     const departmentCodes = rows.map((r) => r.departmentCode).filter(Boolean);
-    const designationCodes = rows.map((r) => r.designationCode).filter(Boolean);
-    const branchCodes = rows.map((r) => r.branchCode).filter(Boolean);
+    const designationNames = rows.map((r) => r.designationName).filter(Boolean);
+    const branchNames = rows.map((r) => r.branchName).filter(Boolean);
 
     const [existingEmployees, existingUsers, departments, designations, branches] =
       await Promise.all([
+        // Postgres string equality is case-sensitive and so is
+        // @@unique([tenantId, email]) — an exact `in` would miss
+        // `John.Doe@acme.com` when the file says `john.doe@acme.com` and the
+        // importer would happily create a second, unreachable account.
         this.prisma.employee.findMany({
           where: {
             tenantId,
             OR: [
               { employeeCode: { in: [...new Set([...employeeCodes, ...managerCodes])] } },
-              { email: { in: [...new Set(emails)] } },
+              ...uniqueEmails.map((e) => ({
+                email: { equals: e, mode: 'insensitive' as const },
+              })),
             ],
           },
           select: { id: true, employeeCode: true, email: true },
         }),
         this.prisma.user.findMany({
-          where: { tenantId, email: { in: [...new Set(emails)] } },
+          where: {
+            tenantId,
+            OR: uniqueEmails.map((e) => ({
+              email: { equals: e, mode: 'insensitive' as const },
+            })),
+          },
           select: { email: true },
         }),
         this.prisma.department.findMany({
           where: { tenantId, code: { in: [...new Set(departmentCodes)] } },
           select: { id: true, code: true },
         }),
-        // Designation and Branch carry no `code` column in the schema; they are
-        // unique on `name` per tenant, so the CSV's *Code cells match by name.
+        // Designation and Branch carry no `code` column in the schema; they
+        // are unique on `name` per tenant, which is why the CSV columns are
+        // `designationName` / `branchName`. The retired `*Code` spellings are
+        // still accepted as header aliases.
         this.prisma.designation.findMany({
-          where: { tenantId, name: { in: [...new Set(designationCodes)] } },
+          where: { tenantId, name: { in: [...new Set(designationNames)] } },
           select: { id: true, name: true },
         }),
         this.prisma.branch.findMany({
-          where: { tenantId, name: { in: [...new Set(branchCodes)] } },
+          where: { tenantId, name: { in: [...new Set(branchNames)] } },
           select: { id: true, name: true },
         }),
       ]);
@@ -270,8 +291,8 @@ export class EmployeeImportService {
     for (const u of existingUsers ?? []) takenEmails.add((u.email ?? '').toLowerCase());
 
     const departmentByCode = new Map((departments ?? []).map((d) => [d.code, d.id]));
-    const designationByCode = new Map((designations ?? []).map((d) => [d.name, d.id]));
-    const branchByCode = new Map((branches ?? []).map((b) => [b.name, b.id]));
+    const designationByName = new Map((designations ?? []).map((d) => [d.name, d.id]));
+    const branchByName = new Map((branches ?? []).map((b) => [b.name, b.id]));
     const managerCodesInTenant = new Set((existingEmployees ?? []).map((e) => e.employeeCode));
 
     const codeFirstSeen = new Map<string, number>();
@@ -316,13 +337,15 @@ export class EmployeeImportService {
       }
 
       if (r.email) {
-        const seenAt = emailFirstSeen.get(r.email);
+        // Folded for comparison only; the row keeps the operator's spelling.
+        const emailKey = r.email.toLowerCase();
+        const seenAt = emailFirstSeen.get(emailKey);
         if (seenAt !== undefined) {
           add(r.row, 'email', `"${r.email}" is duplicated (first seen on row ${seenAt})`);
         } else {
-          emailFirstSeen.set(r.email, r.row);
+          emailFirstSeen.set(emailKey, r.row);
         }
-        if (takenEmails.has(r.email)) {
+        if (takenEmails.has(emailKey)) {
           add(r.row, 'email', `"${r.email}" already exists in this tenant`);
         }
       }
@@ -330,11 +353,11 @@ export class EmployeeImportService {
       if (r.departmentCode && !departmentByCode.has(r.departmentCode)) {
         add(r.row, 'departmentCode', `"${r.departmentCode}" does not match any department`);
       }
-      if (r.designationCode && !designationByCode.has(r.designationCode)) {
-        add(r.row, 'designationCode', `"${r.designationCode}" does not match any designation`);
+      if (r.designationName && !designationByName.has(r.designationName)) {
+        add(r.row, 'designationName', `"${r.designationName}" does not match any designation`);
       }
-      if (r.branchCode && !branchByCode.has(r.branchCode)) {
-        add(r.row, 'branchCode', `"${r.branchCode}" does not match any branch`);
+      if (r.branchName && !branchByName.has(r.branchName)) {
+        add(r.row, 'branchName', `"${r.branchName}" does not match any branch`);
       }
 
       // A manager may be someone already in the tenant or someone created by an
@@ -373,8 +396,8 @@ export class EmployeeImportService {
     const employeeCodes = rows.map((r) => r.employeeCode);
     const managerCodes = rows.map((r) => r.managerEmployeeCode).filter(Boolean);
     const departmentCodes = rows.map((r) => r.departmentCode).filter(Boolean);
-    const designationCodes = rows.map((r) => r.designationCode).filter(Boolean);
-    const branchCodes = rows.map((r) => r.branchCode).filter(Boolean);
+    const designationNames = rows.map((r) => r.designationName).filter(Boolean);
+    const branchNames = rows.map((r) => r.branchName).filter(Boolean);
 
     const [existingManagers, departments, designations, branches] = await Promise.all([
       this.prisma.employee.findMany({
@@ -386,18 +409,18 @@ export class EmployeeImportService {
         select: { id: true, code: true },
       }),
       this.prisma.designation.findMany({
-        where: { tenantId, name: { in: [...new Set(designationCodes)] } },
+        where: { tenantId, name: { in: [...new Set(designationNames)] } },
         select: { id: true, name: true },
       }),
       this.prisma.branch.findMany({
-        where: { tenantId, name: { in: [...new Set(branchCodes)] } },
+        where: { tenantId, name: { in: [...new Set(branchNames)] } },
         select: { id: true, name: true },
       }),
     ]);
 
     const departmentByCode = new Map((departments ?? []).map((d) => [d.code, d.id]));
-    const designationByCode = new Map((designations ?? []).map((d) => [d.name, d.id]));
-    const branchByCode = new Map((branches ?? []).map((b) => [b.name, b.id]));
+    const designationByName = new Map((designations ?? []).map((d) => [d.name, d.id]));
+    const branchByName = new Map((branches ?? []).map((b) => [b.name, b.id]));
     const employeeIdByCode = new Map<string, string>(
       (existingManagers ?? []).map((e) => [e.employeeCode, e.id]),
     );
@@ -421,10 +444,10 @@ export class EmployeeImportService {
             departmentId: r.departmentCode
               ? (departmentByCode.get(r.departmentCode) ?? null)
               : null,
-            designationId: r.designationCode
-              ? (designationByCode.get(r.designationCode) ?? null)
+            designationId: r.designationName
+              ? (designationByName.get(r.designationName) ?? null)
               : null,
-            branchId: r.branchCode ? (branchByCode.get(r.branchCode) ?? null) : null,
+            branchId: r.branchName ? (branchByName.get(r.branchName) ?? null) : null,
             managerId: r.managerEmployeeCode
               ? (employeeIdByCode.get(r.managerEmployeeCode) ?? null)
               : null,

@@ -10,7 +10,7 @@ const TENANT = 'tenant-1';
 const USER = 'user-1';
 
 const HEADER =
-  'employeeCode,firstName,lastName,email,joinDate,departmentCode,designationCode,branchCode,managerEmployeeCode,employmentType,phone,dateOfBirth,gender,role';
+  'employeeCode,firstName,lastName,email,joinDate,departmentCode,designationName,branchName,managerEmployeeCode,employmentType,phone,dateOfBirth,gender,role';
 
 function csv(...rows: string[]) {
   return [HEADER, ...rows].join('\n');
@@ -81,6 +81,29 @@ describe('EmployeeImportService', () => {
       expect(result.totalRows).toBe(1);
       expect(result.invalidRows).toBe(0);
       expect(result.errors).toEqual([]);
+    });
+
+    // The columns resolve Designation and Branch by name, not by any code
+    // column — those models have none — so the headers were renamed. A file
+    // written against the first release must keep importing.
+    it('still accepts the retired designationCode / branchCode spellings', async () => {
+      (prisma.designation.findMany as jest.Mock).mockResolvedValue([{ id: 'g1', name: 'SDE' }]);
+      (prisma.branch.findMany as jest.Mock).mockResolvedValue([{ id: 'b1', name: 'HQ' }]);
+
+      const text = [
+        'employeeCode,firstName,lastName,email,joinDate,designationCode,branchCode',
+        'E1,Asha,Rao,a@x.com,2026-03-15,SDE,HQ',
+      ].join('\n');
+
+      const result = await dryRun(text);
+
+      expect(result.errors).toEqual([]);
+      expect(prisma.designation.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { tenantId: TENANT, name: { in: ['SDE'] } } }),
+      );
+      expect(prisma.branch.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { tenantId: TENANT, name: { in: ['HQ'] } } }),
+      );
     });
 
     it('rejects a header missing a required column', async () => {
@@ -163,6 +186,46 @@ describe('EmployeeImportService', () => {
       );
     });
 
+    // Postgres equality and @@unique([tenantId, email]) are both
+    // case-sensitive, so an exact lookup would miss the existing row and the
+    // importer would create a second account nobody can log in to.
+    it('catches an existing address that differs only in case', async () => {
+      (prisma.employee.findMany as jest.Mock).mockResolvedValue([
+        { id: 'e-old', employeeCode: 'E9', email: 'John.Doe@acme.com' },
+      ]);
+
+      const result = await dryRun(csv('E1,John,Doe,john.doe@acme.com,2026-03-15'));
+
+      expect(result.invalidRows).toBe(1);
+      expect(result.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            row: 1,
+            field: 'email',
+            message: expect.stringContaining('already exists'),
+          }),
+        ]),
+      );
+    });
+
+    it('asks the database for emails case-insensitively', async () => {
+      await dryRun(csv('E1,John,Doe,John.Doe@acme.com,2026-03-15'));
+
+      expect(prisma.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            tenantId: TENANT,
+            OR: [{ email: { equals: 'John.Doe@acme.com', mode: 'insensitive' } }],
+          },
+        }),
+      );
+      expect((prisma.employee.findMany as jest.Mock).mock.calls[0][0].where.OR).toEqual(
+        expect.arrayContaining([
+          { email: { equals: 'John.Doe@acme.com', mode: 'insensitive' } },
+        ]),
+      );
+    });
+
     it('scopes every validation lookup to the caller tenant', async () => {
       await dryRun(csv('E1,Asha,Rao,a@x.com,2026-03-15,ENG,SDE,HQ,M1'));
 
@@ -192,9 +255,9 @@ describe('EmployeeImportService', () => {
     it('flags codes that resolve to nothing', async () => {
       const result = await dryRun(csv('E1,Asha,Rao,a@x.com,2026-03-15,NOPE,ALSO,GONE'));
       expect(result.errors.map((e) => e.field).sort()).toEqual([
-        'branchCode',
+        'branchName',
         'departmentCode',
-        'designationCode',
+        'designationName',
       ]);
     });
 
@@ -268,6 +331,20 @@ describe('EmployeeImportService', () => {
       (prisma.user.create as jest.Mock).mockResolvedValue({ id: 'u1' });
     });
 
+    // EmployeesService.create writes the address verbatim and AuthService
+    // .login matches it exactly, so normalising here would produce an account
+    // whose owner can never sign in.
+    it('stores the address exactly as the CSV spelled it', async () => {
+      await realRun(csv('E1,John,Doe, John.Doe@Acme.com ,2026-03-15'));
+
+      expect((prisma.employee.create as jest.Mock).mock.calls[0][0].data.email).toBe(
+        'John.Doe@Acme.com',
+      );
+      expect((prisma.user.create as jest.Mock).mock.calls[0][0].data.email).toBe(
+        'John.Doe@Acme.com',
+      );
+    });
+
     it('creates employees and users inside one transaction', async () => {
       const result = await realRun(csv('E1,Asha,Rao,a@x.com,2026-03-15,,,,,CONTRACT,+91,1990-05-02,F,MANAGER'));
 
@@ -297,8 +374,7 @@ describe('EmployeeImportService', () => {
         isActive: true,
         mustChangePassword: true,
       });
-      expect(userData.passwordHash).not.toBe('initial-secret');
-    });
+      expect(userData.passwordHash).not.toBe('initial-secret');    });
 
     it('defaults employmentType to PERMANENT and role to EMPLOYEE', async () => {
       await realRun(csv('E1,Asha,Rao,a@x.com,2026-03-15'));
