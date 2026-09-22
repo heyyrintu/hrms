@@ -131,6 +131,49 @@ describe('AttendanceService', () => {
       expect(result.employee).toBeDefined();
     });
 
+    // `AttendanceRecord.date` is `@db.Date`: Prisma writes the UTC date part,
+    // and the auto-absent sweep and the payroll LOP join both read it that
+    // way. Deriving the day in the server's zone would store 15 March for a
+    // 16 March IST clock-in on an IST-hosted box, and the sweep would then
+    // mark a present employee ABSENT.
+    it('stores the Asia/Kolkata calendar day as UTC midnight, not server-local midnight', async () => {
+      // 20:00 UTC on 15 March is already 01:30 IST on 16 March.
+      jest.useFakeTimers().setSystemTime(new Date('2026-03-15T20:00:00Z'));
+      try {
+        prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+        prisma.tenant.findUnique.mockResolvedValue(null);
+        prisma.attendanceRecord.findUnique.mockResolvedValue(null);
+        prisma.attendanceRecord.create.mockResolvedValue({ id: 'att-1', sessions: [] });
+        prisma.attendanceRecord.findFirst.mockResolvedValue({
+          id: 'att-1',
+          employee: mockEmployee,
+        });
+
+        await service.clockIn(tenantId, employeeId, { ...mockCoords });
+
+        expect(prisma.attendanceRecord.findUnique).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              tenantId_employeeId_date: {
+                tenantId,
+                employeeId,
+                date: new Date('2026-03-16T00:00:00.000Z'),
+              },
+            },
+          }),
+        );
+        expect(prisma.attendanceRecord.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              date: new Date('2026-03-16T00:00:00.000Z'),
+            }),
+          }),
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('should throw NotFoundException when employee not found', async () => {
       prisma.employee.findFirst.mockResolvedValue(null);
 
@@ -850,6 +893,36 @@ describe('AttendanceService', () => {
       await expect(
         service.createManualAttendance(tenantId, manualDto),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    // Same UTC-midnight basis as clockIn, so an HR-entered day and a punched
+    // day collide on the daily unique key instead of sitting side by side.
+    it('keys the day on UTC midnight rather than server-local midnight', async () => {
+      prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+      prisma.attendanceRecord.findUnique.mockResolvedValue(null);
+      otCalc.calculateWorkedMinutes.mockReturnValue(480);
+      otCalc.getOtRule.mockResolvedValue(null);
+      otCalc.calculateOtMinutes.mockReturnValue(0);
+      prisma.attendanceRecord.create.mockResolvedValue({ id: 'att-new' });
+
+      await service.createManualAttendance(tenantId, manualDto);
+
+      expect(prisma.attendanceRecord.findUnique).toHaveBeenCalledWith({
+        where: {
+          tenantId_employeeId_date: {
+            tenantId,
+            employeeId,
+            date: new Date('2025-01-15T00:00:00.000Z'),
+          },
+        },
+      });
+      expect(prisma.attendanceRecord.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            date: new Date('2025-01-15T00:00:00.000Z'),
+          }),
+        }),
+      );
     });
 
     it('should create manual attendance with worked minutes and OT', async () => {

@@ -25,7 +25,12 @@ import { AttendanceStatus, AttendanceSource, UserRole, NotificationType } from '
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AttendancePolicyService } from './policy/attendance-policy.service';
-import { computeLateMark, LateMarkResult } from './rules/late-mark';
+import {
+  computeLateMark,
+  LateMarkResult,
+  zonedDateOnlyUtc,
+  DEFAULT_ATTENDANCE_TIME_ZONE,
+} from './rules/late-mark';
 
 @Injectable()
 export class AttendanceService {
@@ -41,7 +46,12 @@ export class AttendanceService {
    */
   async clockIn(tenantId: string, employeeId: string, dto: ClockInDto) {
     const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    // `AttendanceRecord.date` is `@db.Date`, which Prisma writes from the UTC
+    // date part. Deriving the day from the server's own zone would store the
+    // wrong calendar day on any non-UTC box and the auto-absent sweep — which
+    // reads the column on an IST/UTC-midnight basis — would then mark a
+    // present employee ABSENT and cost them a day's pay under `absentIsLop`.
+    const today = zonedDateOnlyUtc(now, DEFAULT_ATTENDANCE_TIME_ZONE);
 
     // Check if employee exists
     const employee = await this.prisma.employee.findFirst({
@@ -172,7 +182,12 @@ export class AttendanceService {
    */
   async clockOut(tenantId: string, employeeId: string, dto: ClockOutDto) {
     const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    // `AttendanceRecord.date` is `@db.Date`, which Prisma writes from the UTC
+    // date part. Deriving the day from the server's own zone would store the
+    // wrong calendar day on any non-UTC box and the auto-absent sweep — which
+    // reads the column on an IST/UTC-midnight basis — would then mark a
+    // present employee ABSENT and cost them a day's pay under `absentIsLop`.
+    const today = zonedDateOnlyUtc(now, DEFAULT_ATTENDANCE_TIME_ZONE);
 
     // Get today's attendance
     const attendance = await this.prisma.attendanceRecord.findUnique({
@@ -672,8 +687,11 @@ export class AttendanceService {
    * Create manual attendance entry
    */
   async createManualAttendance(tenantId: string, dto: ManualAttendanceDto) {
-    const date = new Date(dto.date);
-    const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    // Same UTC-midnight basis as the clock-in path and the auto-absent sweep.
+    const dateOnly = zonedDateOnlyUtc(
+      new Date(dto.date),
+      DEFAULT_ATTENDANCE_TIME_ZONE,
+    );
 
     // Check if employee exists
     const employee = await this.prisma.employee.findFirst({
@@ -774,8 +792,7 @@ export class AttendanceService {
    * Get today's attendance status for dashboard
    */
   async getTodayStatus(tenantId: string, employeeId: string) {
-    const today = new Date();
-    const dateOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const dateOnly = zonedDateOnlyUtc(new Date(), DEFAULT_ATTENDANCE_TIME_ZONE);
 
     const attendance = await this.prisma.attendanceRecord.findUnique({
       where: {
