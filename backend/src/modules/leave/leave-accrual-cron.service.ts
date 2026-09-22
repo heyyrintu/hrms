@@ -3,6 +3,10 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { LeaveAccrualService } from './leave-accrual.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AccrualTriggerType } from '@prisma/client';
+import { zonedDateOnlyUtc } from '../attendance/rules/late-mark';
+
+/** The zone the cron fires in; the month it accrues must be read in the same one. */
+const ACCRUAL_TZ = 'Asia/Kolkata';
 
 @Injectable()
 export class LeaveAccrualCronService {
@@ -14,18 +18,23 @@ export class LeaveAccrualCronService {
   ) {}
 
   /**
-   * Run at 2 AM on the 1st day of every month
+   * Run at 2 AM on the 1st day of every month.
+   *
+   * The month has to be read in `ACCRUAL_TZ`, not the server's zone: 02:00 IST
+   * on 1 March is the instant 2026-02-28T20:30:00Z, so a UTC-hosted box
+   * reading `now.getMonth()` would accrue February a second time rather than
+   * March.
    */
   @Cron('0 2 1 * *', {
     name: 'monthly-leave-accrual',
-    timeZone: 'Asia/Kolkata',
+    timeZone: ACCRUAL_TZ,
   })
   async handleMonthlyAccrual() {
     this.logger.log('Starting monthly leave accrual cron job...');
 
-    const now = new Date();
-    const month = now.getMonth() + 1; // JavaScript months are 0-indexed
-    const year = now.getFullYear();
+    const today = zonedDateOnlyUtc(new Date(), ACCRUAL_TZ);
+    const month = today.getUTCMonth() + 1; // JavaScript months are 0-indexed
+    const year = today.getUTCFullYear();
 
     try {
       // Get all active tenants
