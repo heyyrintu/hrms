@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmploymentType, OtRule } from '@prisma/client';
+import { zonedDateOnlyUtc, DEFAULT_ATTENDANCE_TIME_ZONE } from './rules/late-mark';
 
 /**
  * Service for calculating overtime based on configurable OT rules
@@ -127,9 +128,15 @@ export class OtCalculationService {
       return { exceeded: false, currentTotal: 0, limit: null };
     }
 
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    // `AttendanceRecord.date` is `@db.Date`, read back as UTC midnight, and the
+    // rest of attendance now derives its calendar day in
+    // DEFAULT_ATTENDANCE_TIME_ZONE. Building this window in the server's zone
+    // would drop the last day of the month from `lte` on a non-UTC box, so the
+    // monthly OT cap would quietly under-count and let the limit be exceeded.
+    const today = zonedDateOnlyUtc(new Date(), DEFAULT_ATTENDANCE_TIME_ZONE);
+    const startOfMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+    // Day 0 of the next month is the last day of this one.
+    const endOfMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0));
 
     const result = await this.prisma.attendanceRecord.aggregate({
       where: {

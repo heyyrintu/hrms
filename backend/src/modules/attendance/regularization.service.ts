@@ -15,6 +15,7 @@ import {
   RegularizationQueryDto,
 } from './dto/regularization.dto';
 import { RegularizationStatus, UserRole, NotificationType } from '@prisma/client';
+import { zonedDateOnlyUtc, DEFAULT_ATTENDANCE_TIME_ZONE } from './rules/late-mark';
 
 @Injectable()
 export class RegularizationService {
@@ -32,8 +33,12 @@ export class RegularizationService {
     employeeId: string,
     dto: CreateRegularizationDto,
   ) {
-    const date = new Date(dto.date);
-    const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    // Same UTC-midnight basis as the clock-in path and the auto-absent sweep,
+    // so a regularization request lines up with the attendance row it means.
+    const dateOnly = zonedDateOnlyUtc(
+      new Date(dto.date),
+      DEFAULT_ATTENDANCE_TIME_ZONE,
+    );
 
     // Check if employee exists
     const employee = await this.prisma.employee.findFirst({
@@ -240,8 +245,13 @@ export class RegularizationService {
       approvedAt: new Date(),
     });
 
-    // Update the actual AttendanceRecord
-    const dateOnly = new Date(regularization.date);
+    // Update the actual AttendanceRecord. Normalised rather than copied
+    // verbatim, so the key matches the clock-in path even if the stored value
+    // ever carries a time component.
+    const dateOnly = zonedDateOnlyUtc(
+      new Date(regularization.date),
+      DEFAULT_ATTENDANCE_TIME_ZONE,
+    );
     const clockIn = new Date(regularization.requestedClockIn);
     const clockOut = new Date(regularization.requestedClockOut);
     const workedMinutes = Math.max(

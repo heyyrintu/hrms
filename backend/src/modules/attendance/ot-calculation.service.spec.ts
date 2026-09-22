@@ -369,6 +369,28 @@ describe('OtCalculationService', () => {
       expect(prisma.attendanceRecord.aggregate).not.toHaveBeenCalled();
     });
 
+    // 21:30Z on 31 December is already 03:00 IST on 1 January, so the month
+    // the cap applies to is January — and the window has to reach the last
+    // day of it, which a server-zone window drops on a non-UTC box.
+    it('windows the month on the Asia/Kolkata calendar day, in UTC', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-12-31T21:30:00Z'));
+      try {
+        const rule = { maxOtPerMonthMinutes: 2400 } as any;
+        prisma.attendanceRecord.aggregate.mockResolvedValue({
+          _sum: { otMinutesApproved: 0 },
+        });
+
+        await service.checkMonthlyOtLimit(tenantId, 'emp-1', rule, 0);
+
+        expect(prisma.attendanceRecord.aggregate.mock.calls[0][0].where.date).toEqual({
+          gte: new Date('2027-01-01T00:00:00.000Z'),
+          lte: new Date('2027-01-31T00:00:00.000Z'),
+        });
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('should return exceeded: false when within monthly limit', async () => {
       const rule = { maxOtPerMonthMinutes: 2400 } as any;
 

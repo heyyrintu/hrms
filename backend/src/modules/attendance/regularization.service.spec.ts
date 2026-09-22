@@ -57,6 +57,40 @@ describe('RegularizationService', () => {
     otCalculation = module.get(OtCalculationService);
   });
 
+  // `AttendanceRecord.date` is `@db.Date`, and the clock-in path and the
+  // auto-absent sweep both key on the UTC midnight of the IST calendar day. A
+  // request reconstructed from server-local parts would point at a different
+  // row on a non-UTC box.
+  describe('create', () => {
+    it('keys the request on the UTC-midnight IST calendar day', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-12-31T21:30:00Z'));
+      try {
+        prisma.employee.findFirst.mockResolvedValue({ id: 'emp-1', managerId: approverId });
+        prisma.attendanceRegularization.findUnique.mockResolvedValue(null);
+        prisma.attendanceRegularization.create.mockResolvedValue({ id: 'reg-1' });
+
+        await service.create(tenantId, 'emp-1', {
+          date: '2026-03-16',
+          requestedClockIn: '2026-03-16T03:30:00Z',
+          requestedClockOut: '2026-03-16T12:30:00Z',
+          reason: 'Forgot to punch',
+        } as any);
+
+        const expected = new Date('2026-03-16T00:00:00.000Z');
+        expect(prisma.attendanceRegularization.findUnique).toHaveBeenCalledWith({
+          where: {
+            tenantId_employeeId_date: { tenantId, employeeId: 'emp-1', date: expected },
+          },
+        });
+        expect(prisma.attendanceRegularization.create.mock.calls[0][0].data.date).toEqual(
+          expected,
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+  });
+
   describe('approve', () => {
     it('should recompute overtime from the regularized hours rather than leaving the old value', async () => {
       prisma.attendanceRegularization.findFirst.mockResolvedValue(pendingRequest);
