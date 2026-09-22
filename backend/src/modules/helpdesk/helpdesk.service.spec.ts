@@ -466,6 +466,20 @@ describe('HelpdeskService', () => {
       expect(result.comments.map((c: any) => c.id)).toEqual(['c-1', 'c-2']);
     });
 
+    // Defence in depth behind the assign() guard: if a raiser ever ends up
+    // holding their own ticket, OWNER must still win. ASSIGNEE would hand
+    // them the internal notes and the staff transition table, which lets
+    // them resolve their own ticket.
+    it('keeps the raiser an OWNER even when they hold their own ticket', async () => {
+      prisma.hrTicket.findFirst.mockResolvedValue(
+        withComments({ assignedToId: ownerUser.userId }),
+      );
+
+      const result = await service.findById(tenantId, 'ticket-1', ownerUser);
+
+      expect(result.comments.map((c: any) => c.id)).toEqual(['c-1']);
+    });
+
     it('refuses anyone who is neither owner, assignee nor HR', async () => {
       prisma.hrTicket.findFirst.mockResolvedValue(withComments());
 
@@ -511,9 +525,18 @@ describe('HelpdeskService', () => {
   // ============================================
 
   describe('assign', () => {
+    /** An assignable staff account: active, and HR. */
+    const agentAccount = (overrides: Record<string, unknown> = {}) => ({
+      id: agentUserId,
+      employeeId: 'emp-agent',
+      role: UserRole.HR_ADMIN,
+      isActive: true,
+      ...overrides,
+    });
+
     it('moves an OPEN ticket to IN_PROGRESS and notifies the assignee', async () => {
       prisma.hrTicket.findFirst.mockResolvedValue(ticketFixture());
-      prisma.user.findFirst.mockResolvedValue({ id: agentUserId, employeeId: 'emp-agent' });
+      prisma.user.findFirst.mockResolvedValue(agentAccount());
       prisma.hrTicket.update.mockResolvedValue(
         ticketFixture({ assignedToId: agentUserId, status: TicketStatus.IN_PROGRESS }),
       );
@@ -540,7 +563,7 @@ describe('HelpdeskService', () => {
       prisma.hrTicket.findFirst.mockResolvedValue(
         ticketFixture({ status: TicketStatus.WAITING_ON_EMPLOYEE }),
       );
-      prisma.user.findFirst.mockResolvedValue({ id: agentUserId, employeeId: 'emp-agent' });
+      prisma.user.findFirst.mockResolvedValue(agentAccount());
       prisma.hrTicket.update.mockResolvedValue(ticketFixture());
 
       await service.assign(tenantId, 'ticket-1', { assignedToId: agentUserId });
@@ -552,12 +575,52 @@ describe('HelpdeskService', () => {
 
     it('skips the notification when the assignee has no employee record', async () => {
       prisma.hrTicket.findFirst.mockResolvedValue(ticketFixture());
-      prisma.user.findFirst.mockResolvedValue({ id: agentUserId, employeeId: null });
+      prisma.user.findFirst.mockResolvedValue(agentAccount({ employeeId: null }));
       prisma.hrTicket.update.mockResolvedValue(ticketFixture());
 
       await service.assign(tenantId, 'ticket-1', { assignedToId: agentUserId });
 
       expect(notifications.notifyEmployee).not.toHaveBeenCalled();
+    });
+
+    // GET /helpdesk/agents already filters the dropdown to HR; this is the
+    // enforcement behind it. Without it a hand-rolled request could hand a
+    // ticket to an ordinary employee, and actorFor would rank them ASSIGNEE.
+    it('refuses an assignee who is not HR', async () => {
+      prisma.hrTicket.findFirst.mockResolvedValue(ticketFixture());
+      prisma.user.findFirst.mockResolvedValue(
+        agentAccount({ role: UserRole.EMPLOYEE, employeeId: 'emp-someone-else' }),
+      );
+
+      await expect(
+        service.assign(tenantId, 'ticket-1', { assignedToId: agentUserId }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.hrTicket.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a deactivated assignee', async () => {
+      prisma.hrTicket.findFirst.mockResolvedValue(ticketFixture());
+      prisma.user.findFirst.mockResolvedValue(agentAccount({ isActive: false }));
+
+      await expect(
+        service.assign(tenantId, 'ticket-1', { assignedToId: agentUserId }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.hrTicket.update).not.toHaveBeenCalled();
+    });
+
+    // A plausible mis-click from a dropdown of names, and the consequence is
+    // confidentiality: the raiser would read their own ticket as staff.
+    it('refuses to assign a ticket to the employee who raised it', async () => {
+      const ticket = ticketFixture();
+      prisma.hrTicket.findFirst.mockResolvedValue(ticket);
+      prisma.user.findFirst.mockResolvedValue(
+        agentAccount({ employeeId: ticket.employeeId }),
+      );
+
+      await expect(
+        service.assign(tenantId, 'ticket-1', { assignedToId: agentUserId }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.hrTicket.update).not.toHaveBeenCalled();
     });
 
     it('404s when the assignee is not a user in this tenant', async () => {

@@ -74,23 +74,32 @@ export class HelpdeskService {
   }
 
   /**
-   * Which hat the caller is wearing on this ticket, highest first. HR outranks
-   * the assignee and the assignee outranks the owner, so someone who is more
-   * than one of these gets the widest rights rather than the narrowest.
-   * `null` means they have no business reading the ticket at all.
+   * Which hat the caller is wearing on this ticket. HR outranks everyone, and
+   * the assignee outranks the owner — so staff who are also the raiser get the
+   * wider rights. The one exception is the raiser themselves: OWNER is checked
+   * before ASSIGNEE so a non-HR employee can never be promoted out of the
+   * owner rules by being assigned their own ticket. `null` means they have no
+   * business reading the ticket at all.
    */
   private actorFor(
     ticket: { employeeId: string; assignedToId: string | null },
     user: AuthenticatedUser,
   ): TicketActor | null {
     if (this.isHr(user.role)) return 'HR';
-    if (ticket.assignedToId && ticket.assignedToId === user.userId) {
-      return 'ASSIGNEE';
-    }
+
     // An undefined employeeId must never be allowed to match: it would make
     // every ticket look like the caller's own.
-    if (user.employeeId && ticket.employeeId === user.employeeId) {
-      return 'OWNER';
+    const isOwner = Boolean(user.employeeId && ticket.employeeId === user.employeeId);
+
+    // OWNER wins over ASSIGNEE for the raiser, even though ASSIGNEE is the
+    // wider hat. A raiser who somehow ends up holding their own ticket must
+    // not be promoted out of the owner rules: ASSIGNEE would hand them the
+    // internal comments the isInternal flag exists to hide and the staff
+    // transition table, which lets them resolve their own ticket.
+    if (isOwner) return 'OWNER';
+
+    if (ticket.assignedToId && ticket.assignedToId === user.userId) {
+      return 'ASSIGNEE';
     }
     return null;
   }
@@ -389,7 +398,13 @@ export class HelpdeskService {
   async assign(tenantId: string, id: string, dto: AssignTicketDto) {
     const ticket = await this.prisma.hrTicket.findFirst({
       where: { id, tenantId },
-      select: { id: true, status: true, ticketNumber: true, subject: true },
+      select: {
+        id: true,
+        status: true,
+        ticketNumber: true,
+        subject: true,
+        employeeId: true,
+      },
     });
 
     if (!ticket) {
@@ -399,11 +414,28 @@ export class HelpdeskService {
     // Scoped by tenant so an id borrowed from another tenant reads as missing.
     const assignee = await this.prisma.user.findFirst({
       where: { id: dto.assignedToId, tenantId },
-      select: { id: true, employeeId: true },
+      select: { id: true, employeeId: true, role: true, isActive: true },
     });
 
     if (!assignee) {
       throw new NotFoundException('Assignee not found');
+    }
+
+    // Only staff hold tickets. `GET /helpdesk/agents` already filters the
+    // dropdown to these roles; this is the enforcement behind it, so a
+    // hand-rolled request cannot hand a ticket to an ordinary employee.
+    if (!assignee.isActive || !this.isHr(assignee.role)) {
+      throw new BadRequestException(
+        'A ticket can only be assigned to an active HR_ADMIN or SUPER_ADMIN.',
+      );
+    }
+
+    // Assigning a ticket to the person who raised it is always a mistake, and
+    // an expensive one: the raiser would be reading their own ticket as staff.
+    if (assignee.employeeId && assignee.employeeId === ticket.employeeId) {
+      throw new BadRequestException(
+        'A ticket cannot be assigned to the employee who raised it.',
+      );
     }
 
     const data: Record<string, unknown> = { assignedToId: assignee.id };
