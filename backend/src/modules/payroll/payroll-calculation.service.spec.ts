@@ -158,7 +158,7 @@ describe('PayrollCalculationService', () => {
       prisma.holiday.findMany.mockResolvedValue([]);
       prisma.attendanceRecord.findMany.mockResolvedValue(
         Array.from({ length: 22 }, (_, i) => ({
-          status: 'PRESENT', date: new Date(2026, 0, i + 1),
+          status: 'PRESENT', date: new Date(Date.UTC(2026, 0, i + 1, 12)),
           otMinutesApproved: 0, otMinutesCalculated: 0,
         })),
       );
@@ -185,7 +185,7 @@ describe('PayrollCalculationService', () => {
       prisma.holiday.findMany.mockResolvedValue([]);
       prisma.attendanceRecord.findMany.mockResolvedValue(
         Array.from({ length: 22 }, (_, i) => ({
-          status: 'PRESENT', date: new Date(2026, 0, i + 1),
+          status: 'PRESENT', date: new Date(Date.UTC(2026, 0, i + 1, 12)),
           otMinutesApproved: 0, otMinutesCalculated: 0,
         })),
       );
@@ -218,7 +218,7 @@ describe('PayrollCalculationService', () => {
       prisma.attendanceRecord.findMany.mockResolvedValue(
         Array.from({ length: 22 }, (_, i) => ({
           status: 'PRESENT',
-          date: new Date(2026, 0, i + 1),
+          date: new Date(Date.UTC(2026, 0, i + 1, 12)),
           otMinutesApproved: 0,
           otMinutesCalculated: 0,
         })),
@@ -241,7 +241,7 @@ describe('PayrollCalculationService', () => {
       prisma.attendanceRecord.findMany.mockResolvedValue(
         Array.from({ length: 22 }, (_, i) => ({
           status: 'PRESENT',
-          date: new Date(2026, 0, i + 1),
+          date: new Date(Date.UTC(2026, 0, i + 1, 12)),
           otMinutesApproved: 30,
           otMinutesCalculated: 30,
         })),
@@ -303,7 +303,7 @@ describe('PayrollCalculationService', () => {
       prisma.attendanceRecord.findMany.mockResolvedValue(
         Array.from({ length: 15 }, (_, i) => ({
           status: 'PRESENT',
-          date: new Date(2026, 0, i + 1),
+          date: new Date(Date.UTC(2026, 0, i + 1, 12)),
           otMinutesApproved: 0,
           otMinutesCalculated: 0,
         })),
@@ -333,9 +333,9 @@ describe('PayrollCalculationService', () => {
       prisma.holiday.findMany.mockResolvedValue([]);
 
       prisma.attendanceRecord.findMany.mockResolvedValue([
-        { status: 'PRESENT', date: new Date(2026, 0, 2), otMinutesApproved: 0, otMinutesCalculated: 0 },
-        { status: 'HALF_DAY', date: new Date(2026, 0, 3), otMinutesApproved: 0, otMinutesCalculated: 0 },
-        { status: 'WFH', date: new Date(2026, 0, 5), otMinutesApproved: 0, otMinutesCalculated: 0 },
+        { status: 'PRESENT', date: new Date(Date.UTC(2026, 0, 2, 12)), otMinutesApproved: 0, otMinutesCalculated: 0 },
+        { status: 'HALF_DAY', date: new Date(Date.UTC(2026, 0, 3, 12)), otMinutesApproved: 0, otMinutesCalculated: 0 },
+        { status: 'WFH', date: new Date(Date.UTC(2026, 0, 5, 12)), otMinutesApproved: 0, otMinutesCalculated: 0 },
       ]);
 
       prisma.leaveRequest.findMany.mockResolvedValue([]);
@@ -354,7 +354,7 @@ describe('PayrollCalculationService', () => {
       prisma.attendanceRecord.findMany.mockResolvedValue(
         Array.from({ length: 20 }, (_, i) => ({
           status: 'PRESENT',
-          date: new Date(2026, 0, i + 1),
+          date: new Date(Date.UTC(2026, 0, i + 1, 12)),
           otMinutesApproved: 0,
           otMinutesCalculated: 0,
         })),
@@ -363,8 +363,8 @@ describe('PayrollCalculationService', () => {
       // 2 days paid leave (Thursday 2026-01-22, Friday 2026-01-23 - weekdays)
       prisma.leaveRequest.findMany.mockResolvedValue([
         {
-          startDate: new Date(2026, 0, 22),
-          endDate: new Date(2026, 0, 23),
+          startDate: new Date(Date.UTC(2026, 0, 22, 12)),
+          endDate: new Date(Date.UTC(2026, 0, 23, 12)),
           status: 'APPROVED',
           leaveType: { isPaid: true },
         },
@@ -385,7 +385,7 @@ describe('PayrollCalculationService', () => {
       prisma.attendanceRecord.findMany.mockResolvedValue(
         Array.from({ length: 20 }, (_, i) => ({
           status: 'PRESENT',
-          date: new Date(2026, 0, i + 1),
+          date: new Date(Date.UTC(2026, 0, i + 1, 12)),
           otMinutesApproved: 0,
           otMinutesCalculated: 0,
         })),
@@ -394,8 +394,8 @@ describe('PayrollCalculationService', () => {
       // 1 day unpaid leave (Wednesday 2026-01-21)
       prisma.leaveRequest.findMany.mockResolvedValue([
         {
-          startDate: new Date(2026, 0, 21),
-          endDate: new Date(2026, 0, 21),
+          startDate: new Date(Date.UTC(2026, 0, 21, 12)),
+          endDate: new Date(Date.UTC(2026, 0, 21, 12)),
           status: 'APPROVED',
           leaveType: { isPaid: false },
         },
@@ -416,12 +416,12 @@ describe('PayrollCalculationService', () => {
       prisma.attendanceRecord.findMany.mockResolvedValue([
         ...Array.from({ length: 18 }, (_, i) => ({
           status: 'PRESENT',
-          date: new Date(2026, 0, i + 1),
+          date: new Date(Date.UTC(2026, 0, i + 1, 12)),
           otMinutesApproved: 0,
           otMinutesCalculated: 0,
         })),
-        { status: 'ABSENT', date: new Date(2026, 0, 20), otMinutesApproved: null, otMinutesCalculated: 0 },
-        { status: 'ABSENT', date: new Date(2026, 0, 21), otMinutesApproved: null, otMinutesCalculated: 0 },
+        { status: 'ABSENT', date: new Date(Date.UTC(2026, 0, 20, 12)), otMinutesApproved: null, otMinutesCalculated: 0 },
+        { status: 'ABSENT', date: new Date(Date.UTC(2026, 0, 21, 12)), otMinutesApproved: null, otMinutesCalculated: 0 },
       ]);
 
       const result = await service.calculateForEmployee(tenantId, employeeId, month, year);
@@ -436,6 +436,56 @@ describe('PayrollCalculationService', () => {
       });
     });
 
+    // The month window filters `@db.Date` columns, which Prisma reads back as
+    // UTC midnight. Built in the server's zone, the window ran to 30 Jan
+    // 18:30Z on an IST box and the 31st fell outside `lte` entirely — its
+    // attendance was dropped and its ABSENT row was never charged as LOP.
+    it('builds the month window in UTC so the last day of the month is inside it', async () => {
+      prisma.holiday.findMany.mockResolvedValue([]);
+      prisma.leaveRequest.findMany.mockResolvedValue([]);
+      prisma.attendancePolicy.findUnique.mockResolvedValue({ absentIsLop: true });
+      prisma.attendanceRecord.findMany.mockResolvedValue([]);
+
+      await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+      const attendanceWhere = (prisma.attendanceRecord.findMany as jest.Mock).mock
+        .calls[0][0].where;
+      expect(attendanceWhere.date).toEqual({
+        gte: new Date('2026-01-01T00:00:00.000Z'),
+        lte: new Date('2026-01-31T00:00:00.000Z'),
+      });
+
+      const holidayWhere = (prisma.holiday.findMany as jest.Mock).mock.calls[0][0].where;
+      expect(holidayWhere.date).toEqual({
+        gte: new Date('2026-01-01T00:00:00.000Z'),
+        lte: new Date('2026-01-31T00:00:00.000Z'),
+      });
+
+      const leaveWhere = (prisma.leaveRequest.findMany as jest.Mock).mock.calls[0][0].where;
+      expect(leaveWhere.startDate).toEqual({ lte: new Date('2026-01-31T00:00:00.000Z') });
+      expect(leaveWhere.endDate).toEqual({ gte: new Date('2026-01-01T00:00:00.000Z') });
+    });
+
+    it('charges an ABSENT row on the last day of the month', async () => {
+      prisma.holiday.findMany.mockResolvedValue([]);
+      prisma.leaveRequest.findMany.mockResolvedValue([]);
+      prisma.attendancePolicy.findUnique.mockResolvedValue({ absentIsLop: true });
+      prisma.attendanceRecord.findMany.mockResolvedValue([
+        // 30 January 2026 is a Friday; 31 January is a Saturday, so use the
+        // 30th as the last *working* day the window has to reach.
+        {
+          status: 'ABSENT',
+          date: new Date('2026-01-30T00:00:00.000Z'),
+          otMinutesApproved: null,
+          otMinutesCalculated: 0,
+        },
+      ]);
+
+      const result = await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+      expect(result!.lopDays).toBe(1);
+    });
+
     it('adds absent LOP on top of unpaid-leave LOP', async () => {
       prisma.holiday.findMany.mockResolvedValue([]);
       prisma.attendancePolicy.findUnique.mockResolvedValue({ absentIsLop: true });
@@ -443,17 +493,17 @@ describe('PayrollCalculationService', () => {
       prisma.attendanceRecord.findMany.mockResolvedValue([
         ...Array.from({ length: 19 }, (_, i) => ({
           status: 'PRESENT',
-          date: new Date(2026, 0, i + 1),
+          date: new Date(Date.UTC(2026, 0, i + 1, 12)),
           otMinutesApproved: 0,
           otMinutesCalculated: 0,
         })),
-        { status: 'ABSENT', date: new Date(2026, 0, 20), otMinutesApproved: null, otMinutesCalculated: 0 },
+        { status: 'ABSENT', date: new Date(Date.UTC(2026, 0, 20, 12)), otMinutesApproved: null, otMinutesCalculated: 0 },
       ]);
       // 1 day unpaid leave (Wednesday 2026-01-21)
       prisma.leaveRequest.findMany.mockResolvedValue([
         {
-          startDate: new Date(2026, 0, 21),
-          endDate: new Date(2026, 0, 21),
+          startDate: new Date(Date.UTC(2026, 0, 21, 12)),
+          endDate: new Date(Date.UTC(2026, 0, 21, 12)),
           status: 'APPROVED',
           leaveType: { isPaid: false },
         },
@@ -474,21 +524,21 @@ describe('PayrollCalculationService', () => {
       prisma.attendanceRecord.findMany.mockResolvedValue([
         ...Array.from({ length: 19 }, (_, i) => ({
           status: 'PRESENT',
-          date: new Date(2026, 0, i + 1),
+          date: new Date(Date.UTC(2026, 0, i + 1, 12)),
           otMinutesApproved: 0,
           otMinutesCalculated: 0,
         })),
         {
           status: 'ABSENT',
-          date: new Date(2026, 0, 21),
+          date: new Date(Date.UTC(2026, 0, 21, 12)),
           otMinutesApproved: null,
           otMinutesCalculated: 0,
         },
       ]);
       prisma.leaveRequest.findMany.mockResolvedValue([
         {
-          startDate: new Date(2026, 0, 21),
-          endDate: new Date(2026, 0, 21),
+          startDate: new Date(Date.UTC(2026, 0, 21, 12)),
+          endDate: new Date(Date.UTC(2026, 0, 21, 12)),
           status: 'APPROVED',
           leaveType: { isPaid: false },
         },
@@ -508,15 +558,15 @@ describe('PayrollCalculationService', () => {
       prisma.attendanceRecord.findMany.mockResolvedValue([
         {
           status: 'ABSENT',
-          date: new Date(2026, 0, 20),
+          date: new Date(Date.UTC(2026, 0, 20, 12)),
           otMinutesApproved: null,
           otMinutesCalculated: 0,
         },
       ]);
       prisma.leaveRequest.findMany.mockResolvedValue([
         {
-          startDate: new Date(2026, 0, 21),
-          endDate: new Date(2026, 0, 21),
+          startDate: new Date(Date.UTC(2026, 0, 21, 12)),
+          endDate: new Date(Date.UTC(2026, 0, 21, 12)),
           status: 'APPROVED',
           leaveType: { isPaid: true },
         },
@@ -534,8 +584,8 @@ describe('PayrollCalculationService', () => {
       prisma.attendancePolicy.findUnique.mockResolvedValue({ absentIsLop: false });
 
       prisma.attendanceRecord.findMany.mockResolvedValue([
-        { status: 'ABSENT', date: new Date(2026, 0, 20), otMinutesApproved: null, otMinutesCalculated: 0 },
-        { status: 'ABSENT', date: new Date(2026, 0, 21), otMinutesApproved: null, otMinutesCalculated: 0 },
+        { status: 'ABSENT', date: new Date(Date.UTC(2026, 0, 20, 12)), otMinutesApproved: null, otMinutesCalculated: 0 },
+        { status: 'ABSENT', date: new Date(Date.UTC(2026, 0, 21, 12)), otMinutesApproved: null, otMinutesCalculated: 0 },
       ]);
 
       const result = await service.calculateForEmployee(tenantId, employeeId, month, year);
@@ -549,7 +599,7 @@ describe('PayrollCalculationService', () => {
       prisma.attendancePolicy.findUnique.mockResolvedValue(null);
 
       prisma.attendanceRecord.findMany.mockResolvedValue([
-        { status: 'ABSENT', date: new Date(2026, 0, 20), otMinutesApproved: null, otMinutesCalculated: 0 },
+        { status: 'ABSENT', date: new Date(Date.UTC(2026, 0, 20, 12)), otMinutesApproved: null, otMinutesCalculated: 0 },
       ]);
 
       const result = await service.calculateForEmployee(tenantId, employeeId, month, year);
@@ -562,7 +612,7 @@ describe('PayrollCalculationService', () => {
       prisma.leaveRequest.findMany.mockResolvedValue([]);
       prisma.attendancePolicy.findUnique.mockClear();
       prisma.attendanceRecord.findMany.mockResolvedValue([
-        { status: 'PRESENT', date: new Date(2026, 0, 2), otMinutesApproved: 0, otMinutesCalculated: 0 },
+        { status: 'PRESENT', date: new Date(Date.UTC(2026, 0, 2, 12)), otMinutesApproved: 0, otMinutesCalculated: 0 },
       ]);
 
       await service.calculateForEmployee(tenantId, employeeId, month, year);
@@ -585,7 +635,7 @@ describe('PayrollCalculationService', () => {
       // One weekday holiday: e.g., Wednesday Jan 14, 2026
       prisma.holiday.findMany.mockResolvedValue([
         {
-          date: new Date(2026, 0, 14), // Wednesday
+          date: new Date(Date.UTC(2026, 0, 14, 12)), // Wednesday
           isActive: true,
         },
       ]);
@@ -594,7 +644,7 @@ describe('PayrollCalculationService', () => {
       prisma.attendanceRecord.findMany.mockResolvedValue(
         Array.from({ length: 21 }, (_, i) => ({
           status: 'PRESENT',
-          date: new Date(2026, 0, i + 1),
+          date: new Date(Date.UTC(2026, 0, i + 1, 12)),
           otMinutesApproved: 0,
           otMinutesCalculated: 0,
         })),
@@ -613,7 +663,7 @@ describe('PayrollCalculationService', () => {
       // A Saturday holiday should not reduce working days further
       prisma.holiday.findMany.mockResolvedValue([
         {
-          date: new Date(2026, 0, 10), // Saturday
+          date: new Date(Date.UTC(2026, 0, 10, 12)), // Saturday
           isActive: true,
         },
       ]);
@@ -634,7 +684,7 @@ describe('PayrollCalculationService', () => {
       prisma.attendanceRecord.findMany.mockResolvedValue([
         {
           status: 'PRESENT',
-          date: new Date(2026, 0, 2),
+          date: new Date(Date.UTC(2026, 0, 2, 12)),
           otMinutesApproved: 60, // approved
           otMinutesCalculated: 90, // calculated
         },
@@ -655,7 +705,7 @@ describe('PayrollCalculationService', () => {
       prisma.attendanceRecord.findMany.mockResolvedValue([
         {
           status: 'PRESENT',
-          date: new Date(2026, 0, 2),
+          date: new Date(Date.UTC(2026, 0, 2, 12)),
           otMinutesApproved: null,
           otMinutesCalculated: 120,
         },
@@ -685,7 +735,7 @@ describe('PayrollCalculationService', () => {
       prisma.attendanceRecord.findMany.mockResolvedValue([
         {
           status: 'PRESENT',
-          date: new Date(2026, 0, 2),
+          date: new Date(Date.UTC(2026, 0, 2, 12)),
           otMinutesApproved: 120,
           otMinutesCalculated: 120,
         },
@@ -706,7 +756,7 @@ describe('PayrollCalculationService', () => {
       prisma.attendanceRecord.findMany.mockResolvedValue([
         {
           status: 'PRESENT',
-          date: new Date(2026, 0, 2),
+          date: new Date(Date.UTC(2026, 0, 2, 12)),
           otMinutesApproved: 0,
           otMinutesCalculated: 0,
         },
@@ -735,7 +785,7 @@ describe('PayrollCalculationService', () => {
       prisma.attendanceRecord.findMany.mockResolvedValue(
         Array.from({ length: 22 }, (_, i) => ({
           status: 'PRESENT',
-          date: new Date(2026, 0, i + 1),
+          date: new Date(Date.UTC(2026, 0, i + 1, 12)),
           otMinutesApproved: 0,
           otMinutesCalculated: 0,
         })),
@@ -772,7 +822,7 @@ describe('PayrollCalculationService - section 10 allowances actually paid', () =
     prisma.holiday.findMany.mockResolvedValue([]);
     prisma.attendanceRecord.findMany.mockResolvedValue(
       Array.from({ length: 22 }, (_, i) => ({
-        status: 'PRESENT', date: new Date(2026, 0, i + 1),
+        status: 'PRESENT', date: new Date(Date.UTC(2026, 0, i + 1, 12)),
         otMinutesApproved: 0, otMinutesCalculated: 0,
       })),
     );
@@ -894,7 +944,7 @@ describe('PayrollCalculationService - section 10 allowances actually paid', () =
     prisma.holiday.findMany.mockResolvedValue([]);
     prisma.attendanceRecord.findMany.mockResolvedValue(
       Array.from({ length: 11 }, (_, i) => ({
-        status: 'PRESENT', date: new Date(2026, 0, i + 1),
+        status: 'PRESENT', date: new Date(Date.UTC(2026, 0, i + 1, 12)),
         otMinutesApproved: 0, otMinutesCalculated: 0,
       })),
     );
@@ -960,7 +1010,7 @@ describe('PayrollCalculationService - loan and salary advance recovery', () => {
     prisma.holiday.findMany.mockResolvedValue([]);
     prisma.attendanceRecord.findMany.mockResolvedValue(
       Array.from({ length: 22 }, (_, i) => ({
-        status: 'PRESENT', date: new Date(2026, 0, i + 1),
+        status: 'PRESENT', date: new Date(Date.UTC(2026, 0, i + 1, 12)),
         otMinutesApproved: 0, otMinutesCalculated: 0,
       })),
     );

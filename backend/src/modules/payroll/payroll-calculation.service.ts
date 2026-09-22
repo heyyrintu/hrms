@@ -87,6 +87,25 @@ function money(value: Decimal): Decimal {
   return value.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
 }
 
+/**
+ * The first and last calendar day of a month, as UTC midnights.
+ *
+ * Every date column these windows filter — `AttendanceRecord.date`,
+ * `Holiday.date`, `LeaveRequest.startDate`/`endDate` — is `@db.Date`, which
+ * Prisma reads back as UTC midnight. Building the window with
+ * `new Date(year, month - 1, 1)` used the server's own zone, so on an IST box
+ * the range ran 28 Feb 18:30Z – 30 Mar 18:30Z and the 31st of the month fell
+ * outside `lte` entirely: its attendance was dropped, its ABSENT row never
+ * charged as LOP, and its date never added to the double-charge guard.
+ */
+function monthWindowUtc(month: number, year: number): { startDate: Date; endDate: Date } {
+  return {
+    startDate: new Date(Date.UTC(year, month - 1, 1)),
+    // Day 0 of the next month is the last day of this one.
+    endDate: new Date(Date.UTC(year, month, 0)),
+  };
+}
+
 @Injectable()
 export class PayrollCalculationService {
   private readonly logger = new Logger(PayrollCalculationService.name);
@@ -428,14 +447,13 @@ export class PayrollCalculationService {
     month: number,
     year: number,
   ): Promise<{ workingDays: number; holidayDates: Set<string> }> {
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0); // Last day of month
-    const totalDaysInMonth = endDate.getDate();
+    const { startDate, endDate } = monthWindowUtc(month, year);
+    const totalDaysInMonth = endDate.getUTCDate();
 
     // Count weekends (Saturday + Sunday)
     let weekendDays = 0;
     for (let d = 1; d <= totalDaysInMonth; d++) {
-      const day = new Date(year, month - 1, d).getDay();
+      const day = new Date(Date.UTC(year, month - 1, d)).getUTCDay();
       if (day === 0 || day === 6) weekendDays++;
     }
 
@@ -451,7 +469,7 @@ export class PayrollCalculationService {
     const holidayDates = new Set<string>();
     for (const h of holidayRecords) {
       const hDate = new Date(h.date);
-      const day = hDate.getDay();
+      const day = hDate.getUTCDay();
       if (day !== 0 && day !== 6) {
         holidayDates.add(hDate.toISOString().split('T')[0]);
       }
@@ -470,8 +488,7 @@ export class PayrollCalculationService {
      * days is the same lost day, not a second one. */
     lopDates: Set<string> = new Set(),
   ): Promise<{ presentDays: number; otMinutes: number; absentLopDays: number }> {
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0);
+    const { startDate, endDate } = monthWindowUtc(month, year);
 
     const records = await this.prisma.attendanceRecord.findMany({
       where: {
@@ -527,8 +544,7 @@ export class PayrollCalculationService {
     year: number,
     holidayDates: Set<string>,
   ): Promise<{ paidLeaveDays: number; lopDays: number; lopDates: Set<string> }> {
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0);
+    const { startDate, endDate } = monthWindowUtc(month, year);
 
     const leaveRequests = await this.prisma.leaveRequest.findMany({
       where: {
@@ -563,13 +579,15 @@ export class PayrollCalculationService {
       let days = 0;
       const current = new Date(overlapStart);
       while (current <= overlapEnd) {
-        const day = current.getDay();
+        // UTC throughout, to match the UTC-midnight window and the
+        // `toISOString()` key the attendance side guards on.
+        const day = current.getUTCDay();
         const dateStr = current.toISOString().split('T')[0];
         if (day !== 0 && day !== 6 && !holidayDates.has(dateStr)) {
           days++;
           if (!isPaid) lopDates.add(dateStr);
         }
-        current.setDate(current.getDate() + 1);
+        current.setUTCDate(current.getUTCDate() + 1);
       }
 
       if (isPaid) {
