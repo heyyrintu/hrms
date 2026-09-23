@@ -188,4 +188,56 @@ describe('EmployeeImportPage', () => {
     selectFile('employeeCode\nE2', 'other.csv');
     expect(screen.queryByTestId('valid-rows')).not.toBeInTheDocument();
   });
+
+  describe('Download template', () => {
+    const template = employeeImportApi.template as jest.Mock;
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    let createObjectURL: jest.Mock;
+    let click: jest.SpyInstance;
+
+    const readBlob = (blob: Blob) =>
+      new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsText(blob);
+      });
+
+    beforeEach(() => {
+      createObjectURL = jest.fn().mockReturnValue('blob:template');
+      URL.createObjectURL = createObjectURL;
+      URL.revokeObjectURL = jest.fn();
+      click = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      URL.createObjectURL = originalCreate;
+      URL.revokeObjectURL = originalRevoke;
+      click.mockRestore();
+    });
+
+    // The server owns the column list; a header baked into the page drifts
+    // the moment the importer learns a new column.
+    it('downloads the header the server serves, not a built-in copy', async () => {
+      template.mockResolvedValue('employeeCode,firstName,serverOnlyColumn\n');
+      render(<EmployeeImportPage />);
+
+      fireEvent.click(screen.getByRole('button', { name: /Download template/i }));
+
+      await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
+      expect(template).toHaveBeenCalledTimes(1);
+      const blob = createObjectURL.mock.calls[0][0] as Blob;
+      expect(await readBlob(blob)).toBe('employeeCode,firstName,serverOnlyColumn\n');
+    });
+
+    it('tells the user when the template cannot be fetched', async () => {
+      template.mockRejectedValue(new Error('network'));
+      render(<EmployeeImportPage />);
+
+      fireEvent.click(screen.getByRole('button', { name: /Download template/i }));
+
+      await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith('Could not download the template'));
+      expect(click).not.toHaveBeenCalled();
+    });
+  });
 });

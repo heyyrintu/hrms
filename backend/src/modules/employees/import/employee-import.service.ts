@@ -3,6 +3,7 @@ import { EmploymentType, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditService } from '../../audit/audit.service';
+import { WebhookDispatcherService } from '../../webhooks/webhook-dispatcher.service';
 import { CsvParseError, isBlankRow, parseCsv } from './csv-parser';
 import {
   IMPORT_COLUMNS,
@@ -24,6 +25,18 @@ const IMPORTABLE_ROLES: UserRole[] = [UserRole.EMPLOYEE, UserRole.MANAGER, UserR
 /** Calendar dates in the CSV are plain YYYY-MM-DD. */
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const EMAIL_PATTERN = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
+
+/** The fields of a freshly created employee that the import hands onwards. */
+interface CreatedEmployee {
+  id: string;
+  employeeCode: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  departmentId: string | null;
+  designationId: string | null;
+  joinDate: Date;
+}
 
 export interface ImportOptions {
   dryRun: boolean;
@@ -74,6 +87,7 @@ export class EmployeeImportService {
   constructor(
     private prisma: PrismaService,
     private audit: AuditService,
+    private webhookDispatcher: WebhookDispatcherService,
   ) {}
 
   /**
@@ -153,19 +167,31 @@ export class EmployeeImportService {
       throw new BadRequestException('CSV file has no data rows');
     }
 
-    result.created = await this.createAll(tenantId, parsed, options.initialPassword);
-
-    await this.audit.log({
+    const createdEmployees = await this.createAll(
       tenantId,
       userId,
-      action: 'CREATE',
-      entityType: 'EmployeeImport',
-      newValues: {
-        totalRows: result.totalRows,
-        created: result.created,
-        employeeCodes: parsed.map((r) => r.employeeCode),
-      },
-    });
+      parsed,
+      options.initialPassword,
+    );
+    result.created = createdEmployees.length;
+
+    // The transaction has committed. One event per employee so a subscriber
+    // sees an import exactly as it would see the same people added by hand.
+    // Not awaited: dispatch never rejects, but it delivers to each endpoint
+    // in turn with retries, and a 2000-row import must not wait on that.
+    for (const employee of createdEmployees) {
+      void this.webhookDispatcher.dispatch(tenantId, 'employee.created', {
+        employeeId: employee.id,
+        employeeCode: employee.employeeCode,
+        firstName: employee.firstName,
+        lastName: employee.lastName,
+        email: employee.email,
+        departmentId: employee.departmentId ?? null,
+        designationId: employee.designationId ?? null,
+        dateOfJoining: employee.joinDate.toISOString().slice(0, 10),
+        source: 'import',
+      });
+    }
 
     return result;
   }
@@ -382,15 +408,18 @@ export class EmployeeImportService {
   }
 
   /**
-   * Creates every employee and its user account in one transaction. Rows are
-   * created in file order so a manager referenced by a later row already has an
-   * id by the time that row is written.
+   * Creates every employee and its user account in one transaction, together
+   * with the audit entry that records the import — so there is never an
+   * import without its audit row, nor an audit row for an import that rolled
+   * back. Rows are created in file order so a manager referenced by a later
+   * row already has an id by the time that row is written.
    */
   private async createAll(
     tenantId: string,
+    userId: string,
     rows: ParsedRow[],
     initialPassword: string,
-  ): Promise<number> {
+  ): Promise<CreatedEmployee[]> {
     const passwordHash = await bcrypt.hash(initialPassword, BCRYPT_ROUNDS);
 
     const employeeCodes = rows.map((r) => r.employeeCode);
@@ -426,7 +455,7 @@ export class EmployeeImportService {
     );
 
     return this.prisma.$transaction(async (tx) => {
-      let created = 0;
+      const created: CreatedEmployee[] = [];
 
       for (const r of rows) {
         const employee = await tx.employee.create({
@@ -469,8 +498,23 @@ export class EmployeeImportService {
           },
         });
 
-        created += 1;
+        created.push(employee);
       }
+
+      await this.audit.log(
+        {
+          tenantId,
+          userId,
+          action: 'CREATE',
+          entityType: 'EmployeeImport',
+          newValues: {
+            totalRows: rows.length,
+            created: created.length,
+            employeeCodes: rows.map((r) => r.employeeCode),
+          },
+        },
+        tx,
+      );
 
       return created;
     });

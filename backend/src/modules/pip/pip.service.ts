@@ -44,9 +44,13 @@ export class PipService {
   // Create
   // ============================================
 
+  /**
+   * @param callerEmployeeId the caller's own employee id; undefined for an
+   *   account with no employee profile (typically an HR or super admin).
+   */
   async create(
     tenantId: string,
-    managerId: string,
+    callerEmployeeId: string | undefined,
     role: UserRole,
     dto: CreateImprovementPlanDto,
   ) {
@@ -66,13 +70,13 @@ export class PipService {
       throw new NotFoundException('Employee not found');
     }
 
-    // A manager may only raise a plan against their own direct report.
-    // HR and super admins cover the whole tenant.
-    if (role === UserRole.MANAGER && employee.managerId !== managerId) {
-      throw new ForbiddenException(
-        'You can only create improvement plans for your direct reports',
-      );
-    }
+    const managerId = await this.resolvePlanOwner(
+      tenantId,
+      callerEmployeeId,
+      role,
+      employee,
+      dto.managerId,
+    );
 
     const status = dto.status ?? PIPStatus.DRAFT;
 
@@ -118,6 +122,69 @@ export class PipService {
     }
 
     return plan;
+  }
+
+  /**
+   * Decides who owns a new plan (`ImprovementPlan.managerId`, a required
+   * Employee FK). The owner is never the employee the plan is about.
+   *
+   * - MANAGER: always themselves, and only for a direct report. They must
+   *   have an employee profile, and may not name anyone else.
+   * - HR_ADMIN / SUPER_ADMIN: the owner named in the body (an employee of
+   *   this tenant); else their own profile; else the subject's reporting
+   *   manager; else there is nobody to own it and they must pick someone.
+   */
+  private async resolvePlanOwner(
+    tenantId: string,
+    callerEmployeeId: string | undefined,
+    role: UserRole,
+    subject: { id: string; managerId: string | null },
+    requestedOwnerId: string | undefined,
+  ): Promise<string> {
+    if (role === UserRole.MANAGER) {
+      // Guarded explicitly: an undefined id would compare equal to a subject
+      // whose managerId is also unset.
+      if (!callerEmployeeId) {
+        throw new BadRequestException('No employee profile linked to your account');
+      }
+      if (requestedOwnerId && requestedOwnerId !== callerEmployeeId) {
+        throw new ForbiddenException('Managers can only own the plans they raise');
+      }
+      if (subject.managerId !== callerEmployeeId) {
+        throw new ForbiddenException(
+          'You can only create improvement plans for your direct reports',
+        );
+      }
+      return callerEmployeeId;
+    }
+
+    if (requestedOwnerId) {
+      if (requestedOwnerId === subject.id) {
+        throw new BadRequestException(
+          'The plan owner cannot be the employee the plan is about',
+        );
+      }
+      const owner = await this.prisma.employee.findFirst({
+        where: { id: requestedOwnerId, tenantId },
+        select: { id: true },
+      });
+      if (!owner) {
+        throw new BadRequestException('Plan owner must be an employee in your organisation');
+      }
+      return owner.id;
+    }
+
+    if (callerEmployeeId && callerEmployeeId !== subject.id) {
+      return callerEmployeeId;
+    }
+
+    if (subject.managerId && subject.managerId !== subject.id) {
+      return subject.managerId;
+    }
+
+    throw new BadRequestException(
+      'Pick a plan owner: this employee has no reporting manager and your account has no employee profile',
+    );
   }
 
   // ============================================

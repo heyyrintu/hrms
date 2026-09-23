@@ -5,12 +5,14 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../../common/email/email.service';
 import { createMockPrismaService, createMockEmailService } from '../../test/helpers';
 import { FieldEncryptionService } from '../../common/crypto/field-encryption.service';
+import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 
 const TEST_ENCRYPTION_KEY = 'b'.repeat(64);
 
 describe('EmployeesService', () => {
   let service: EmployeesService;
   let prisma: any;
+  let webhooks: { dispatch: jest.Mock };
 
   const tenantId = 'test-tenant';
 
@@ -24,11 +26,16 @@ describe('EmployeesService', () => {
           provide: FieldEncryptionService,
           useValue: new FieldEncryptionService({ get: () => TEST_ENCRYPTION_KEY } as any),
         },
+        {
+          provide: WebhookDispatcherService,
+          useValue: { dispatch: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
 
     service = module.get<EmployeesService>(EmployeesService);
     prisma = module.get(PrismaService);
+    webhooks = module.get(WebhookDispatcherService);
 
     // The shared mock helper lists "attendance" but the Prisma schema model is
     // "AttendanceRecord" (accessed as prisma.attendanceRecord). Add it manually
@@ -104,6 +111,69 @@ describe('EmployeesService', () => {
             { email: 'john@test.com' },
           ],
         },
+      });
+    });
+
+    describe('employee.created webhook', () => {
+      const created = {
+        ...mockEmployee,
+        departmentId: 'dept-1',
+        designationId: 'desig-1',
+        joinDate: new Date('2024-01-15T12:00:00Z'),
+        monthlySalary: 50000,
+        aadhaarNumber: 'enc:v1:secret',
+        phone: '+91 99999 00000',
+      };
+
+      it('fires employee.created with a minimal payload after the transaction commits', async () => {
+        prisma.employee.findFirst.mockResolvedValue(null);
+        prisma.employee.create.mockResolvedValue(created);
+        let committed = false;
+        prisma.$transaction.mockImplementationOnce(async (fn: any) => {
+          const out = await fn(prisma);
+          committed = true;
+          return out;
+        });
+        webhooks.dispatch.mockImplementation(async () => {
+          expect(committed).toBe(true);
+        });
+
+        await service.create(tenantId, createDto);
+
+        expect(webhooks.dispatch).toHaveBeenCalledTimes(1);
+        expect(webhooks.dispatch).toHaveBeenCalledWith(tenantId, 'employee.created', {
+          employeeId: 'emp-1',
+          employeeCode: 'EMP001',
+          firstName: 'John',
+          lastName: 'Doe',
+          email: 'john@test.com',
+          departmentId: 'dept-1',
+          designationId: 'desig-1',
+          dateOfJoining: '2024-01-15',
+          source: 'manual',
+        });
+        const payload = webhooks.dispatch.mock.calls[0][2];
+        for (const key of ['monthlySalary', 'aadhaarNumber', 'phone', 'panNumber', 'bankAccountNumber']) {
+          expect(payload).not.toHaveProperty(key);
+        }
+      });
+
+      it('does not wait for webhook delivery before returning', async () => {
+        prisma.employee.findFirst.mockResolvedValue(null);
+        prisma.employee.create.mockResolvedValue(created);
+        webhooks.dispatch.mockReturnValue(new Promise(() => {}));
+
+        const result = await service.create(tenantId, createDto);
+
+        expect(result.id).toBe('emp-1');
+        expect(webhooks.dispatch).toHaveBeenCalled();
+      });
+
+      it('does not fire when the employee already exists', async () => {
+        prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+
+        await expect(service.create(tenantId, createDto)).rejects.toThrow(ConflictException);
+        expect(webhooks.dispatch).not.toHaveBeenCalled();
       });
     });
 

@@ -14,6 +14,10 @@ import {
   type ImportRowError,
 } from '@/lib/api-employee-import';
 
+/**
+ * Columns named in the on-page help text only. The downloadable template is
+ * fetched from the server, which owns the real column list.
+ */
 const TEMPLATE_COLUMNS = [
   'employeeCode',
   'firstName',
@@ -133,8 +137,15 @@ export default function EmployeeImportPage() {
     }
   };
 
-  const handleDownloadTemplate = () => {
-    const blob = new Blob([`${TEMPLATE_COLUMNS.join(',')}\n`], { type: 'text/csv' });
+  const handleDownloadTemplate = async () => {
+    let header: string;
+    try {
+      header = await employeeImportApi.template();
+    } catch {
+      toast.error('Could not download the template');
+      return;
+    }
+    const blob = new Blob([header], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;

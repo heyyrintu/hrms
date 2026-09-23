@@ -11,6 +11,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../../common/email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { HolidaysService } from '../holidays/holidays.service';
+import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import {
   createMockPrismaService,
   createMockNotificationsService,
@@ -22,6 +23,7 @@ describe('LeaveService', () => {
   let prisma: any;
   let notifications: any;
   let holidays: { getHolidaysBetween: jest.Mock };
+  let webhooks: { dispatch: jest.Mock };
 
   const tenantId = 'test-tenant';
   const employeeId = 'emp-1';
@@ -81,6 +83,10 @@ describe('LeaveService', () => {
           provide: HolidaysService,
           useValue: { getHolidaysBetween: jest.fn().mockResolvedValue([]) },
         },
+        {
+          provide: WebhookDispatcherService,
+          useValue: { dispatch: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
 
@@ -88,6 +94,7 @@ describe('LeaveService', () => {
     prisma = module.get(PrismaService);
     notifications = module.get(NotificationsService);
     holidays = module.get(HolidaysService);
+    webhooks = module.get(WebhookDispatcherService);
   });
 
   it('should be defined', () => {
@@ -534,6 +541,79 @@ describe('LeaveService', () => {
 
       expect(prisma.leaveBalance.update).not.toHaveBeenCalled();
       expect(prisma.attendanceRecord.upsert).not.toHaveBeenCalled();
+    });
+
+    describe('leave.approved webhook', () => {
+      const approvedRow = {
+        ...mockLeaveRequest,
+        status: 'APPROVED',
+        approverId,
+        approvedAt: new Date('2025-03-01T12:00:00Z'),
+        leaveType: mockLeaveType,
+        employee: { ...mockLeaveRequest.employee, email: 'john@test.com' },
+      };
+
+      beforeEach(() => {
+        prisma.leaveRequest.findFirst.mockResolvedValue(mockLeaveRequest);
+        prisma.leaveRequest.update.mockResolvedValue(approvedRow);
+        prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
+        prisma.leaveBalance.update.mockResolvedValue({});
+        prisma.attendanceRecord.upsert.mockResolvedValue({});
+      });
+
+      it('fires leave.approved with a minimal payload after the transaction commits', async () => {
+        let committed = false;
+        prisma.$transaction.mockImplementationOnce(async (fn: any) => {
+          const result = await fn(prisma);
+          committed = true;
+          return result;
+        });
+        webhooks.dispatch.mockImplementation(async () => {
+          expect(committed).toBe(true);
+        });
+
+        await service.approveRequest(tenantId, 'req-1', approverId, 'MANAGER', {});
+
+        expect(webhooks.dispatch).toHaveBeenCalledTimes(1);
+        expect(webhooks.dispatch).toHaveBeenCalledWith(tenantId, 'leave.approved', {
+          leaveRequestId: 'req-1',
+          employeeId,
+          leaveTypeId: 'lt-1',
+          leaveTypeCode: 'CL',
+          startDate: mockLeaveRequest.startDate.toISOString(),
+          endDate: mockLeaveRequest.endDate.toISOString(),
+          totalDays: 3,
+          status: 'APPROVED',
+          approverId,
+          approvedAt: '2025-03-01T12:00:00.000Z',
+        });
+        const payload = webhooks.dispatch.mock.calls[0][2];
+        expect(payload).not.toHaveProperty('reason');
+        expect(payload).not.toHaveProperty('email');
+      });
+
+      it('does not wait for webhook delivery before returning', async () => {
+        webhooks.dispatch.mockReturnValue(new Promise(() => {}));
+
+        const result = await service.approveRequest(tenantId, 'req-1', approverId, 'MANAGER', {});
+
+        expect(result.status).toBe('APPROVED');
+        expect(webhooks.dispatch).toHaveBeenCalled();
+      });
+
+      it('does not fire when the approval loses the race', async () => {
+        prisma.leaveRequest.update.mockRejectedValue(
+          new Prisma.PrismaClientKnownRequestError('Record to update not found.', {
+            code: 'P2025',
+            clientVersion: 'test',
+          }),
+        );
+
+        await expect(
+          service.approveRequest(tenantId, 'req-1', approverId, 'MANAGER', {}),
+        ).rejects.toThrow(ConflictException);
+        expect(webhooks.dispatch).not.toHaveBeenCalled();
+      });
     });
 
     it('should update leave balance on approval', async () => {

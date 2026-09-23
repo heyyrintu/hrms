@@ -4,6 +4,7 @@ import { EmailService } from '../../common/email/email.service';
 import { CreateEmployeeDto, UpdateEmployeeDto, EmployeeQueryDto } from './dto/employee.dto';
 import { FieldEncryptionService } from '../../common/crypto/field-encryption.service';
 import { assertValidAadhaar } from '../../common/validation/aadhaar';
+import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import * as bcrypt from 'bcrypt';
 
 export interface OrgNode {
@@ -24,6 +25,7 @@ export class EmployeesService {
     private prisma: PrismaService,
     private emailService: EmailService,
     private crypto: FieldEncryptionService,
+    private webhookDispatcher: WebhookDispatcherService,
   ) {}
 
   /**
@@ -160,6 +162,21 @@ export class EmployeesService {
       }
 
       return emp;
+    });
+
+    // The employee has committed. Not awaited: dispatch never rejects, but it
+    // retries a failing endpoint with backoff, and HR must not wait on that.
+    // Identity and placement only — no salary, bank, PAN or Aadhaar.
+    void this.webhookDispatcher.dispatch(tenantId, 'employee.created', {
+      employeeId: employee.id,
+      employeeCode: employee.employeeCode,
+      firstName: employee.firstName,
+      lastName: employee.lastName,
+      email: employee.email,
+      departmentId: employee.departmentId ?? null,
+      designationId: employee.designationId ?? null,
+      dateOfJoining: employee.joinDate.toISOString().slice(0, 10),
+      source: 'manual',
     });
 
     // Send welcome email (fire and forget)

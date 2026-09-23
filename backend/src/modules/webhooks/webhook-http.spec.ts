@@ -166,8 +166,37 @@ describe('webhook-http', () => {
       const text = await response.text();
 
       expect(response.status).toBe(200);
-      expect(text.length).toBeGreaterThanOrEqual(64 * 1024);
-      expect(text.length).toBeLessThan(1024 * 1024);
+      expect(Buffer.byteLength(text)).toBe(64 * 1024);
+    });
+
+    it('never buffers past the cap when a chunk straddles it', async () => {
+      // Two 40 KB writes, flushed separately, arrive as two chunks: the second
+      // crosses the 64 KB line. Only the part up to the line may be kept.
+      handler = (_req, res) => {
+        res.writeHead(200);
+        res.write('a'.repeat(40 * 1024), () => {
+          setTimeout(() => res.end('b'.repeat(40 * 1024)), 20);
+        });
+      };
+
+      const response = await post(`http://127.0.0.1:${port}/hook`);
+      const text = await response.text();
+
+      expect(Buffer.byteLength(text)).toBe(64 * 1024);
+      expect(text.startsWith('a'.repeat(40 * 1024))).toBe(true);
+      expect(text.endsWith('b'.repeat(24 * 1024))).toBe(true);
+    });
+
+    it('returns a body just under the cap in full', async () => {
+      const body = 'z'.repeat(64 * 1024 - 1);
+      handler = (_req, res) => {
+        res.writeHead(200);
+        res.end(body);
+      };
+
+      const response = await post(`http://127.0.0.1:${port}/hook`);
+
+      expect(await response.text()).toBe(body);
     });
 
     it('gives up when the endpoint does not answer in time', async () => {

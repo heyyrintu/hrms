@@ -67,11 +67,19 @@ describe('PipController', () => {
       expect(result).toEqual({ id: 'pip-1' });
     });
 
-    it('rejects a caller with no employee profile', async () => {
-      await expect(controller.create(managerNoEmployee, dto)).rejects.toThrow(
-        BadRequestException,
+    // Whether a caller without a profile may create a plan depends on their
+    // role and on who else could own it, so the service decides.
+    it('passes a caller with no employee profile through for the service to resolve', async () => {
+      mockService.create.mockResolvedValue({ id: 'pip-1' });
+
+      await controller.create(managerNoEmployee, { ...dto, managerId: 'emp-owner' });
+
+      expect(service.create).toHaveBeenCalledWith(
+        managerNoEmployee.tenantId,
+        undefined,
+        UserRole.MANAGER,
+        { ...dto, managerId: 'emp-owner' },
       );
-      expect(service.create).not.toHaveBeenCalled();
     });
   });
 

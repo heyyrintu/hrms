@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../../common/email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { HolidaysService } from '../holidays/holidays.service';
+import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import { NotificationType } from '@prisma/client';
 import {
   CreateLeaveRequestDto,
@@ -37,6 +38,7 @@ export class LeaveService {
     private emailService: EmailService,
     private notificationsService: NotificationsService,
     private holidaysService: HolidaysService,
+    private webhookDispatcher: WebhookDispatcherService,
   ) {}
 
   /**
@@ -401,6 +403,22 @@ export class LeaveService {
 
     // Mark attendance as LEAVE for the leave dates
     await this.markAttendanceAsLeave(tenantId, request.employeeId, request.startDate, request.endDate);
+
+    // The approval has committed, so tell subscribed webhooks. Not awaited on
+    // purpose: dispatch never rejects, but it retries a failing endpoint with
+    // backoff (up to ~35s), and the approver must not wait on a customer URL.
+    void this.webhookDispatcher.dispatch(tenantId, 'leave.approved', {
+      leaveRequestId: updated.id,
+      employeeId: updated.employeeId,
+      leaveTypeId: updated.leaveTypeId,
+      leaveTypeCode: updated.leaveType.code,
+      startDate: updated.startDate.toISOString(),
+      endDate: updated.endDate.toISOString(),
+      totalDays: Number(updated.totalDays),
+      status: updated.status,
+      approverId: updated.approverId ?? null,
+      approvedAt: updated.approvedAt ? updated.approvedAt.toISOString() : null,
+    });
 
     // Notify the employee (in-app + email)
     this.notificationsService.notifyEmployee(
