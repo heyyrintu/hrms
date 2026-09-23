@@ -16,10 +16,11 @@ import { ProofsService } from './proofs/proofs.service';
 import { SlabsController } from './slabs/slabs.controller';
 import { SlabsService } from './slabs/slabs.service';
 import { LoansModule } from '../loans/loans.module';
+import { WebhooksModule } from '../webhooks/webhooks.module';
 
 @Module({
   // Payroll recovers loan and salary-advance instalments through LoansService.
-  imports: [LoansModule],
+  imports: [LoansModule, WebhooksModule],
   controllers: [PayrollController, StatutoryController, ReturnsController, Form16Controller, ProofsController, SlabsController],
   providers: [PayrollService, SalaryService, PayrollCalculationService,
     StatutoryService, PayrollPdfService, ReturnsService, Form16Service, Form16PdfService, ProofsService, SlabsService],

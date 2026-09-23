@@ -801,6 +801,8 @@ model Shift {
   breakMinutes        Int      @default(60)
   standardWorkMinutes Int      @default(480)
   graceMinutes        Int      @default(15)
+  // True when endTime is on the day after startTime (e.g. 22:00-06:00).
+  isOvernight         Boolean  @default(false)
   isActive            Boolean  @default(true)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt

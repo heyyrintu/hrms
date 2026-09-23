@@ -18,6 +18,8 @@ export const WEBHOOK_EVENTS = [
   'leave.approved',
   'leave.rejected',
   'leave.cancelled',
+  'loan.approved',
+  'ticket.created',
   'attendance.clocked_in',
   'attendance.clocked_out',
   'attendance.regularized',
@@ -25,6 +27,7 @@ export const WEBHOOK_EVENTS = [
   'expense.approved',
   'expense.rejected',
   'payroll.run_completed',
+  'payroll.approved',
   'payroll.payslip_published',
 ] as const;
 

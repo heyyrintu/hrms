@@ -13,9 +13,10 @@ import { LeaveCarryForwardCronService } from './leave-carry-forward-cron.service
 import { NotificationsModule } from '../notifications/notifications.module';
 import { AuditModule } from '../audit/audit.module';
 import { HolidaysModule } from '../holidays/holidays.module';
+import { WebhooksModule } from '../webhooks/webhooks.module';
 
 @Module({
-  imports: [ScheduleModule.forRoot(), NotificationsModule, AuditModule, HolidaysModule],
+  imports: [ScheduleModule.forRoot(), NotificationsModule, AuditModule, HolidaysModule, WebhooksModule],
   controllers: [
     LeaveController,
     LeaveAccrualController,
