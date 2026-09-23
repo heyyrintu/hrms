@@ -1,6 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { PayrollRunStatus } from '@prisma/client';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
+import { PayrollRunStatus, Prisma } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { PayrollService } from './payroll.service';
 import { PayrollCalculationService } from './payroll-calculation.service';
@@ -151,6 +155,38 @@ describe('PayrollService.approveRun side effects', () => {
     expect(prisma.payrollRun.update).not.toHaveBeenCalled();
     expect(payslipEmail.notifyRunApproved).not.toHaveBeenCalled();
     expect(webhooks.dispatch).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing from the losing side of two concurrent approvals', async () => {
+    // Both callers read COMPUTED; the conditional update lets only one move
+    // it. The loser must not email payslips or fire the webhook a second time.
+    prisma.payrollRun.findFirst.mockResolvedValue(computedRun);
+    prisma.payrollRun.update
+      .mockResolvedValueOnce(approvedRun)
+      .mockRejectedValueOnce(
+        new Prisma.PrismaClientKnownRequestError('Record to update not found.', {
+          code: 'P2025',
+          clientVersion: 'test',
+        }),
+      );
+
+    const [first, second] = await Promise.allSettled([
+      service.approveRun(tenantId, 'run-1'),
+      service.approveRun(tenantId, 'run-1'),
+    ]);
+
+    expect(first.status).toBe('fulfilled');
+    expect(second.status).toBe('rejected');
+    expect((second as PromiseRejectedResult).reason).toBeInstanceOf(
+      ConflictException,
+    );
+    expect(prisma.payrollRun.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'run-1', tenantId, status: PayrollRunStatus.COMPUTED },
+      }),
+    );
+    expect(payslipEmail.notifyRunApproved).toHaveBeenCalledTimes(1);
+    expect(webhooks.dispatch).toHaveBeenCalledTimes(1);
   });
 
   it('sends nothing when the status update fails', async () => {

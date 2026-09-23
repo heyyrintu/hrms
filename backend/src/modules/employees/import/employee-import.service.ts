@@ -177,23 +177,50 @@ export class EmployeeImportService {
 
     // The transaction has committed. One event per employee so a subscriber
     // sees an import exactly as it would see the same people added by hand.
-    // Not awaited: dispatch never rejects, but it delivers to each endpoint
-    // in turn with retries, and a 2000-row import must not wait on that.
-    for (const employee of createdEmployees) {
-      void this.webhookDispatcher.dispatch(tenantId, 'employee.created', {
-        employeeId: employee.id,
-        employeeCode: employee.employeeCode,
-        firstName: employee.firstName,
-        lastName: employee.lastName,
-        email: employee.email,
-        departmentId: employee.departmentId ?? null,
-        designationId: employee.designationId ?? null,
-        dateOfJoining: employee.joinDate.toISOString().slice(0, 10),
-        source: 'import',
-      });
-    }
+    // Not awaited — a 2,000-row import must not wait on delivery — and sent
+    // one after another rather than all at once (see announceCreated).
+    void this.announceCreated(tenantId, createdEmployees);
 
     return result;
+  }
+
+  /**
+   * Fire `employee.created` for each imported employee, strictly one at a
+   * time, in the background.
+   *
+   * Each dispatch looks up the tenant's subscriptions, POSTs to every
+   * endpoint with retries, writes delivery logs and may notify admins.
+   * Starting them all at once would put up to 2,000 of those in flight
+   * against the database and the customer's endpoint. One loop, awaiting
+   * each in turn, keeps that to one. A failure on one employee is logged and
+   * the loop carries on; nothing here ever rejects, so the caller can `void`
+   * it.
+   */
+  private async announceCreated(
+    tenantId: string,
+    employees: CreatedEmployee[],
+  ): Promise<void> {
+    for (const employee of employees) {
+      try {
+        await this.webhookDispatcher.dispatch(tenantId, 'employee.created', {
+          employeeId: employee.id,
+          employeeCode: employee.employeeCode,
+          firstName: employee.firstName,
+          lastName: employee.lastName,
+          email: employee.email,
+          departmentId: employee.departmentId ?? null,
+          designationId: employee.designationId ?? null,
+          dateOfJoining: employee.joinDate.toISOString().slice(0, 10),
+          source: 'import',
+        });
+      } catch (error) {
+        this.logger.error(
+          `employee.created webhook for imported employee ${employee.id} failed: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
+      }
+    }
   }
 
   /**

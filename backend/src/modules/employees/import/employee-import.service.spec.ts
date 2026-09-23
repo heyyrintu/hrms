@@ -45,6 +45,9 @@ describe('parseCsv', () => {
   });
 });
 
+/** Let fire-and-forget work queued by the service run to its next await. */
+const flushBackground = () => new Promise((resolve) => setImmediate(resolve));
+
 describe('EmployeeImportService', () => {
   let service: EmployeeImportService;
   let prisma: ReturnType<typeof createMockPrismaService>;
@@ -514,6 +517,8 @@ describe('EmployeeImportService', () => {
           'E1,Asha,Rao,a@x.com,2026-03-15,,,,M1,,+91,1990-05-02,F',
         ),
       );
+      // Delivered one after another in the background: let the loop drain.
+      await flushBackground();
 
       expect(webhooks.dispatch).toHaveBeenCalledTimes(2);
       expect(webhooks.dispatch).toHaveBeenNthCalledWith(1, TENANT, 'employee.created', {
@@ -542,6 +547,77 @@ describe('EmployeeImportService', () => {
 
       expect(result.created).toBe(1);
       expect(webhooks.dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    it('dispatches one employee at a time, never the whole file at once', async () => {
+      // A 2,000-row import used to start 2,000 concurrent dispatches, each
+      // with its own lookups, POSTs, retries and log writes.
+      const releases: Array<() => void> = [];
+      let inFlight = 0;
+      let maxInFlight = 0;
+      webhooks.dispatch.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            inFlight++;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            releases.push(() => {
+              inFlight--;
+              resolve();
+            });
+          }),
+      );
+
+      const result = await realRun(
+        csv(
+          'E1,Asha,Rao,a@x.com,2026-03-15',
+          'E2,Bina,Sen,b@x.com,2026-03-15',
+          'E3,Chitra,Iyer,c@x.com,2026-03-15',
+        ),
+      );
+      expect(result.created).toBe(3);
+
+      // The request returned while the first delivery is still in flight.
+      await flushBackground();
+      expect(webhooks.dispatch).toHaveBeenCalledTimes(1);
+
+      releases[0]();
+      await flushBackground();
+      expect(webhooks.dispatch).toHaveBeenCalledTimes(2);
+
+      releases[1]();
+      await flushBackground();
+      releases[2]();
+      await flushBackground();
+
+      expect(webhooks.dispatch).toHaveBeenCalledTimes(3);
+      expect(maxInFlight).toBe(1);
+      expect(webhooks.dispatch.mock.calls.map((c) => c[2].employeeCode)).toEqual([
+        'E1',
+        'E2',
+        'E3',
+      ]);
+    });
+
+    it('keeps delivering the rest when one dispatch rejects or throws', async () => {
+      webhooks.dispatch
+        .mockRejectedValueOnce(new Error('endpoint down'))
+        .mockImplementationOnce(() => {
+          throw new Error('boom');
+        })
+        .mockResolvedValue(undefined);
+
+      const result = await realRun(
+        csv(
+          'E1,Asha,Rao,a@x.com,2026-03-15',
+          'E2,Bina,Sen,b@x.com,2026-03-15',
+          'E3,Chitra,Iyer,c@x.com,2026-03-15',
+        ),
+      );
+      await flushBackground();
+
+      expect(result.created).toBe(3);
+      expect(webhooks.dispatch).toHaveBeenCalledTimes(3);
+      expect(webhooks.dispatch.mock.calls[2][2]).toMatchObject({ employeeCode: 'E3' });
     });
 
     it('fires no webhooks when the file is rejected', async () => {

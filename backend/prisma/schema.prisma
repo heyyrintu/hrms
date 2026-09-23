@@ -415,6 +415,10 @@ model AttendanceRecord {
   isLate              Boolean          @default(false)
   lateByMinutes       Int?
   autoMarked          Boolean          @default(false)
+  // The status the worked-hours rule replaced at a clock-out (PRESENT, or WFH
+  // on a work-from-home day). Set only when that rule changed the status; the
+  // next clock-in of the day restores it and clears this. Null otherwise.
+  preClassificationStatus AttendanceStatus?
   clockInLatitude     Float?
   clockInLongitude    Float?
   clockOutLatitude    Float?

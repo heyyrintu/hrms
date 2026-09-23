@@ -54,11 +54,22 @@ export function isOvernightShift(
 }
 
 /**
+ * How early someone may arrive for a 24-hour shift and still be starting
+ * today's shift rather than finishing yesterday's. Such a shift has no
+ * off-duty gap to split, so the window is a fixed allowance instead.
+ */
+export const ZERO_GAP_EARLY_ARRIVAL_MINUTES = 120;
+
+/**
  * Minutes since local midnight before which a punch belongs to the overnight
  * shift that started the previous evening. It is the midpoint of the off-duty
  * gap (off 06:00 -> 22:00 gives 14:00), so an early arrival for tonight and a
  * late departure from last night both land on the right shift. Null for a
  * same-day shift, where no punch ever belongs to yesterday.
+ *
+ * A 24-hour shift (start == end) has no gap: its cutoff sits
+ * `ZERO_GAP_EARLY_ARRIVAL_MINUTES` before the start, never before midnight,
+ * so arriving a little early is scored against today's start.
  */
 export function overnightDayCutoffMinutes(
   startTime: string | null | undefined,
@@ -67,6 +78,7 @@ export function overnightDayCutoffMinutes(
   const start = parseHhMm(startTime);
   const end = parseHhMm(endTime);
   if (start === null || end === null || end > start) return null;
+  if (end === start) return Math.max(0, start - ZERO_GAP_EARLY_ARRIVAL_MINUTES);
   return end + Math.floor((start - end) / 2);
 }
 

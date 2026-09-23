@@ -128,6 +128,13 @@ class EnvironmentVariables {
   @IsOptional()
   SWAGGER_ENABLED?: string;
 
+  // Attach the payslip PDF to the "payslip published" email sent when a run
+  // is approved. On unless set to 'false'; switch off where unencrypted salary
+  // PDFs by email are not acceptable and the email then links to the app.
+  @IsString()
+  @IsOptional()
+  PAYSLIP_EMAIL_ATTACH_PDF?: string;
+
   // Redis - optional, falls back to in-memory if not set
   @IsString()
   @IsOptional()

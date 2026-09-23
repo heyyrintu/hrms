@@ -22,6 +22,7 @@ const mockAttendanceService = {
 
 const mockAutoAbsentService = {
   markAbsentForDate: jest.fn(),
+  markAbsentOnDemand: jest.fn(),
 };
 
 const mockPrismaService = {
@@ -446,15 +447,15 @@ describe('AttendanceController', () => {
   // markAbsent
   // ==========================================
   describe('markAbsent', () => {
-    it('sweeps the caller tenant for the given day', async () => {
-      mockAutoAbsentService.markAbsentForDate.mockResolvedValue({
+    it('sweeps the caller tenant for the given day, scoped like the cron', async () => {
+      mockAutoAbsentService.markAbsentOnDemand.mockResolvedValue({
         marked: 3,
         skipped: 1,
       });
 
       const result = await controller.markAbsent(adminUser, { date: '2026-03-16' });
 
-      expect(mockAutoAbsentService.markAbsentForDate).toHaveBeenCalledWith(
+      expect(mockAutoAbsentService.markAbsentOnDemand).toHaveBeenCalledWith(
         'tenant-1',
         new Date('2026-03-16'),
       );
@@ -462,12 +463,12 @@ describe('AttendanceController', () => {
     });
 
     it('rejects a date it cannot parse', async () => {
-      mockAutoAbsentService.markAbsentForDate.mockClear();
+      mockAutoAbsentService.markAbsentOnDemand.mockClear();
 
       await expect(
         controller.markAbsent(adminUser, { date: 'not-a-date' }),
       ).rejects.toThrow(BadRequestException);
-      expect(mockAutoAbsentService.markAbsentForDate).not.toHaveBeenCalled();
+      expect(mockAutoAbsentService.markAbsentOnDemand).not.toHaveBeenCalled();
     });
   });
 });

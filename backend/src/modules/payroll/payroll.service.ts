@@ -513,6 +513,11 @@ export class PayrollService {
    * transaction so it acts as a lock. That means a hard crash (pod restart, OOM)
    * between the claim and the commit leaves the run PROCESSING forever, with no
    * payslips, and every retry refused. This is the manual way out.
+   *
+   * Like deleteRun and recomputeRun, it is refused (409, from
+   * `clearPayrollRepayments`) when a loan this month's payroll repaid has
+   * since been recovered by a final settlement: reversing the instalment
+   * would reopen a leaver's loan with a balance nothing collects.
    */
   async resetRun(tenantId: string, id: string) {
     const run = await this.prisma.payrollRun.findFirst({
@@ -560,11 +565,20 @@ export class PayrollService {
    * rows it has just written. Employees whose payslip took no instalment are
    * not passed to the loans service at all.
    *
-   * There is no retry on a 409 (a loan's balance moving under the write, e.g.
-   * a manual repayment landing mid-run). Retrying inside the transaction
-   * would re-read a loan whose repayment row this attempt had already written
-   * and skip its decrement; instead the whole run rolls back — reversal,
-   * payslips and repayments together — and the caller runs it again.
+   * The loans service is strict inside this transaction: every line a
+   * payslip deducts must be credited in full. The calculation ran outside
+   * the transaction, so a loan can change under it — a settlement that
+   * closed it, a manual repayment that left less owing than the EMI
+   * computed, or a balance moving between the read and the guarded write.
+   * Each is a 409 rather than a skipped or trimmed line, since either would
+   * leave a payslip deducting money the loan is never credited with.
+   *
+   * There is no retry on that 409. Retrying inside the transaction would
+   * re-read a loan whose repayment row this attempt had already written and
+   * skip its decrement, and the payslips were calculated against the old
+   * balance anyway; instead the whole run rolls back — reversal, payslips and
+   * repayments together — the run returns to its previous status, and the
+   * caller runs it again to recalculate against the current balances.
    *
    * Returns the loans that reached zero, for telling after the commit.
    */
@@ -620,17 +634,30 @@ export class PayrollService {
       );
     }
 
-    const approved = await this.prisma.payrollRun.update({
-      where: { id },
-      data: {
-        status: PayrollRunStatus.APPROVED,
-        approvedAt: new Date(),
-      },
-    });
+    // Conditional on the status just checked: two concurrent approvals both
+    // pass the check above, but only one can move COMPUTED -> APPROVED. The
+    // other matches no row (P2025) and gets a 409 — and, crucially, never
+    // reaches the side effects below, so payslips are emailed and the
+    // webhook fires once.
+    let approved;
+    try {
+      approved = await this.prisma.payrollRun.update({
+        where: { id, tenantId, status: PayrollRunStatus.COMPUTED },
+        data: {
+          status: PayrollRunStatus.APPROVED,
+          approvedAt: new Date(),
+        },
+      });
+    } catch (err) {
+      if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
+        throw new ConflictException('Payroll run is already being approved');
+      }
+      throw err;
+    }
 
-    // The approval has committed. Everything below is best-effort and not
-    // awaited: a mail server or customer webhook must neither fail nor slow
-    // the approval.
+    // This call won the approval and it has committed. Everything below is
+    // best-effort and not awaited: a mail server or customer webhook must
+    // neither fail nor slow the approval.
     this.afterApproval(tenantId, approved);
 
     return approved;

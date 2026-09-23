@@ -150,3 +150,17 @@ describe('zonedDateOnlyUtc', () => {
     );
   });
 });
+
+describe('computeLateMark on a 24-hour shift', () => {
+  it('scores an early arrival as on time, not a day late', () => {
+    // 07:50 IST, ten minutes before an 08:00-08:00 shift.
+    const result = computeLateMark(
+      new Date('2026-03-17T02:20:00Z'),
+      '08:00',
+      0,
+      'Asia/Kolkata',
+      '08:00',
+    );
+    expect(result).toEqual({ isLate: false, lateByMinutes: 0 });
+  });
+});

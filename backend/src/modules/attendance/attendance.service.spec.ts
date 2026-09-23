@@ -1386,16 +1386,22 @@ describe('AttendanceService', () => {
         inTime: new Date('2026-03-16T16:30:00Z'),
         outTime: null,
       };
-      prisma.attendanceRecord.findUnique.mockResolvedValue({
-        id: 'att-1',
-        date: new Date('2026-03-16T00:00:00Z'),
-        standardWorkMinutes: 480,
-        breakMinutes: 0,
-        remarks: null,
-        status: 'PRESENT',
-        isLate: false,
-        sessions: [openSession],
-      });
+      // Only the 16th has a row; the 17th has nothing yet.
+      prisma.attendanceRecord.findUnique.mockImplementation(
+        async ({ where }: { where: { tenantId_employeeId_date: { date: Date } } }) =>
+          where.tenantId_employeeId_date.date.toISOString() === '2026-03-16T00:00:00.000Z'
+            ? {
+                id: 'att-1',
+                date: new Date('2026-03-16T00:00:00Z'),
+                standardWorkMinutes: 480,
+                breakMinutes: 0,
+                remarks: null,
+                status: 'PRESENT',
+                isLate: false,
+                sessions: [openSession],
+              }
+            : null,
+      );
       prisma.attendanceSession.update.mockResolvedValue({});
       prisma.employee.findUnique.mockResolvedValue(mockEmployee);
       prisma.attendanceSession.findMany.mockResolvedValue([
@@ -1430,11 +1436,19 @@ describe('AttendanceService', () => {
       // 02:00 IST on the 17th.
       jest.useFakeTimers().setSystemTime(new Date('2026-03-16T20:30:00Z'));
       prisma.shiftAssignment.findFirst.mockResolvedValue({ id: 'sa-1', shift: nightShift });
-      prisma.attendanceRecord.findUnique.mockResolvedValue({
-        id: 'att-1',
-        status: 'PRESENT',
-        sessions: [{ id: 'sess-1', inTime: new Date('2026-03-16T16:30:00Z'), outTime: null }],
-      });
+      // Only the 16th, the day the shift started, has a row.
+      prisma.attendanceRecord.findUnique.mockImplementation(
+        async ({ where }: { where: { tenantId_employeeId_date: { date: Date } } }) =>
+          where.tenantId_employeeId_date.date.toISOString() === '2026-03-16T00:00:00.000Z'
+            ? {
+                id: 'att-1',
+                status: 'PRESENT',
+                sessions: [
+                  { id: 'sess-1', inTime: new Date('2026-03-16T16:30:00Z'), outTime: null },
+                ],
+              }
+            : null,
+      );
 
       const result = await service.getTodayStatus(tenantId, employeeId);
 
@@ -1512,6 +1526,321 @@ describe('AttendanceService', () => {
         'No clock-in record found for today',
       );
       expect(prisma.attendanceSession.update).not.toHaveBeenCalled();
+    });
+  });
+  // -----------------------------------------------------------
+  // shift-boundary regressions from the wave-0 review
+  // -----------------------------------------------------------
+  describe('shift boundaries', () => {
+    const mockCoords = { latitude: 12.9716, longitude: 77.5946 };
+    const nightShift = {
+      id: 'shift-night',
+      startTime: '22:00',
+      endTime: '06:00',
+      graceMinutes: 0,
+      isActive: true,
+    };
+    const dayShift = {
+      id: 'shift-day',
+      startTime: '09:00',
+      endTime: '18:00',
+      graceMinutes: 0,
+      isActive: true,
+    };
+    const D16 = '2026-03-16T00:00:00.000Z';
+    const D17 = '2026-03-17T00:00:00.000Z';
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    /** Rows keyed by ISO date; any other day has no row. */
+    function rowsByDay(rows: Record<string, Record<string, unknown>>) {
+      prisma.attendanceRecord.findUnique.mockImplementation(
+        async ({ where }: { where: { tenantId_employeeId_date: { date: Date } } }) =>
+          rows[where.tenantId_employeeId_date.date.toISOString()] ?? null,
+      );
+    }
+
+    /** Night shift up to and including the 16th, day shift from the 17th. */
+    function nightThenDay() {
+      prisma.shiftAssignment.findFirst.mockImplementation(
+        async ({ where }: { where: { startDate: { lte: Date } } }) =>
+          where.startDate.lte.toISOString() === D17
+            ? { id: 'sa-day', shift: dayShift }
+            : { id: 'sa-night', shift: nightShift },
+      );
+    }
+
+    function row(id: string, date: string, extra: Record<string, unknown> = {}) {
+      return {
+        id,
+        date: new Date(date),
+        standardWorkMinutes: 480,
+        breakMinutes: 0,
+        remarks: null,
+        status: 'PRESENT',
+        isLate: false,
+        clockInTime: new Date(date),
+        preClassificationStatus: null,
+        sessions: [],
+        ...extra,
+      };
+    }
+
+    /** `openId` is the session being closed; its minutes come from the clock. */
+    function primeClockOutWrites(openId = 's17') {
+      prisma.attendanceSession.update.mockResolvedValue({});
+      prisma.employee.findUnique.mockResolvedValue(mockEmployee);
+      prisma.attendanceSession.findMany.mockResolvedValue([{ id: openId, sessionMinutes: 0 }]);
+      prisma.attendanceRecord.update.mockResolvedValue({});
+      prisma.attendanceRecord.findFirst.mockResolvedValue({ id: 'x', sessions: [] });
+    }
+
+    function primeClockInWrites() {
+      prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+      prisma.tenant.findUnique.mockResolvedValue(null);
+      prisma.attendanceRecord.create.mockResolvedValue({ id: 'att-new', sessions: [] });
+      prisma.attendanceSession.create.mockResolvedValue({});
+      prisma.attendanceRecord.update.mockResolvedValue({});
+      prisma.attendanceRecord.findFirst.mockResolvedValue({ id: 'x', sessions: [] });
+    }
+
+    const closedNight16 = {
+      id: 's16',
+      inTime: new Date('2026-03-16T16:30:00Z'),
+      outTime: new Date('2026-03-17T00:30:00Z'),
+    };
+
+    describe('an expired night assignment followed by a day shift', () => {
+      it('files the 09:00 clock-in under today, on the day shift', async () => {
+        jest.useFakeTimers().setSystemTime(new Date('2026-03-17T03:30:00Z')); // 09:00 IST
+        nightThenDay();
+        rowsByDay({ [D16]: row('att-16', D16, { sessions: [closedNight16] }) });
+        primeClockInWrites();
+
+        await service.clockIn(tenantId, employeeId, { ...mockCoords });
+
+        expect(prisma.attendanceSession.create).not.toHaveBeenCalled();
+        const data = prisma.attendanceRecord.create.mock.calls[0][0].data;
+        expect(data.date.toISOString()).toBe(D17);
+        expect(data.shiftId).toBe('shift-day');
+        expect(data.isLate).toBe(false);
+      });
+
+      it("closes today's session at lunch instead of looking at last night", async () => {
+        jest.useFakeTimers().setSystemTime(new Date('2026-03-17T07:00:00Z')); // 12:30 IST
+        nightThenDay();
+        rowsByDay({
+          [D16]: row('att-16', D16, { sessions: [closedNight16] }),
+          [D17]: row('att-17', D17, {
+            sessions: [{ id: 's17', inTime: new Date('2026-03-17T03:30:00Z'), outTime: null }],
+          }),
+        });
+        primeClockOutWrites();
+
+        await service.clockOut(tenantId, employeeId, {});
+
+        expect(prisma.attendanceSession.update).toHaveBeenCalledWith({
+          where: { id: 's17' },
+          data: { outTime: expect.any(Date), sessionMinutes: 210 },
+        });
+        expect(prisma.attendanceRecord.update.mock.calls[0][0].where).toEqual({ id: 'att-17' });
+      });
+    });
+
+    it("does not score a morning punch late against tonight's night shift", async () => {
+      // First night of a new assignment: nothing yesterday, nights from today.
+      jest.useFakeTimers().setSystemTime(new Date('2026-03-17T03:30:00Z')); // 09:00 IST
+      prisma.shiftAssignment.findFirst.mockImplementation(
+        async ({ where }: { where: { startDate: { lte: Date } } }) =>
+          where.startDate.lte.toISOString() === D17 ? { id: 'sa-n', shift: nightShift } : null,
+      );
+      rowsByDay({});
+      primeClockInWrites();
+
+      await service.clockIn(tenantId, employeeId, { ...mockCoords });
+
+      const data = prisma.attendanceRecord.create.mock.calls[0][0].data;
+      expect(data.date.toISOString()).toBe(D17);
+      expect(data.isLate).toBe(false);
+    });
+
+    describe('a lunch-break clock-out', () => {
+      const openMorning = () =>
+        rowsByDay({
+          [D17]: row('att-17', D17, {
+            sessions: [{ id: 's17', inTime: new Date('2026-03-17T03:30:00Z'), outTime: null }],
+          }),
+        });
+
+      it('remembers the status the worked-hours rule replaced', async () => {
+        jest.useFakeTimers().setSystemTime(new Date('2026-03-17T07:00:00Z')); // 12:30 IST
+        openMorning();
+        primeClockOutWrites();
+
+        await service.clockOut(tenantId, employeeId, {});
+
+        const data = prisma.attendanceRecord.update.mock.calls[0][0].data;
+        expect(data.status).toBe('ABSENT');
+        expect(data.preClassificationStatus).toBe('PRESENT');
+      });
+
+      it('does not touch the marker when the rule leaves the status alone', async () => {
+        jest.useFakeTimers().setSystemTime(new Date('2026-03-17T12:30:00Z')); // 18:00 IST
+        openMorning();
+        primeClockOutWrites();
+
+        await service.clockOut(tenantId, employeeId, {});
+
+        const data = prisma.attendanceRecord.update.mock.calls[0][0].data;
+        expect(data.status).toBeUndefined();
+        expect(data).not.toHaveProperty('preClassificationStatus');
+      });
+
+      const afterLunch = (extra: Record<string, unknown>) => {
+        jest.useFakeTimers().setSystemTime(new Date('2026-03-17T08:00:00Z')); // 13:30 IST
+        rowsByDay({
+          [D17]: row('att-17', D17, {
+            sessions: [
+              {
+                id: 's17',
+                inTime: new Date('2026-03-17T03:30:00Z'),
+                outTime: new Date('2026-03-17T07:00:00Z'),
+              },
+            ],
+            ...extra,
+          }),
+        });
+        primeClockInWrites();
+      };
+
+      it('puts the day back to PRESENT when the next session starts', async () => {
+        afterLunch({ status: 'ABSENT', preClassificationStatus: 'PRESENT' });
+
+        await service.clockIn(tenantId, employeeId, { ...mockCoords });
+
+        expect(prisma.attendanceSession.create).toHaveBeenCalled();
+        expect(prisma.attendanceRecord.update).toHaveBeenCalledWith({
+          where: { id: 'att-17' },
+          data: { status: 'PRESENT', preClassificationStatus: null },
+        });
+      });
+
+      it('puts a work-from-home day back to WFH, not PRESENT', async () => {
+        afterLunch({ status: 'HALF_DAY', preClassificationStatus: 'WFH' });
+
+        await service.clockIn(tenantId, employeeId, { ...mockCoords });
+
+        expect(prisma.attendanceRecord.update).toHaveBeenCalledWith({
+          where: { id: 'att-17' },
+          data: { status: 'WFH', preClassificationStatus: null },
+        });
+      });
+
+      it('leaves a HALF_DAY the rule did not write alone', async () => {
+        afterLunch({ status: 'HALF_DAY', preClassificationStatus: null });
+
+        await service.clockIn(tenantId, employeeId, { ...mockCoords });
+
+        expect(prisma.attendanceRecord.update).not.toHaveBeenCalled();
+      });
+
+      it('never restores over a day that has since become LEAVE', async () => {
+        afterLunch({ status: 'LEAVE', preClassificationStatus: 'PRESENT' });
+
+        await service.clockIn(tenantId, employeeId, { ...mockCoords });
+
+        expect(prisma.attendanceRecord.update).not.toHaveBeenCalled();
+      });
+    });
+
+    it('closes a 24-hour shift the next morning after its end time', async () => {
+      // In 08:00 IST on the 16th, out 08:30 IST on the 17th.
+      jest.useFakeTimers().setSystemTime(new Date('2026-03-17T03:00:00Z'));
+      const allDay = {
+        id: 'shift-24',
+        startTime: '08:00',
+        endTime: '08:00',
+        graceMinutes: 0,
+        isActive: true,
+      };
+      prisma.shiftAssignment.findFirst.mockResolvedValue({ id: 'sa-24', shift: allDay });
+      rowsByDay({
+        [D16]: row('att-16', D16, {
+          shift: allDay,
+          sessions: [{ id: 's16', inTime: new Date('2026-03-16T02:30:00Z'), outTime: null }],
+        }),
+      });
+      primeClockOutWrites('s16');
+
+      await service.clockOut(tenantId, employeeId, {});
+
+      expect(prisma.attendanceSession.update).toHaveBeenCalledWith({
+        where: { id: 's16' },
+        data: { outTime: expect.any(Date), sessionMinutes: 1470 },
+      });
+    });
+
+    it('refuses a duplicate clock-out rather than closing a forgotten session from yesterday', async () => {
+      // 16:00 IST on the 17th: today is already clocked out; yesterday was
+      // left open at 23:30 IST.
+      jest.useFakeTimers().setSystemTime(new Date('2026-03-17T10:30:00Z'));
+      rowsByDay({
+        [D16]: row('att-16', D16, {
+          sessions: [{ id: 's16', inTime: new Date('2026-03-16T18:00:00Z'), outTime: null }],
+        }),
+        [D17]: row('att-17', D17, {
+          sessions: [
+            {
+              id: 's17',
+              inTime: new Date('2026-03-17T03:30:00Z'),
+              outTime: new Date('2026-03-17T10:29:00Z'),
+            },
+          ],
+        }),
+      });
+      primeClockOutWrites();
+
+      await expect(service.clockOut(tenantId, employeeId, {})).rejects.toThrow(
+        'No open session found',
+      );
+      expect(prisma.attendanceSession.update).not.toHaveBeenCalled();
+    });
+
+    it('shows the session a clock-out would close on the dashboard, even in overtime', async () => {
+      // 08:30 IST on the 17th, still on last night's shift (in 22:00 IST).
+      jest.useFakeTimers().setSystemTime(new Date('2026-03-17T03:00:00Z'));
+      prisma.shiftAssignment.findFirst.mockResolvedValue({ id: 'sa-n', shift: nightShift });
+      rowsByDay({
+        [D16]: row('att-16', D16, {
+          sessions: [{ id: 's16', inTime: new Date('2026-03-16T16:30:00Z'), outTime: null }],
+        }),
+      });
+
+      const result = await service.getTodayStatus(tenantId, employeeId);
+
+      expect(result.clockedIn).toBe(true);
+    });
+
+    it("still closes last night's shift when today only holds a leave row", async () => {
+      // 06:05 IST on the 17th; in at 22:00 IST on the 16th; the 17th is leave.
+      jest.useFakeTimers().setSystemTime(new Date('2026-03-17T00:35:00Z'));
+      prisma.shiftAssignment.findFirst.mockResolvedValue({ id: 'sa-n', shift: nightShift });
+      rowsByDay({
+        [D16]: row('att-16', D16, {
+          sessions: [{ id: 's16', inTime: new Date('2026-03-16T16:30:00Z'), outTime: null }],
+        }),
+        [D17]: row('att-17', D17, { status: 'LEAVE', clockInTime: null, sessions: [] }),
+      });
+      primeClockOutWrites('s16');
+
+      await service.clockOut(tenantId, employeeId, {});
+
+      expect(prisma.attendanceSession.update).toHaveBeenCalledWith({
+        where: { id: 's16' },
+        data: { outTime: expect.any(Date), sessionMinutes: 485 },
+      });
     });
   });
 });

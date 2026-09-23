@@ -1,6 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { isOvernightShift } from './late-mark';
+import { DEFAULT_ATTENDANCE_TIME_ZONE, isOvernightShift, zonedDateOnlyUtc } from './late-mark';
+import {
+  coveringAssignmentWhere,
+  effectiveShift,
+  NEWEST_ASSIGNMENT_FIRST,
+} from './shift-lookup';
 
 /** What one day's sweep did for one tenant. */
 export interface AutoAbsentResult {
@@ -142,10 +147,35 @@ export class AutoAbsentService {
   }
 
   /**
-   * Narrow the roster to the sweep's scope. Overnight-ness is derived from
-   * the shift times, not `Shift.isOvernight`, because rows that predate that
-   * column all default to false. When two assignments cover the day (a shift
-   * change: the old one ends the day the new one starts) the newest wins.
+   * `POST /attendance/mark-absent`: sweep a day by hand with the same
+   * day/night split as the cron. Today closes only day-shift employees,
+   * because tonight's night shift has not started, let alone ended; a past day
+   * closes everyone. A day that has not happened yet is refused outright.
+   */
+  async markAbsentOnDemand(
+    tenantId: string,
+    date: Date,
+    now: Date = new Date(),
+  ): Promise<AutoAbsentResult> {
+    const day = toDateOnlyUtc(date);
+    const today = zonedDateOnlyUtc(now, DEFAULT_ATTENDANCE_TIME_ZONE);
+
+    if (day.getTime() > today.getTime()) {
+      throw new BadRequestException('Cannot mark absences for a day that has not happened yet');
+    }
+
+    return this.markAbsentForDate(
+      tenantId,
+      day,
+      day.getTime() === today.getTime() ? 'DAY_SHIFTS' : 'ALL',
+    );
+  }
+
+  /**
+   * Narrow the roster to the sweep's scope, using the same shift-lookup rule
+   * as clock-in (see `shift-lookup.ts`). Overnight-ness is derived from the
+   * shift times, not `Shift.isOvernight`, because rows that predate that
+   * column all default to false.
    */
   private async filterByScope(
     tenantId: string,
@@ -156,13 +186,12 @@ export class AutoAbsentService {
     if (scope === 'ALL' || employees.length === 0) return employees;
 
     const assignments = await this.prisma.shiftAssignment.findMany({
-      where: {
-        tenantId,
-        startDate: { lte: day },
-        OR: [{ endDate: null }, { endDate: { gte: day } }],
+      where: coveringAssignmentWhere(tenantId, day),
+      select: {
+        employeeId: true,
+        shift: { select: { startTime: true, endTime: true, isActive: true } },
       },
-      select: { employeeId: true, shift: { select: { startTime: true, endTime: true } } },
-      orderBy: { startDate: 'desc' },
+      orderBy: NEWEST_ASSIGNMENT_FIRST,
     });
 
     const overnight = new Set<string>();
@@ -170,7 +199,8 @@ export class AutoAbsentService {
     for (const a of assignments) {
       if (seen.has(a.employeeId)) continue;
       seen.add(a.employeeId);
-      if (isOvernightShift(a.shift.startTime, a.shift.endTime)) overnight.add(a.employeeId);
+      const shift = effectiveShift(a);
+      if (shift && isOvernightShift(shift.startTime, shift.endTime)) overnight.add(a.employeeId);
     }
 
     return employees.filter((e) =>

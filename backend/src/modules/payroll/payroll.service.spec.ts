@@ -583,14 +583,34 @@ describe('PayrollService', () => {
 
       const result = await service.approveRun(tenantId, 'run-1');
 
+      // Conditional on the status it checked, so of two concurrent approvals
+      // only one can win.
       expect(prisma.payrollRun.update).toHaveBeenCalledWith({
-        where: { id: 'run-1' },
+        where: { id: 'run-1', tenantId, status: PayrollRunStatus.COMPUTED },
         data: {
           status: PayrollRunStatus.APPROVED,
           approvedAt: expect.any(Date),
         },
       });
       expect(result).toEqual(approved);
+    });
+
+    it('answers 409 when a concurrent approval moved the run first', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        id: 'run-1',
+        tenantId,
+        status: PayrollRunStatus.COMPUTED,
+      });
+      prisma.payrollRun.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Record to update not found.', {
+          code: 'P2025',
+          clientVersion: 'test',
+        }),
+      );
+
+      await expect(service.approveRun(tenantId, 'run-1')).rejects.toThrow(
+        'Payroll run is already being approved',
+      );
     });
 
     it('should throw NotFoundException when run not found', async () => {
@@ -1273,6 +1293,57 @@ describe('PayrollService', () => {
       const recordedAt =
         loansService.recordPayrollRepayments.mock.invocationCallOrder[0];
       expect(clearedAt).toBeLessThan(recordedAt);
+    });
+
+    it('recomputeRun rolls back and returns to COMPUTED when a loan changed during the calculation', async () => {
+      // e.g. a settlement closed the loan, or a manual repayment shrank it,
+      // while the payslips were being calculated: the loans service refuses
+      // rather than credit less than the payslip deducts.
+      computedRunProducing([{ loanId: 'loan-1', amount: 5000 }]);
+      loansService.recordPayrollRepayments.mockRejectedValue(
+        new ConflictException('Loan loan-1 was closed ... re-run payroll'),
+      );
+
+      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prisma.payrollRun.updateMany).toHaveBeenCalledWith({
+        where: { id: runId, status: PayrollRunStatus.PROCESSING },
+        data: { status: PayrollRunStatus.COMPUTED },
+      });
+      expect(loansService.notifyLoansClosed).not.toHaveBeenCalled();
+    });
+
+    it('resetRun is refused, and changes nothing, when a settlement has since recovered a loan', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        id: runId, tenantId, month: 4, year: 2026,
+        status: PayrollRunStatus.PROCESSING,
+      });
+      loansService.clearPayrollRepayments.mockRejectedValue(
+        new ConflictException('recovered by a final settlement'),
+      );
+
+      await expect(service.resetRun(tenantId, runId)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prisma.payslip.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.payrollRun.update).not.toHaveBeenCalled();
+    });
+
+    it('deleteRun is refused, and deletes nothing, when a settlement has since recovered a loan', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        id: runId, tenantId, month: 4, year: 2026,
+        status: PayrollRunStatus.COMPUTED,
+      });
+      loansService.clearPayrollRepayments.mockRejectedValue(
+        new ConflictException('recovered by a final settlement'),
+      );
+
+      await expect(
+        service.deleteRun(tenantId, runId, UserRole.SUPER_ADMIN),
+      ).rejects.toThrow(ConflictException);
+      expect(prisma.payslip.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.payrollRun.delete).not.toHaveBeenCalled();
     });
 
     it('reverses the abandoned attempt when a stuck run is reset', async () => {

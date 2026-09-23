@@ -635,6 +635,11 @@ export class LoansService {
    * because nothing has committed yet: the loans it closed are returned and
    * the caller hands them to `notifyLoansClosed` after its commit. Without a
    * `tx` this opens its own transaction and notifies itself, as before.
+   *
+   * With a `tx` it is also strict: a line whose loan is no longer ACTIVE, or
+   * that exceeds the balance, is a 409 rather than a skip or a trim, because
+   * the payslip in the same commit deducts the line in full. Without a `tx`
+   * such lines are skipped / capped at the balance.
    */
   async recordPayrollRepayments(
     tenantId: string,
@@ -661,14 +666,44 @@ export class LoansService {
     const byId = new Map<string, any>(loans.map((l: any) => [l.id, l]));
     const closed: ClosedLoan[] = [];
 
+    // Inside payroll's transaction the payslip carrying these lines is being
+    // written in the same commit, and it deducts `line.amount` in full. The
+    // loan has to be credited exactly that, or the run must not commit at
+    // all: the calculation ran outside this transaction (it can take
+    // minutes), so a settlement that closed the loan, or a manual repayment
+    // that shrank it, may have landed in between. Skipping or trimming the
+    // line here would leave a payslip that deducts money the loan never
+    // receives. Refusing rolls the whole run back; a re-run recalculates
+    // against the balances as they now stand.
+    //
+    // `outstandingAmount` read through `tx` is already net of this month's
+    // earlier payroll rows, which the same transaction reversed first — the
+    // same as-if-reversed figure `getPayrollDeductions` proposed against.
+    const strict = !!tx;
+    const staleLine = (loanId: string, why: string) =>
+      new ConflictException(
+        `Loan ${loanId} ${why} while payroll was being calculated, so a payslip would deduct an instalment the loan cannot be credited with. Nothing was saved; re-run payroll to recalculate against the current balance.`,
+      );
+
     const write = async (tx: any) => {
       for (const line of lines) {
-        const loan = byId.get(line.loanId);
-        // A loan that is not this employee's, not in this tenant or no longer
-        // active is skipped rather than throwing: payroll has already paid the
-        // payslip and must not be rolled back by a stale deduction line.
-        if (!loan) continue;
         if (line.amount <= 0) continue;
+        const loan = byId.get(line.loanId);
+        if (!loan) {
+          if (strict) {
+            throw staleLine(line.loanId, 'was closed or is no longer active');
+          }
+          // Called on its own (no payroll transaction), a loan that is not
+          // this employee's, not in this tenant or no longer active is
+          // skipped: there is no payslip here to keep in step with.
+          continue;
+        }
+        if (
+          strict &&
+          round2(line.amount) > round2(Number(loan.outstandingAmount))
+        ) {
+          throw staleLine(loan.id, 'was partly repaid');
+        }
 
         // Payroll retries. Without this read the second run collides with the
         // unique (loanId, month, year, source) index, and because everything
@@ -908,6 +943,11 @@ export class LoansService {
    * at most one payroll run per tenant and month, so the month alone
    * identifies the rows this run owns.
    *
+   * Refused with a 409 when any of those loans has a SETTLEMENT repayment in
+   * that month or later: reopening a leaver's loan would leave a balance no
+   * payroll collects. That blocks reset, delete and recompute of the month's
+   * run for that case.
+   *
    * Pass `tx` to reverse inside the caller's transaction. Payroll does, so the
    * reversal commits only together with the replacement payslips and the
    * re-recorded repayments: a failure in between rolls the reversal back too,
@@ -927,6 +967,29 @@ export class LoansService {
       },
     });
     if (!rows || rows.length === 0) return;
+
+    // A loan a final settlement has since recovered belongs to a leaver.
+    // Reversing its payroll instalment would reopen it with that EMI as the
+    // balance, and nothing would ever collect it: payroll only covers ACTIVE
+    // employees, and the settlement's "unrecovered" figure was computed
+    // without it. So resetting, deleting or recomputing this month's run is
+    // refused while such a settlement stands. Correct the month with an
+    // adjustment instead.
+    const loanIds = [...new Set((rows as any[]).map((row) => row.loanId))];
+    const settlement = await reader.loanRepayment.findFirst({
+      where: {
+        tenantId,
+        loanId: { in: loanIds },
+        source: RepaymentSource.SETTLEMENT,
+        OR: [{ year: { gt: year } }, { year, month: { gte: month } }],
+      },
+      select: { id: true, loanId: true, month: true, year: true },
+    });
+    if (settlement) {
+      throw new ConflictException(
+        `Loan ${settlement.loanId} was recovered by a final settlement in ${settlement.month}/${settlement.year}. Reversing this month's payroll instalment would reopen it with a balance nothing will collect, so this payroll run cannot be reset, deleted or recomputed. Correct it with an adjustment in a later run instead.`,
+      );
+    }
 
     const reverse = async (tx: any) => {
       for (const row of rows as any[]) {

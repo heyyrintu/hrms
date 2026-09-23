@@ -316,6 +316,8 @@ export class RegularizationService {
           workedMinutes,
           otMinutesCalculated,
           status,
+          // The approver has settled the day; nothing left to restore.
+          preClassificationStatus: null,
         },
       });
       attendanceId = existingAttendance.id;

@@ -1,4 +1,6 @@
 import {
+  carriedSessionWindowMinutes,
+  clockInBelongsToPreviousShift,
   isOvernightShift,
   overnightDayCutoffMinutes,
   resolveShiftDate,
@@ -35,6 +37,17 @@ describe('overnightDayCutoffMinutes', () => {
 
   it('is null for a same-day shift', () => {
     expect(overnightDayCutoffMinutes('09:00', '18:00')).toBeNull();
+  });
+
+  // A 24-hour shift has no off-duty gap to split. With the cutoff on the end
+  // time, arriving ten minutes early for today's 08:00 start was filed as a
+  // punch 23h50 into yesterday's shift.
+  it('leaves a 24-hour shift a two-hour early-arrival window before its start', () => {
+    expect(overnightDayCutoffMinutes('08:00', '08:00')).toBe(6 * 60);
+  });
+
+  it('never puts a 24-hour cutoff before midnight', () => {
+    expect(overnightDayCutoffMinutes('01:00', '01:00')).toBe(0);
   });
 });
 
@@ -83,5 +96,67 @@ describe('resolveShiftDate', () => {
     expect(resolveShiftDate(new Date('2026-03-16T19:00:00Z'), null).toISOString()).toBe(
       '2026-03-17T00:00:00.000Z',
     );
+  });
+});
+
+describe('clockInBelongsToPreviousShift', () => {
+  const night = { startTime: '22:00', endTime: '06:00' };
+  const day = { startTime: '09:00', endTime: '18:00' };
+  const early = { startTime: '07:00', endTime: '16:00' };
+  const allDay = { startTime: '08:00', endTime: '08:00' };
+  // IST instants on the 17th.
+  const at = (hhmm: string) => {
+    const [h, m] = hhmm.split(':').map(Number);
+    return new Date(Date.UTC(2026, 2, 17, h, m) - 330 * 60 * 1000);
+  };
+
+  it("keeps a punch inside last night's shift on last night", () => {
+    expect(clockInBelongsToPreviousShift(at('00:30'), night, night)).toBe(true);
+    expect(clockInBelongsToPreviousShift(at('05:00'), night, night)).toBe(true);
+  });
+
+  it('allows a short return after the end, for overtime after a break', () => {
+    expect(clockInBelongsToPreviousShift(at('07:30'), night, null)).toBe(true);
+  });
+
+  // The night assignment ended yesterday and the day shift starts today: a
+  // 09:00 arrival is the day shift, not a seventeen-hour night.
+  it('gives a morning arrival to today once last night is well over', () => {
+    expect(clockInBelongsToPreviousShift(at('09:00'), night, day)).toBe(false);
+    expect(clockInBelongsToPreviousShift(at('09:00'), night, null)).toBe(false);
+  });
+
+  it("gives the punch to today's shift when its start is nearer", () => {
+    // 06:45: 45 min after last night ended, 15 min before today's 07:00.
+    expect(clockInBelongsToPreviousShift(at('06:45'), night, early)).toBe(false);
+    // 06:10: 10 min after the end, 50 min before the start.
+    expect(clockInBelongsToPreviousShift(at('06:10'), night, early)).toBe(true);
+  });
+
+  it("never gives yesterday a punch after today's shift has started", () => {
+    expect(clockInBelongsToPreviousShift(at('07:05'), night, early)).toBe(false);
+  });
+
+  it('is false when yesterday was not an overnight shift', () => {
+    expect(clockInBelongsToPreviousShift(at('00:30'), day, night)).toBe(false);
+    expect(clockInBelongsToPreviousShift(at('00:30'), null, night)).toBe(false);
+  });
+
+  it('treats an early arrival for a 24-hour shift as today', () => {
+    expect(clockInBelongsToPreviousShift(at('07:50'), allDay, allDay)).toBe(false);
+    expect(clockInBelongsToPreviousShift(at('05:00'), allDay, allDay)).toBe(true);
+  });
+});
+
+describe('carriedSessionWindowMinutes', () => {
+  it('is eighteen hours for an ordinary shift or no shift', () => {
+    expect(carriedSessionWindowMinutes({ startTime: '09:00', endTime: '18:00' })).toBe(18 * 60);
+    expect(carriedSessionWindowMinutes({ startTime: '22:00', endTime: '06:00' })).toBe(18 * 60);
+    expect(carriedSessionWindowMinutes(null)).toBe(18 * 60);
+  });
+
+  it('stretches to cover a 24-hour shift plus overrun, and no further', () => {
+    expect(carriedSessionWindowMinutes({ startTime: '08:00', endTime: '08:00' })).toBe(26 * 60);
+    expect(carriedSessionWindowMinutes({ startTime: '08:00', endTime: '07:00' })).toBe(25 * 60);
   });
 });

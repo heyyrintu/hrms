@@ -460,6 +460,8 @@ export interface Shift {
   breakMinutes: number;
   standardWorkMinutes: number;
   graceMinutes: number;
+  // Derived by the server: true when endTime <= startTime (ends next day).
+  isOvernight: boolean;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;

@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
 import { AutoAbsentService } from './auto-absent.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { createMockPrismaService } from '../../../test/helpers';
@@ -225,8 +226,8 @@ describe('AutoAbsentService', () => {
         { id: 'emp-none' },
       ]);
       prisma.shiftAssignment.findMany.mockResolvedValue([
-        { employeeId: 'emp-night', shift: { startTime: '22:00', endTime: '06:00' } },
-        { employeeId: 'emp-day', shift: { startTime: '09:00', endTime: '18:00' } },
+        { employeeId: 'emp-night', shift: { startTime: '22:00', endTime: '06:00', isActive: true } },
+        { employeeId: 'emp-day', shift: { startTime: '09:00', endTime: '18:00', isActive: true } },
       ]);
       prisma.attendanceRecord.createMany.mockImplementation(async ({ data }: any) => ({
         count: data.length,
@@ -246,15 +247,34 @@ describe('AutoAbsentService', () => {
       ).resolves.toEqual({ marked: 2, skipped: 0 });
 
       expect(markedIds()).toEqual(['emp-day', 'emp-none']);
+      // The same assignment rule clock-in uses: active assignments only.
       expect(prisma.shiftAssignment.findMany).toHaveBeenCalledWith({
         where: {
           tenantId,
+          isActive: true,
           startDate: { lte: workdayUtcMidnight },
           OR: [{ endDate: null }, { endDate: { gte: workdayUtcMidnight } }],
         },
-        select: { employeeId: true, shift: { select: { startTime: true, endTime: true } } },
+        select: {
+          employeeId: true,
+          shift: { select: { startTime: true, endTime: true, isActive: true } },
+        },
         orderBy: { startDate: 'desc' },
       });
+    });
+
+    it('treats a deactivated night shift as no shift, as clock-in does', async () => {
+      primeRoster();
+      prisma.shiftAssignment.findMany.mockResolvedValue([
+        {
+          employeeId: 'emp-night',
+          shift: { startTime: '22:00', endTime: '06:00', isActive: false },
+        },
+      ]);
+
+      await service.markAbsentForDate(tenantId, workday, 'DAY_SHIFTS');
+
+      expect(markedIds()).toEqual(['emp-day', 'emp-night', 'emp-none']);
     });
 
     it('sweeps only overnight-shift employees in a night-shift sweep', async () => {
@@ -272,8 +292,8 @@ describe('AutoAbsentService', () => {
       // Moved from nights to days on this very day: the old assignment's end
       // date equals the new one's start date, and newest-first wins.
       prisma.shiftAssignment.findMany.mockResolvedValue([
-        { employeeId: 'emp-night', shift: { startTime: '09:00', endTime: '18:00' } },
-        { employeeId: 'emp-night', shift: { startTime: '22:00', endTime: '06:00' } },
+        { employeeId: 'emp-night', shift: { startTime: '09:00', endTime: '18:00', isActive: true } },
+        { employeeId: 'emp-night', shift: { startTime: '22:00', endTime: '06:00', isActive: true } },
       ]);
 
       await service.markAbsentForDate(tenantId, workday, 'DAY_SHIFTS');
@@ -342,6 +362,50 @@ describe('AutoAbsentService', () => {
       const result = await service.runForAllTenants(workday);
 
       expect(result).toEqual({ tenants: 2, marked: 1, skipped: 0, failed: 1 });
+    });
+  });
+  // POST /attendance/mark-absent: the same day/night scoping as the cron.
+  describe('markAbsentOnDemand', () => {
+    const noonIst16 = new Date('2026-03-16T06:30:00Z');
+
+    function primeRoster() {
+      prisma.employee.findMany.mockResolvedValue([{ id: 'emp-day' }, { id: 'emp-night' }]);
+      prisma.shiftAssignment.findMany.mockResolvedValue([
+        { employeeId: 'emp-night', shift: { startTime: '22:00', endTime: '06:00', isActive: true } },
+      ]);
+      prisma.attendanceRecord.createMany.mockImplementation(async ({ data }: any) => ({
+        count: data.length,
+      }));
+    }
+
+    const markedIds = () =>
+      prisma.attendanceRecord.createMany.mock.calls[0][0].data.map((r: any) => r.employeeId);
+
+    it("sweeps only day shifts for today, since tonight's shift has not ended", async () => {
+      primeRoster();
+
+      await expect(
+        service.markAbsentOnDemand(tenantId, new Date('2026-03-16'), noonIst16),
+      ).resolves.toEqual({ marked: 1, skipped: 0 });
+
+      expect(markedIds()).toEqual(['emp-day']);
+    });
+
+    it('sweeps everyone for a past day', async () => {
+      primeRoster();
+
+      await service.markAbsentOnDemand(tenantId, new Date('2026-03-13'), noonIst16);
+
+      expect(markedIds()).toEqual(['emp-day', 'emp-night']);
+    });
+
+    it('refuses a day that has not happened yet', async () => {
+      primeRoster();
+
+      await expect(
+        service.markAbsentOnDemand(tenantId, new Date('2026-03-17'), noonIst16),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.attendanceRecord.createMany).not.toHaveBeenCalled();
     });
   });
 });

@@ -201,6 +201,16 @@ describe('RegularizationService', () => {
         expect(statusWritten()).toBe('PRESENT');
       });
 
+      // The approver's status is final: a later clock-in must not "restore"
+      // whatever an earlier lunch-break clock-out downgraded.
+      it('clears the worked-hours marker so a later clock-in cannot override it', async () => {
+        primeApprove('2025-03-15T08:30:00Z');
+
+        await service.approve(tenantId, 'reg-1', approverId, UserRole.MANAGER, {});
+
+        expect(prisma.attendanceRecord.update.mock.calls[0][0].data.preClassificationStatus).toBeNull();
+      });
+
       it('makes regularized hours between the thresholds a HALF_DAY', async () => {
         // 03:30 -> 08:30 UTC is 300 minutes.
         primeApprove('2025-03-15T08:30:00Z');
