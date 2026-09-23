@@ -572,3 +572,84 @@ describe('SettlementDetailPage — recompute', () => {
     expect(mockedSettlementApi.update).not.toHaveBeenCalled();
   });
 });
+
+describe('SettlementDetailPage — outstanding loans', () => {
+  const withLoans = (loanRecovery: Record<string, unknown>) => ({
+    ...draftSettlement,
+    totalRecoveries: '65000.03',
+    netPayable: '101987.15',
+    breakdown: { ...breakdown, loanRecovery },
+  });
+
+  it('shows each loan recovered as its own labelled line', async () => {
+    mockedSettlementApi.getBySeparation.mockResolvedValue({
+      data: withLoans({
+        loans: [
+          {
+            loanId: 'loan-1',
+            type: 'LOAN',
+            label: 'Loan recovery',
+            outstanding: '40000.00',
+            recovered: '40000.00',
+            unrecovered: '0.00',
+          },
+          {
+            loanId: 'loan-2',
+            type: 'SALARY_ADVANCE',
+            label: 'Salary advance recovery',
+            outstanding: '10000.00',
+            recovered: '10000.00',
+            unrecovered: '0.00',
+          },
+        ],
+        total: '50000.00',
+        unrecovered: '0.00',
+        available: '151987.15',
+        note: 'Recovered from what is left, never below zero.',
+      }),
+    } as never);
+
+    render(<SettlementDetailPage />);
+
+    const section = await screen.findByTestId('loan-recovery');
+    expect(within(section).getByText('Loan recovery')).toBeInTheDocument();
+    expect(within(section).getByText('Salary advance recovery')).toBeInTheDocument();
+    expect(section).toHaveTextContent('₹40,000.00');
+    expect(section).toHaveTextContent('₹50,000.00');
+    expect(screen.queryByTestId('loan-unrecovered')).not.toBeInTheDocument();
+  });
+
+  it('warns about a balance the settlement could not recover', async () => {
+    mockedSettlementApi.getBySeparation.mockResolvedValue({
+      data: withLoans({
+        loans: [
+          {
+            loanId: 'loan-1',
+            type: 'LOAN',
+            label: 'Loan recovery',
+            outstanding: '200000.00',
+            recovered: '151987.15',
+            unrecovered: '48012.85',
+          },
+        ],
+        total: '151987.15',
+        unrecovered: '48012.85',
+        available: '151987.15',
+        note: 'Recovered from what is left, never below zero.',
+      }),
+    } as never);
+
+    render(<SettlementDetailPage />);
+
+    const warning = await screen.findByTestId('loan-unrecovered');
+    expect(warning).toHaveTextContent('₹48,012.85');
+    expect(warning).toHaveTextContent(/still owed/i);
+  });
+
+  it('shows nothing about loans when the leaver owed none', async () => {
+    render(<SettlementDetailPage />);
+
+    await screen.findByText('Gross payable');
+    expect(screen.queryByTestId('loan-recovery')).not.toBeInTheDocument();
+  });
+});

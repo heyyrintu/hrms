@@ -1,5 +1,6 @@
 import {
   buildSchedule,
+  computeArrears,
   ceil2,
   computeEmi,
   computeTotalPayable,
@@ -223,5 +224,136 @@ describe('loan-schedule', () => {
         }),
       ).toThrow('startMonth must be between 1 and 12');
     });
+  });
+});
+
+describe('computeArrears', () => {
+  // 120000 at 10% over 12 months from Jan 2026: twelve EMIs of 11000.
+  const schedule = buildSchedule({
+    principal: 120000,
+    interestRate: 10,
+    tenureMonths: 12,
+    startMonth: 1,
+    startYear: 2026,
+  });
+  const paid = (...months: [number, number][]) =>
+    months.map(([month, year]) => ({ month, year }));
+
+  it('is nothing for a loan on schedule', () => {
+    expect(
+      computeArrears({
+        schedule,
+        outstanding: 110000,
+        emiAmount: 11000,
+        payrollMonths: paid([1, 2026], [2, 2026]),
+        asOf: { month: 3, year: 2026 },
+      }),
+    ).toEqual({ amount: 0, instalments: [] });
+  });
+
+  it('carries a clamped EMI shortfall past the end of the tenure', () => {
+    // February's net pay only covered 5000 of the 11000 EMI.
+    expect(
+      computeArrears({
+        schedule,
+        outstanding: 116000,
+        emiAmount: 11000,
+        payrollMonths: paid([1, 2026], [2, 2026]),
+        asOf: { month: 3, year: 2026 },
+      }),
+    ).toEqual({
+      amount: 6000,
+      instalments: [{ month: 1, year: 2027, amount: 6000 }],
+    });
+  });
+
+  it('spreads arrears larger than one EMI over consecutive months', () => {
+    expect(
+      computeArrears({
+        schedule,
+        outstanding: 125000,
+        emiAmount: 11000,
+        payrollMonths: paid([1, 2026], [2, 2026]),
+        asOf: { month: 3, year: 2026 },
+      }),
+    ).toEqual({
+      amount: 15000,
+      instalments: [
+        { month: 1, year: 2027, amount: 11000 },
+        { month: 2, year: 2027, amount: 4000 },
+      ],
+    });
+  });
+
+  it('counts a past month payroll never collected as arrears', () => {
+    expect(
+      computeArrears({
+        schedule,
+        outstanding: 121000,
+        emiAmount: 11000,
+        payrollMonths: paid([1, 2026]),
+        asOf: { month: 3, year: 2026 },
+      }),
+    ).toEqual({
+      amount: 11000,
+      instalments: [{ month: 1, year: 2027, amount: 11000 }],
+    });
+  });
+
+  it('expects the next arrears instalment this month once the tenure is over', () => {
+    expect(
+      computeArrears({
+        schedule,
+        outstanding: 4000,
+        emiAmount: 11000,
+        payrollMonths: paid(...schedule.map((r) => [r.month, r.year] as [number, number])),
+        asOf: { month: 3, year: 2027 },
+      }),
+    ).toEqual({
+      amount: 4000,
+      instalments: [{ month: 3, year: 2027, amount: 4000 }],
+    });
+  });
+
+  it('moves to next month when this month-s payroll has already run', () => {
+    expect(
+      computeArrears({
+        schedule,
+        outstanding: 4000,
+        emiAmount: 11000,
+        payrollMonths: paid(
+          ...schedule.map((r) => [r.month, r.year] as [number, number]),
+          [1, 2027],
+        ),
+        asOf: { month: 1, year: 2027 },
+      }),
+    ).toEqual({
+      amount: 4000,
+      instalments: [{ month: 2, year: 2027, amount: 4000 }],
+    });
+  });
+
+  it('is nothing when a manual prepayment left less than the remaining EMIs', () => {
+    expect(
+      computeArrears({
+        schedule,
+        outstanding: 50000,
+        emiAmount: 11000,
+        payrollMonths: paid([1, 2026], [2, 2026]),
+        asOf: { month: 3, year: 2026 },
+      }).amount,
+    ).toBe(0);
+  });
+
+  it('is nothing for a cleared balance', () => {
+    expect(
+      computeArrears({
+        schedule,
+        outstanding: 0,
+        emiAmount: 11000,
+        payrollMonths: [],
+        asOf: { month: 3, year: 2026 },
+      }),
+    ).toEqual({ amount: 0, instalments: [] });
   });
 });

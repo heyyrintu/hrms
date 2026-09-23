@@ -40,6 +40,26 @@ export interface LoanScheduleRow {
   balanceAfter: number;
 }
 
+/** One post-tenure deduction payroll is expected to take. */
+export interface LoanArrearsInstalment {
+  month: number;
+  year: number;
+  amount: number;
+}
+
+/**
+ * The part of the balance the remaining scheduled EMIs will not cover.
+ *
+ * Payroll never takes more than the month's EMI during the tenure and never
+ * drives net pay below zero, so a short month leaves a shortfall. It is
+ * collected after the tenure ends, one EMI at most per month. Returned on the
+ * loan detail for an ACTIVE loan; null otherwise.
+ */
+export interface LoanArrears {
+  amount: number;
+  instalments: LoanArrearsInstalment[];
+}
+
 export interface Loan {
   id: string;
   employeeId: string;
@@ -62,6 +82,7 @@ export interface Loan {
   employee?: LoanBorrower;
   repayments?: LoanRepayment[];
   schedule?: LoanScheduleRow[];
+  arrears?: LoanArrears | null;
 }
 
 export interface CreateLoanPayload {

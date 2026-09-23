@@ -5,6 +5,8 @@ import { PayrollCalculationService } from './payroll-calculation.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createMockPrismaService } from '../../test/helpers';
 import { LoansService } from '../loans/loans.service';
+import { PayslipEmailService } from './payslip-email.service';
+import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import { PayrollRunStatus, Prisma, UserRole } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 
@@ -22,7 +24,8 @@ describe('PayrollService', () => {
     };
     const mockLoansService = {
       clearPayrollRepayments: jest.fn().mockResolvedValue(undefined),
-      recordPayrollRepayments: jest.fn().mockResolvedValue(undefined),
+      recordPayrollRepayments: jest.fn().mockResolvedValue([]),
+      notifyLoansClosed: jest.fn().mockResolvedValue(undefined),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -31,6 +34,9 @@ describe('PayrollService', () => {
         { provide: PrismaService, useValue: createMockPrismaService() },
         { provide: PayrollCalculationService, useValue: mockCalculationService },
         { provide: LoansService, useValue: mockLoansService },
+        // approveRun's email/webhook side effects are covered in payroll-approve.spec.ts.
+        { provide: PayslipEmailService, useValue: { notifyRunApproved: jest.fn().mockResolvedValue(undefined) } },
+        { provide: WebhookDispatcherService, useValue: { dispatch: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -714,6 +720,7 @@ describe('PayrollService', () => {
         tenantId,
         3,
         2026,
+        expect.anything(),
       );
       // And it has to happen first: after the payslips are gone there is no
       // longer any record of what to reverse.
@@ -1024,6 +1031,7 @@ describe('PayrollService', () => {
         2026,
         'slip-1',
         [{ loanId: 'loan-1', amount: 5000 }],
+        expect.anything(),
       );
     });
 
@@ -1037,18 +1045,10 @@ describe('PayrollService', () => {
       expect(prisma.payslip.findMany).not.toHaveBeenCalled();
     });
 
-    it('retries a 409 exactly once, because the balance moved under the first try', async () => {
-      draftRunProducing([{ loanId: 'loan-1', amount: 5000 }]);
-      loansService.recordPayrollRepayments
-        .mockRejectedValueOnce(new ConflictException('balance moved'))
-        .mockResolvedValueOnce(undefined);
-
-      await service.processRun(tenantId, runId);
-
-      expect(loansService.recordPayrollRepayments).toHaveBeenCalledTimes(2);
-    });
-
-    it('lets a second 409 surface rather than silently losing the repayment', async () => {
+    it('fails the whole run on a 409 rather than retrying inside the transaction', async () => {
+      // A retry inside the one transaction would re-read a loan whose first
+      // repayment row is already written in it and skip the decrement. The
+      // whole run rolls back instead and the caller simply runs it again.
       draftRunProducing([{ loanId: 'loan-1', amount: 5000 }]);
       loansService.recordPayrollRepayments.mockRejectedValue(
         new ConflictException('balance moved'),
@@ -1057,7 +1057,185 @@ describe('PayrollService', () => {
       await expect(service.processRun(tenantId, runId)).rejects.toThrow(
         ConflictException,
       );
-      expect(loansService.recordPayrollRepayments).toHaveBeenCalledTimes(2);
+      expect(loansService.recordPayrollRepayments).toHaveBeenCalledTimes(1);
+      expect(prisma.payrollRun.update).toHaveBeenLastCalledWith({
+        where: { id: runId },
+        data: { status: PayrollRunStatus.DRAFT },
+      });
+      expect(loansService.notifyLoansClosed).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Swap the helper's pass-through transaction for one that records whether
+     * a call happened inside it, so "inside the transaction" is asserted
+     * rather than assumed.
+     */
+    function trackTransaction() {
+      const state = { inTx: false };
+      prisma.$transaction.mockImplementation(async (cb: any) => {
+        state.inTx = true;
+        try {
+          return await cb(prisma);
+        } finally {
+          state.inTx = false;
+        }
+      });
+      const seen: Record<string, boolean[]> = {
+        clear: [],
+        record: [],
+        calc: [],
+        notify: [],
+      };
+      loansService.clearPayrollRepayments.mockImplementation(async () => {
+        seen.clear.push(state.inTx);
+      });
+      loansService.recordPayrollRepayments.mockImplementation(async () => {
+        seen.record.push(state.inTx);
+        return [{ id: 'loan-1', employeeId: 'emp-1', type: 'LOAN' }];
+      });
+      loansService.notifyLoansClosed.mockImplementation(async () => {
+        seen.notify.push(state.inTx);
+      });
+      const calc = calculationService.calculateForEmployee.getMockImplementation();
+      calculationService.calculateForEmployee.mockImplementation(
+        async (...args: unknown[]) => {
+          seen.calc.push(state.inTx);
+          return calc ? calc(...args) : undefined;
+        },
+      );
+      return seen;
+    }
+
+    it('processRun reverses, replaces payslips and re-records loans in one transaction', async () => {
+      draftRunProducing([{ loanId: 'loan-1', amount: 5000 }]);
+      const seen = trackTransaction();
+
+      await service.processRun(tenantId, runId);
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(seen.clear).toEqual([true]);
+      expect(seen.record).toEqual([true]);
+      // Calculation stays outside, so the transaction does not hold locks
+      // for the length of every employee's computation.
+      expect(seen.calc.length).toBeGreaterThan(0);
+      expect(seen.calc.every((inTx) => inTx === false)).toBe(true);
+      expect(loansService.clearPayrollRepayments).toHaveBeenCalledWith(
+        tenantId,
+        1,
+        2026,
+        prisma,
+      );
+      // Reversal before the payslips are replaced and before re-recording.
+      expect(
+        loansService.clearPayrollRepayments.mock.invocationCallOrder[0],
+      ).toBeLessThan(prisma.payslip.deleteMany.mock.invocationCallOrder[0]);
+      // The payslip ids the repayments carry are read inside the transaction.
+      expect(prisma.payslip.findMany).toHaveBeenCalledWith({
+        where: { payrollRunId: runId, tenantId },
+        select: { id: true, employeeId: true },
+      });
+    });
+
+    it('opens the write transaction with a timeout sized for the loan writes', async () => {
+      draftRunProducing([{ loanId: 'loan-1', amount: 5000 }]);
+
+      await service.processRun(tenantId, runId);
+
+      expect(prisma.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.objectContaining({ timeout: expect.any(Number) }),
+      );
+      const options = prisma.$transaction.mock.calls[0][1];
+      expect(options.timeout).toBeGreaterThan(5000);
+    });
+
+    it('tells borrowers their loan closed only after the transaction commits', async () => {
+      draftRunProducing([{ loanId: 'loan-1', amount: 5000 }]);
+      const seen = trackTransaction();
+
+      await service.processRun(tenantId, runId);
+
+      expect(seen.notify).toEqual([false]);
+      expect(loansService.notifyLoansClosed).toHaveBeenCalledWith(tenantId, [
+        { id: 'loan-1', employeeId: 'emp-1', type: 'LOAN' },
+      ]);
+    });
+
+    function computedRunProducing(loanRepayments: unknown[]) {
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        id: runId, tenantId, month: 3, year: 2026,
+        status: PayrollRunStatus.COMPUTED,
+        totalGross: new Decimal(0), totalDeductions: new Decimal(0),
+        totalNet: new Decimal(0), processedCount: 1,
+      });
+      prisma.payslip.findMany.mockResolvedValue([
+        { id: 'slip-1', employeeId: 'emp-1' },
+      ]);
+      prisma.payslip.deleteMany.mockResolvedValue({ count: 1 });
+      prisma.payslip.createMany.mockResolvedValue({ count: 1 });
+      prisma.payrollRun.update.mockResolvedValue({
+        id: runId, status: PayrollRunStatus.COMPUTED,
+        totalGross: new Decimal(0), totalDeductions: new Decimal(0),
+        totalNet: new Decimal(0), processedCount: 1,
+      });
+      calculationService.calculateForEmployee.mockResolvedValue(
+        slipFor('emp-1', loanRepayments),
+      );
+    }
+
+    it('recomputeRun reverses, replaces payslips and re-records loans in one transaction', async () => {
+      computedRunProducing([{ loanId: 'loan-1', amount: 5000 }]);
+      const seen = trackTransaction();
+
+      await service.recomputeRun(tenantId, runId);
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.objectContaining({ timeout: expect.any(Number) }),
+      );
+      expect(seen.clear).toEqual([true]);
+      expect(seen.record).toEqual([true]);
+      expect(seen.calc.length).toBeGreaterThan(0);
+      expect(seen.calc.every((inTx) => inTx === false)).toBe(true);
+      expect(seen.notify).toEqual([false]);
+    });
+
+    it('a recompute failure after the reversal leaves no half-done loan state behind', async () => {
+      // The gap this closes: the reversal used to commit on its own, so a
+      // failure before re-recording left every balance high until the next
+      // good run. Now the reversal is a statement in the same transaction as
+      // the failure and rolls back with it — the mock cannot roll back, but
+      // it can prove the reversal never ran outside that transaction.
+      computedRunProducing([{ loanId: 'loan-1', amount: 5000 }]);
+      prisma.payslip.createMany.mockRejectedValue(new Error('write failed'));
+      const seen = trackTransaction();
+
+      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow(
+        'write failed',
+      );
+
+      expect(seen.clear).toEqual([true]);
+      expect(loansService.recordPayrollRepayments).not.toHaveBeenCalled();
+      expect(loansService.notifyLoansClosed).not.toHaveBeenCalled();
+      expect(prisma.payrollRun.updateMany).toHaveBeenCalledWith({
+        where: { id: runId, status: PayrollRunStatus.PROCESSING },
+        data: { status: PayrollRunStatus.COMPUTED },
+      });
+    });
+
+    it('resetRun reverses the abandoned attempt inside the same transaction that clears its payslips', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        id: runId, tenantId, month: 4, year: 2026,
+        status: PayrollRunStatus.PROCESSING,
+      });
+      prisma.payslip.deleteMany.mockResolvedValue({});
+      prisma.payrollRun.update.mockResolvedValue({});
+      const seen = trackTransaction();
+
+      await service.resetRun(tenantId, runId);
+
+      expect(seen.clear).toEqual([true]);
     });
 
     it('reverses the previous attempt before recomputing, so the EMI is not lost', async () => {
@@ -1087,7 +1265,7 @@ describe('PayrollService', () => {
       await service.recomputeRun(tenantId, runId);
 
       expect(loansService.clearPayrollRepayments).toHaveBeenCalledWith(
-        tenantId, 3, 2026,
+        tenantId, 3, 2026, expect.anything(),
       );
       // Reversed first, re-recorded from the figures this recompute produced.
       const clearedAt =
@@ -1108,7 +1286,7 @@ describe('PayrollService', () => {
       await service.resetRun(tenantId, runId);
 
       expect(loansService.clearPayrollRepayments).toHaveBeenCalledWith(
-        tenantId, 4, 2026,
+        tenantId, 4, 2026, expect.anything(),
       );
     });
   });

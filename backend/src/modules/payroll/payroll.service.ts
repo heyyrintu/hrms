@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PayrollCalculationService, PayslipData } from './payroll-calculation.service';
@@ -11,17 +12,36 @@ import {
   PayrollRunQueryDto,
   PayslipQueryDto,
 } from './dto/payroll.dto';
-import { PayrollRunStatus, UserRole } from '@prisma/client';
+import { PayrollRunStatus, Prisma, UserRole } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { isPrismaError, PRISMA_RECORD_NOT_FOUND } from '../../common/utils/prisma-errors';
-import { LoansService, PayrollRepaymentLine } from '../loans/loans.service';
+import {
+  ClosedLoan,
+  LoansService,
+  PayrollRepaymentLine,
+} from '../loans/loans.service';
+
+/**
+ * The run's write transaction now also reverses the month's earlier loan
+ * instalments and re-records them, one guarded write per loan, on top of
+ * replacing every payslip. Prisma's 5s default is too tight for that on a
+ * large tenant; the calculation itself still happens outside, so this only
+ * has to cover the writes.
+ */
+const PAYROLL_WRITE_TX_OPTIONS = { maxWait: 10_000, timeout: 60_000 };
+import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
+import { PayslipEmailService } from './payslip-email.service';
 
 @Injectable()
 export class PayrollService {
+  private readonly logger = new Logger(PayrollService.name);
+
   constructor(
     private prisma: PrismaService,
     private calculationService: PayrollCalculationService,
     private loansService: LoansService,
+    private payslipEmailService: PayslipEmailService,
+    private webhookDispatcher: WebhookDispatcherService,
   ) {}
 
   // ============================================
@@ -121,15 +141,10 @@ export class PayrollService {
     }
 
     try {
-      // An earlier attempt at this month may have recorded loan instalments
-      // before failing and being reset back to DRAFT. Reverse them first, or
-      // `getPayrollDeductions` would skip every loan it already has a row for
-      // and this run would quietly pay those employees their whole salary.
-      await this.loansService.clearPayrollRepayments(
-        tenantId,
-        run.month,
-        run.year,
-      );
+      // Loan instalments an earlier attempt at this month recorded are
+      // reversed inside the write transaction below, not here. The
+      // calculation reads loan balances as if they already were
+      // (`getPayrollDeductions`), so it proposes the right EMI either way.
 
       // Get all active employees with salary assignments
       const employees = await this.prisma.employee.findMany({
@@ -165,9 +180,19 @@ export class PayrollService {
         new Decimal(0),
       );
 
-      // Replace the payslips and publish the totals atomically: a failure part
-      // way through must not leave a half-generated run behind.
+      // Reverse any earlier attempt's loan instalments, replace the payslips,
+      // re-record the instalments against them and publish the totals — all
+      // atomically: a failure part way through must not leave a
+      // half-generated run, or loan balances reversed but not re-recorded.
+      let closedLoans: ClosedLoan[] = [];
       const publishedRun = await this.prisma.$transaction(async (tx) => {
+        await this.loansService.clearPayrollRepayments(
+          tenantId,
+          run.month,
+          run.year,
+          tx,
+        );
+
         await tx.payslip.deleteMany({ where: { payrollRunId: id } });
 
         if (results.length > 0) {
@@ -214,6 +239,15 @@ export class PayrollService {
           });
         }
 
+        closedLoans = await this.recordLoanRepayments(
+          tx,
+          tenantId,
+          id,
+          run.month,
+          run.year,
+          results,
+        );
+
         return tx.payrollRun.update({
           where: { id },
           data: {
@@ -228,9 +262,10 @@ export class PayrollService {
             _count: { select: { payslips: true } },
           },
         });
-      });
+      }, PAYROLL_WRITE_TX_OPTIONS);
 
-      await this.recordLoanRepayments(tenantId, id, run.month, run.year, results);
+      // Only now that it has committed can a borrower be told a loan closed.
+      await this.loansService.notifyLoansClosed(tenantId, closedLoans);
 
       return publishedRun;
     } catch (error) {
@@ -315,15 +350,13 @@ export class PayrollService {
       });
       const employees = covered.map((slip) => ({ id: slip.employeeId }));
 
-      // The instalments the previous compute recorded are reversed before
-      // anything is recalculated. They belong to payslips that are about to be
-      // deleted, and leaving them would both hide the loans from this
-      // recompute and credit a figure the new payslips never deduct.
-      await this.loansService.clearPayrollRepayments(
-        tenantId,
-        run.month,
-        run.year,
-      );
+      // The instalments the previous compute recorded belong to payslips that
+      // are about to be deleted, so they are reversed — but inside the write
+      // transaction below, together with the re-recording, not here on their
+      // own. The calculation reads loan balances as if that reversal had
+      // already happened (`getPayrollDeductions`), so it proposes the same
+      // EMI it would after a separate reversal, without a failure in between
+      // being able to leave every balance reversed and nothing re-recorded.
 
       // Compute every payslip first (reads only), so the write transaction
       // below stays short and cannot time out mid-run on a large tenant.
@@ -351,10 +384,19 @@ export class PayrollService {
         new Decimal(0),
       );
 
-      // Replace the payslips and publish the totals atomically: a failure
-      // part way through must not leave the run with some old payslips and
-      // some new.
+      // Reverse the previous instalments, replace the payslips, re-record the
+      // instalments and publish the totals atomically: a failure part way
+      // through must not leave the run with some old payslips and some new,
+      // nor loan balances reversed with nothing re-recorded.
+      let closedLoans: ClosedLoan[] = [];
       const updatedRun = await this.prisma.$transaction(async (tx) => {
+        await this.loansService.clearPayrollRepayments(
+          tenantId,
+          run.month,
+          run.year,
+          tx,
+        );
+
         await tx.payslip.deleteMany({ where: { payrollRunId: id } });
 
         if (results.length > 0) {
@@ -399,10 +441,20 @@ export class PayrollService {
           });
         }
 
+        closedLoans = await this.recordLoanRepayments(
+          tx,
+          tenantId,
+          id,
+          run.month,
+          run.year,
+          results,
+        );
+
         // Guarded on the claim this recompute still holds. A reset can move
         // the run back to DRAFT and clear its payslips while this was still
         // calculating; publishing on the id alone would recreate payslips on a
-        // run somebody deliberately emptied.
+        // run somebody deliberately emptied. A refusal here rolls the loan
+        // reversal and re-recording above back with it.
         return tx.payrollRun.update({
           where: { id, status: PayrollRunStatus.PROCESSING },
           data: {
@@ -417,9 +469,9 @@ export class PayrollService {
             _count: { select: { payslips: true } },
           },
         });
-      });
+      }, PAYROLL_WRITE_TX_OPTIONS);
 
-      await this.recordLoanRepayments(tenantId, id, run.month, run.year, results);
+      await this.loansService.notifyLoansClosed(tenantId, closedLoans);
 
       // Tell the caller what actually changed, not just that it succeeded.
       return {
@@ -473,13 +525,18 @@ export class PayrollService {
       );
     }
 
-    // Loan instalments the abandoned attempt managed to record are reversed
-    // too. The payslips that justified them are about to be discarded, and a
-    // repayment with no payslip behind it is money taken off a loan that
-    // nobody was ever charged for.
-    await this.loansService.clearPayrollRepayments(tenantId, run.month, run.year);
-
     return this.prisma.$transaction(async (tx) => {
+      // Loan instalments the abandoned attempt managed to record are reversed
+      // too, in the same transaction that discards their payslips. A
+      // repayment with no payslip behind it is money taken off a loan that
+      // nobody was ever charged for.
+      await this.loansService.clearPayrollRepayments(
+        tenantId,
+        run.month,
+        run.year,
+        tx,
+      );
+
       // Any payslips from the abandoned attempt are discarded so the rerun
       // starts clean.
       await tx.payslip.deleteMany({ where: { payrollRunId: id } });
@@ -495,26 +552,36 @@ export class PayrollService {
   }
 
   /**
-   * Credit each loan with what its payslip actually deducted.
+   * Credit each loan with what its payslip actually deducted, inside the
+   * run's write transaction.
    *
-   * Runs after the write transaction has committed, because the repayment row
-   * carries the payslip's id and `createMany` does not hand one back — the
-   * ids are read off the committed rows. Employees whose payslip took no
-   * instalment are not passed to the loans service at all.
+   * The repayment row carries the payslip's id and `createMany` does not hand
+   * one back, so the ids are read back inside the same transaction, off the
+   * rows it has just written. Employees whose payslip took no instalment are
+   * not passed to the loans service at all.
+   *
+   * There is no retry on a 409 (a loan's balance moving under the write, e.g.
+   * a manual repayment landing mid-run). Retrying inside the transaction
+   * would re-read a loan whose repayment row this attempt had already written
+   * and skip its decrement; instead the whole run rolls back — reversal,
+   * payslips and repayments together — and the caller runs it again.
+   *
+   * Returns the loans that reached zero, for telling after the commit.
    */
   private async recordLoanRepayments(
+    tx: Prisma.TransactionClient,
     tenantId: string,
     runId: string,
     month: number,
     year: number,
     results: PayslipData[],
-  ): Promise<void> {
+  ): Promise<ClosedLoan[]> {
     const withLoans = results.filter(
       (result) => (result.loanRepayments?.length ?? 0) > 0,
     );
-    if (withLoans.length === 0) return;
+    if (withLoans.length === 0) return [];
 
-    const slips = await this.prisma.payslip.findMany({
+    const slips = await tx.payslip.findMany({
       where: { payrollRunId: runId, tenantId },
       select: { id: true, employeeId: true },
     });
@@ -522,57 +589,24 @@ export class PayrollService {
       slips.map((slip) => [slip.employeeId, slip.id]),
     );
 
+    const closed: ClosedLoan[] = [];
     for (const result of withLoans) {
       const payslipId = payslipIdFor.get(result.employeeId);
-      // No committed payslip means nothing was charged, so nothing is owed.
+      // No payslip written means nothing was charged, so nothing is owed.
       if (!payslipId) continue;
-      await this.recordRepaymentsWithOneRetry(
+      const lines: PayrollRepaymentLine[] = result.loanRepayments;
+      const closedHere = await this.loansService.recordPayrollRepayments(
         tenantId,
         result.employeeId,
         month,
         year,
         payslipId,
-        result.loanRepayments,
-      );
-    }
-  }
-
-  /**
-   * `recordPayrollRepayments` throws a 409 when a loan's balance moved under
-   * it — a manual repayment landing mid-run. The call is idempotent per
-   * (loan, month, year), so retrying re-reads the moved balance and applies
-   * the instalment against it. Once only: a second conflict is a real one and
-   * is allowed to surface rather than be swallowed into a silently unrecorded
-   * repayment.
-   */
-  private async recordRepaymentsWithOneRetry(
-    tenantId: string,
-    employeeId: string,
-    month: number,
-    year: number,
-    payslipId: string,
-    lines: PayrollRepaymentLine[],
-  ): Promise<void> {
-    try {
-      await this.loansService.recordPayrollRepayments(
-        tenantId,
-        employeeId,
-        month,
-        year,
-        payslipId,
         lines,
+        tx,
       );
-    } catch (error) {
-      if (!(error instanceof ConflictException)) throw error;
-      await this.loansService.recordPayrollRepayments(
-        tenantId,
-        employeeId,
-        month,
-        year,
-        payslipId,
-        lines,
-      );
+      closed.push(...(closedHere ?? []));
     }
+    return closed;
   }
 
   async approveRun(tenantId: string, id: string) {
@@ -586,13 +620,67 @@ export class PayrollService {
       );
     }
 
-    return this.prisma.payrollRun.update({
+    const approved = await this.prisma.payrollRun.update({
       where: { id },
       data: {
         status: PayrollRunStatus.APPROVED,
         approvedAt: new Date(),
       },
     });
+
+    // The approval has committed. Everything below is best-effort and not
+    // awaited: a mail server or customer webhook must neither fail nor slow
+    // the approval.
+    this.afterApproval(tenantId, approved);
+
+    return approved;
+  }
+
+  /** Fire-and-forget side effects of an approval. Never throws. */
+  private afterApproval(
+    tenantId: string,
+    run: {
+      id: string;
+      month: number;
+      year: number;
+      totalGross: Decimal | number;
+      totalDeductions: Decimal | number;
+      totalNet: Decimal | number;
+      processedCount: number;
+      approvedAt: Date | null;
+    },
+  ): void {
+    const fireAndForget = (label: string, start: () => Promise<unknown>) => {
+      try {
+        Promise.resolve(start()).catch((error: unknown) =>
+          this.logger.error(`${label} for payroll run ${run.id} failed: ${
+            error instanceof Error ? error.message : error
+          }`),
+        );
+      } catch (error) {
+        this.logger.error(`${label} for payroll run ${run.id} failed: ${
+          error instanceof Error ? error.message : error
+        }`);
+      }
+    };
+
+    fireAndForget('Payslip emails', () =>
+      this.payslipEmailService.notifyRunApproved(tenantId, run.id),
+    );
+
+    // Run-level totals only — no per-employee salary data leaves the tenant.
+    fireAndForget('payroll.approved webhook', () =>
+      this.webhookDispatcher.dispatch(tenantId, 'payroll.approved', {
+        runId: run.id,
+        month: run.month,
+        year: run.year,
+        totalGross: Number(run.totalGross),
+        totalDeductions: Number(run.totalDeductions),
+        totalNet: Number(run.totalNet),
+        processedCount: run.processedCount,
+        approvedAt: run.approvedAt ? run.approvedAt.toISOString() : null,
+      }),
+    );
   }
 
   async markAsPaid(tenantId: string, id: string) {
@@ -637,11 +725,16 @@ export class PayrollService {
     // instalment, so the instalments have to go back to the loans first.
     // `LoanRepayment.payslipId` carries no FK, so nothing cascades: without
     // this the borrower's balance stays reduced for money never deducted.
-    // A no-op when the run never reached COMPUTED.
-    await this.loansService.clearPayrollRepayments(tenantId, run.month, run.year);
-
-    // Both writes together: a half-deleted run would leave orphaned payslips.
+    // A no-op when the run never reached COMPUTED. Reversed in the same
+    // transaction as the delete, so neither can happen without the other.
+    // All writes together: a half-deleted run would leave orphaned payslips.
     await this.prisma.$transaction(async (tx) => {
+      await this.loansService.clearPayrollRepayments(
+        tenantId,
+        run.month,
+        run.year,
+        tx,
+      );
       await tx.payslip.deleteMany({ where: { payrollRunId: id } });
       await tx.payrollRun.delete({ where: { id } });
     });

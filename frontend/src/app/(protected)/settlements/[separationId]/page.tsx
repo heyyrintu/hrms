@@ -60,6 +60,97 @@ const serverMessage = (error: unknown, fallback: string): string =>
  * figure carries the basis it was computed on, because an exiting employee is
  * entitled to check the arithmetic and will ask.
  */
+/**
+ * Outstanding loans and salary advances the settlement recovers, as the
+ * server stores them in the breakdown. Money stays a decimal string.
+ */
+interface LoanRecoveryLine {
+  loanId: string;
+  type: string;
+  label: string;
+  outstanding: string;
+  recovered: string;
+  unrecovered: string;
+}
+
+interface LoanRecovery {
+  loans: LoanRecoveryLine[];
+  total: string;
+  unrecovered: string;
+  note?: string;
+}
+
+/** The loan block of a breakdown, or null for one computed before it existed. */
+function readLoanRecovery(breakdown: unknown): LoanRecovery | null {
+  const block = (breakdown as { loanRecovery?: Partial<LoanRecovery> } | null | undefined)
+    ?.loanRecovery;
+  if (!block || !Array.isArray(block.loans)) return null;
+  return {
+    loans: block.loans,
+    total: block.total ?? '0',
+    unrecovered: block.unrecovered ?? '0',
+    note: block.note,
+  };
+}
+
+const isPositive = (value: string) => /^\d*\.?\d+$/.test(value) && Number(value) > 0;
+
+function LoanRecoveryCard({ recovery }: { recovery: LoanRecovery }) {
+  return (
+    <Card data-testid="loan-recovery">
+      <CardContent className="space-y-3 py-4">
+        <h3 className="font-semibold text-warm-900">Outstanding loans recovered</h3>
+        <table className="w-full text-sm">
+          <thead className="text-left text-warm-500">
+            <tr>
+              <th className="py-1 pr-3 font-medium">Line</th>
+              <th className="py-1 pr-3 text-right font-medium">Owed</th>
+              <th className="py-1 pr-3 text-right font-medium">Recovered</th>
+              <th className="py-1 text-right font-medium">Unrecovered</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-warm-100">
+            {recovery.loans.map((line) => (
+              <tr key={line.loanId}>
+                <td className="py-2 pr-3 text-warm-700">{line.label}</td>
+                <td className="py-2 pr-3 text-right">{formatMoney(line.outstanding)}</td>
+                <td className="py-2 pr-3 text-right font-medium text-red-600">
+                  {formatMoney(line.recovered)}
+                </td>
+                <td className="py-2 text-right">{formatMoney(line.unrecovered)}</td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t border-warm-200 font-medium">
+              <td className="py-2 pr-3">Total loan recovery</td>
+              <td />
+              <td className="py-2 pr-3 text-right text-red-600">
+                {formatMoney(recovery.total)}
+              </td>
+              <td className="py-2 text-right">{formatMoney(recovery.unrecovered)}</td>
+            </tr>
+          </tfoot>
+        </table>
+        {isPositive(recovery.unrecovered) && (
+          <div
+            data-testid="loan-unrecovered"
+            className="flex gap-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-900"
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <p>
+              {formatMoney(recovery.unrecovered)} could not be recovered because the
+              settlement cannot go below zero. It is still owed on the loan and has
+              to be collected separately.
+            </p>
+          </div>
+        )}
+        {recovery.note && <p className="text-xs text-warm-500">{recovery.note}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function SettlementDetailPage() {
   const params = useParams<{ separationId: string }>();
   const separationId = params?.separationId as string;
@@ -229,6 +320,7 @@ export default function SettlementDetailPage() {
   const isDraft = settlement?.status === SettlementStatus.DRAFT;
   const employee = settlement?.employee ?? separation?.employee;
   const lastWorkingDate = settlement?.lastWorkingDate ?? separation?.lastWorkingDate;
+  const loanRecovery = readLoanRecovery(settlement?.breakdown);
 
   if (loading) {
     return (
@@ -386,6 +478,11 @@ export default function SettlementDetailPage() {
                 </CardContent>
               </Card>
             </div>
+
+            {/* Outstanding loans recovered from the settlement */}
+            {loanRecovery && loanRecovery.loans.length > 0 && (
+              <LoanRecoveryCard recovery={loanRecovery} />
+            )}
 
             {/* The working */}
             {settlement.breakdown ? (

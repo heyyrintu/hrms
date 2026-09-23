@@ -40,6 +40,13 @@ import {
 import type { Section89YearBasis } from './section-89-relief';
 import type { IncomeTaxConfigInput } from '../../payroll/statutory/statutory.calculators';
 import { ComputeSettlementDto, UpdateSettlementDto } from './dto/settlement.dto';
+import { ClosedLoan, LoansService } from '../../loans/loans.service';
+import {
+  allocateLoanRecovery,
+  LoanRecoveryResult,
+  readStoredLoanRecovery,
+  toStoredLoanRecovery,
+} from './loan-recovery';
 
 /**
  * Full and final settlement for a leaver.
@@ -89,6 +96,16 @@ import { ComputeSettlementDto, UpdateSettlementDto } from './dto/settlement.dto'
  *   requires before an employer may compute it, and gratuity is out of the
  *   relief base entirely because rule 21A(3) prescribes a method this system
  *   has no earlier-year incomes for. Both refusals carry their reason.
+ *
+ * **Outstanding loans and salary advances are recovered**, one labelled line
+ * per loan in the breakdown's `loanRecovery` block, added to
+ * `totalRecoveries`. They come off only what is left after notice, other
+ * recoveries and TDS, and never take the net below zero; anything that could
+ * not be recovered is reported as unrecovered and stays owed on the loan.
+ * Compute reads live balances; approval writes the SETTLEMENT repayments in
+ * the same transaction and refuses if a balance has moved since. (There is no
+ * dedicated column for the loan figure — it lives in the breakdown and in
+ * `totalRecoveries` — because the schema was not this change's to alter.)
  *
  * What this deliberately does NOT do:
  *
@@ -220,7 +237,10 @@ type StoredTaxComputation = SettlementTaxWorking & { override: TdsOverride | nul
 export class SettlementService {
   private readonly logger = new Logger(SettlementService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private loansService: LoansService,
+  ) {}
 
   /**
    * Loaded alongside every settlement so a caller has enough to render it
@@ -458,15 +478,30 @@ export class SettlementService {
       override,
     });
 
-    const totals = this.computeTotals({
-      proRataSalary: proRata.amount,
-      leaveEncashment: encashment.amount,
-      gratuity: gratuity.amount,
-      otherEarnings: zero,
-      noticeRecovery: notice.amount,
-      otherRecoveries: zero,
-      tds: tax.tds,
-    });
+    // Outstanding loans and salary advances, read as they stand now, so a
+    // recompute reflects every repayment made since the last one. They are
+    // recovered from what is left once everything else has come off, and
+    // never past zero; see `loan-recovery.ts`.
+    const outstandingLoans = await this.loansService.getOutstandingForSettlement(
+      tenantId,
+      separation.employeeId,
+    );
+    const { totals, loanRecovery } = this.totalsWithLoanRecovery(
+      {
+        proRataSalary: proRata.amount,
+        leaveEncashment: encashment.amount,
+        gratuity: gratuity.amount,
+        otherEarnings: zero,
+        noticeRecovery: notice.amount,
+        otherRecoveries: zero,
+        tds: tax.tds,
+      },
+      outstandingLoans.map((loan) => ({
+        loanId: loan.loanId,
+        type: loan.type,
+        outstanding: new Decimal(loan.outstanding),
+      })),
+    );
 
     const breakdown = {
       computedAt: new Date().toISOString(),
@@ -528,6 +563,7 @@ export class SettlementService {
         amount: notice.amount.toFixed(2),
         note: 'Simple daily rate: monthly gross / calendar days in the final month',
       },
+      loanRecovery: toStoredLoanRecovery(loanRecovery),
       // Named as the payslip names its own, and holding the same kind of thing:
       // everything needed to answer "why was this much deducted".
       taxComputation: tax.working,
@@ -680,15 +716,26 @@ export class SettlementService {
       tds = money(new Decimal(storedTax?.computedTds ?? 0));
     }
 
-    const totals = this.computeTotals({
-      proRataSalary: new Decimal(settlement.proRataSalary),
-      leaveEncashment: new Decimal(settlement.leaveEncashment),
-      gratuity: new Decimal(settlement.gratuity),
-      otherEarnings,
-      noticeRecovery: new Decimal(settlement.noticeRecovery),
-      otherRecoveries,
-      tds,
-    });
+    // The loan recovery is re-clamped against what the settlement can now
+    // bear, from the balances it was computed against. Re-reading live
+    // balances is recompute's job; an edit to an unrelated figure must not
+    // quietly move a loan deduction onto numbers nobody reviewed.
+    const storedLoans = this.readLoanLines(settlement.breakdown, 'saved');
+    const { totals, loanRecovery } = this.totalsWithLoanRecovery(
+      {
+        proRataSalary: new Decimal(settlement.proRataSalary),
+        leaveEncashment: new Decimal(settlement.leaveEncashment),
+        gratuity: new Decimal(settlement.gratuity),
+        otherEarnings,
+        noticeRecovery: new Decimal(settlement.noticeRecovery),
+        otherRecoveries,
+        tds,
+      },
+      storedLoans,
+    );
+    const hadLoanBlock = Boolean(
+      (settlement.breakdown as { loanRecovery?: unknown } | null)?.loanRecovery,
+    );
 
     // The breakdown's totals section is refreshed so the working shown to the
     // leaver keeps agreeing with the stored figures, and the tax block records
@@ -701,6 +748,7 @@ export class SettlementService {
     const breakdown = {
       ...((settlement.breakdown as Record<string, unknown>) ?? {}),
       ...(nextTax ? { taxComputation: nextTax } : {}),
+      ...(hadLoanBlock ? { loanRecovery: toStoredLoanRecovery(loanRecovery) } : {}),
       totals: this.breakdownTotals(totals),
     };
 
@@ -727,20 +775,72 @@ export class SettlementService {
     }
   }
 
-  /** DRAFT -> APPROVED. */
+  /**
+   * DRAFT -> APPROVED, and the loan recoveries it carries are written against
+   * the loans in the same transaction.
+   *
+   * Approval, not payment, is where the recovery is recorded, because
+   * approval is where the money is committed: from here the figures can no
+   * longer be recomputed or edited, so the loan deduction inside `netPayable`
+   * is final, and marking paid only records that the agreed sum went out.
+   * Recording at payment instead would leave the loan ACTIVE between the two,
+   * where a payroll run for the leaver's last month would take an EMI the
+   * settlement has already deducted — and the settlement, being approved,
+   * could no longer be recomputed to absorb it.
+   *
+   * The loans service refuses (409, nothing approved) if any balance moved
+   * since the settlement was computed; the fix is to recompute the draft.
+   */
   async approve(tenantId: string, id: string, approvedBy: string) {
-    await this.assertStatus(tenantId, id, SettlementStatus.DRAFT, 'approved');
-
-    return this.transition(
+    const settlement = await this.assertStatus(
+      tenantId,
       id,
       SettlementStatus.DRAFT,
-      {
-        status: SettlementStatus.APPROVED,
-        approvedBy,
-        approvedAt: new Date(),
-      },
-      'Settlement is no longer a draft',
+      'approved',
     );
+    const lines = this.readLoanLines(settlement.breakdown, 'approved');
+
+    // The settlement's own month, read in UTC as every other date here is.
+    const lastWorkingDate = settlement.lastWorkingDate
+      ? new Date(settlement.lastWorkingDate)
+      : new Date();
+
+    let closed: ClosedLoan[] = [];
+    const approved = await this.prisma.$transaction(async (tx) => {
+      const updated = await this.transition(
+        id,
+        SettlementStatus.DRAFT,
+        {
+          status: SettlementStatus.APPROVED,
+          approvedBy,
+          approvedAt: new Date(),
+        },
+        'Settlement is no longer a draft',
+        tx,
+      );
+
+      // Called even with no lines: a settlement computed before loans were
+      // recovered carries none, and the loans service then refuses if the
+      // leaver still owes anything rather than letting it be paid in full.
+      const result = await this.loansService.recordSettlementRepayments(tx, {
+        tenantId,
+        employeeId: settlement.employeeId,
+        settlementId: id,
+        month: lastWorkingDate.getUTCMonth() + 1,
+        year: lastWorkingDate.getUTCFullYear(),
+        lines: lines.map((line) => ({
+          loanId: line.loanId,
+          amount: Number(line.recovered.toFixed(2)),
+          outstandingAtCompute: Number(line.outstanding.toFixed(2)),
+        })),
+      });
+      closed = result?.closed ?? [];
+      return updated;
+    });
+
+    // Only once the approval has committed is a closed loan announced.
+    await this.loansService.notifyLoansClosed(tenantId, closed);
+    return approved;
   }
 
   /** APPROVED -> PAID. Paying an unapproved settlement is the failure this guards. */
@@ -768,7 +868,14 @@ export class SettlementService {
   ) {
     const settlement = await this.prisma.settlement.findFirst({
       where: { id, tenantId },
-      select: { id: true, status: true },
+      // What approval needs to write the loan recoveries it carries.
+      select: {
+        id: true,
+        status: true,
+        employeeId: true,
+        lastWorkingDate: true,
+        breakdown: true,
+      },
     });
     if (!settlement) throw new NotFoundException('Settlement not found');
     if (settlement.status !== required) {
@@ -788,9 +895,10 @@ export class SettlementService {
     from: SettlementStatus,
     data: Prisma.SettlementUpdateInput,
     conflictMessage: string,
+    client: Prisma.TransactionClient = this.prisma,
   ) {
     try {
-      return await this.prisma.settlement.update({
+      return await client.settlement.update({
         where: { id, status: from },
         data,
         include: this.include,
@@ -1302,12 +1410,13 @@ export class SettlementService {
 
   /**
    * grossPayable = pro-rata + encashment + gratuity + other earnings
-   * totalRecoveries = notice recovery + other recoveries
+   * totalRecoveries = notice recovery + other recoveries + loan recovery
    * netPayable = grossPayable - totalRecoveries - tds
    *
    * The net may be negative: a leaver who served little of a long notice period
    * can owe the employer, and hiding that behind a floor of zero would misstate
-   * what is due.
+   * what is due. The loan recovery alone never pushes it there — see
+   * `totalsWithLoanRecovery`.
    */
   private computeTotals(parts: {
     proRataSalary: Decimal;
@@ -1317,17 +1426,59 @@ export class SettlementService {
     noticeRecovery: Decimal;
     otherRecoveries: Decimal;
     tds: Decimal;
+    loanRecovery?: Decimal;
   }) {
+    const loanRecovery = parts.loanRecovery ?? new Decimal(0);
     const grossPayable = money(
       parts.proRataSalary
         .add(parts.leaveEncashment)
         .add(parts.gratuity)
         .add(parts.otherEarnings),
     );
-    const totalRecoveries = money(parts.noticeRecovery.add(parts.otherRecoveries));
+    const totalRecoveries = money(
+      parts.noticeRecovery.add(parts.otherRecoveries).add(loanRecovery),
+    );
     const netPayable = money(grossPayable.sub(totalRecoveries).sub(parts.tds));
 
-    return { ...parts, grossPayable, totalRecoveries, netPayable };
+    return { ...parts, loanRecovery, grossPayable, totalRecoveries, netPayable };
+  }
+
+  /**
+   * The totals with outstanding loans recovered out of what is left.
+   *
+   * Worked out in two passes: the net before any loan is what the settlement
+   * can bear, the loans are allocated against that (never below zero), and
+   * the totals are then taken again with the recovery in them. Tax is already
+   * fixed by then — a loan repayment does not reduce taxable income — so the
+   * statutory deduction always comes before the employer's own set-off.
+   */
+  private totalsWithLoanRecovery(
+    parts: Parameters<SettlementService['computeTotals']>[0],
+    loans: { loanId: string; type: string; outstanding: Decimal }[],
+  ): {
+    totals: ReturnType<SettlementService['computeTotals']>;
+    loanRecovery: LoanRecoveryResult;
+  } {
+    const beforeLoans = this.computeTotals({ ...parts, loanRecovery: undefined });
+    const loanRecovery = allocateLoanRecovery(loans, beforeLoans.netPayable);
+    return {
+      totals: this.computeTotals({ ...parts, loanRecovery: loanRecovery.total }),
+      loanRecovery,
+    };
+  }
+
+  /**
+   * The loan lines a stored breakdown carries. One that will not parse is a
+   * 409 asking for a recompute: these figures become repayment rows.
+   */
+  private readLoanLines(breakdown: unknown, action: string) {
+    try {
+      return readStoredLoanRecovery(breakdown);
+    } catch {
+      throw new ConflictException(
+        `The loan recovery stored on this settlement cannot be read, so it cannot be ${action}. Recompute it first.`,
+      );
+    }
   }
 
   /** The totals section of the breakdown, as fixed-point strings. */
@@ -1340,11 +1491,12 @@ export class SettlementService {
       grossPayable: totals.grossPayable.toFixed(2),
       noticeRecovery: totals.noticeRecovery.toFixed(2),
       otherRecoveries: totals.otherRecoveries.toFixed(2),
+      loanRecovery: totals.loanRecovery.toFixed(2),
       totalRecoveries: totals.totalRecoveries.toFixed(2),
       tds: totals.tds.toFixed(2),
       netPayable: totals.netPayable.toFixed(2),
       formula:
-        'net = (pro-rata + encashment + gratuity + other earnings) - (notice recovery + other recoveries) - TDS',
+        'net = (pro-rata + encashment + gratuity + other earnings) - (notice recovery + other recoveries + loan recovery) - TDS',
     };
   }
 }
