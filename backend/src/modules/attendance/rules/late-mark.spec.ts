@@ -94,6 +94,43 @@ describe('computeLateMark', () => {
     });
   });
 
+  describe('overnight shift (22:00-06:00)', () => {
+    const late = (at: string, grace: number) =>
+      computeLateMark(new Date(at), '22:00', grace, undefined, '06:00');
+
+    it('scores a punch after midnight against 22:00 of the previous day', () => {
+      // 00:30 IST on the 17th -> 2h30 past 22:00 on the 16th.
+      expect(late('2026-03-16T19:00:00Z', 0)).toEqual({
+        isLate: true,
+        lateByMinutes: 150,
+      });
+      // Same punch, 15 minutes grace -> counted from 22:15.
+      expect(late('2026-03-16T19:00:00Z', 15)).toEqual({
+        isLate: true,
+        lateByMinutes: 135,
+      });
+    });
+
+    it('is not late for an early punch before the start', () => {
+      // 21:55 IST on the 16th.
+      expect(late('2026-03-16T16:25:00Z', 0)).toEqual({ isLate: false, lateByMinutes: 0 });
+    });
+
+    it('honours grace and counts late minutes on the start day before midnight', () => {
+      // 22:10 IST -> inside 15 minutes grace.
+      expect(late('2026-03-16T16:40:00Z', 15)).toEqual({ isLate: false, lateByMinutes: 0 });
+      // 23:00 IST -> 45 minutes past 22:15.
+      expect(late('2026-03-16T17:30:00Z', 15)).toEqual({ isLate: true, lateByMinutes: 45 });
+    });
+
+    it('leaves a same-day shift unchanged when its end time is passed in', () => {
+      // 09:42 IST against 09:00-18:00, grace 15.
+      expect(
+        computeLateMark(new Date('2026-03-15T04:12:00Z'), '09:00', 15, undefined, '18:00'),
+      ).toEqual({ isLate: true, lateByMinutes: 27 });
+    });
+  });
+
   it('honours an explicit time zone', () => {
     // 03:30 UTC is 03:30 in UTC itself, which is well before a 09:00 start.
     expect(computeLateMark(new Date('2026-03-15T03:30:00Z'), '09:00', 0, 'UTC')).toEqual({

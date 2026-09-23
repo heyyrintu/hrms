@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException, ConflictException } from '@nestjs/common';
+import { NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { ShiftsService } from './shifts.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createMockPrismaService } from '../../test/helpers';
@@ -59,9 +59,61 @@ describe('ShiftsService', () => {
           breakMinutes: 60,
           standardWorkMinutes: 480,
           graceMinutes: 15,
+          isOvernight: false,
         },
       });
       expect(result).toEqual(created);
+    });
+
+    it('derives isOvernight when the end time is on the next day', async () => {
+      prisma.shift.findFirst.mockResolvedValue(null);
+      prisma.shift.create.mockResolvedValue({ id: 's3' });
+
+      await service.createShift('tenant-1', {
+        name: 'Night',
+        code: 'NIGHT',
+        startTime: '22:00',
+        endTime: '06:00',
+      });
+
+      expect(prisma.shift.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ isOvernight: true }),
+      });
+    });
+
+    it('accepts an explicit isOvernight that agrees with the times', async () => {
+      prisma.shift.findFirst.mockResolvedValue(null);
+      prisma.shift.create.mockResolvedValue({ id: 's3' });
+
+      await service.createShift('tenant-1', {
+        name: 'Night',
+        code: 'NIGHT',
+        startTime: '22:00',
+        endTime: '06:00',
+        isOvernight: true,
+      });
+
+      expect(prisma.shift.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ isOvernight: true }),
+      });
+    });
+
+    it('rejects an isOvernight that contradicts the times', async () => {
+      prisma.shift.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.createShift('tenant-1', {
+          name: 'Night',
+          code: 'NIGHT',
+          startTime: '22:00',
+          endTime: '06:00',
+          isOvernight: false,
+        }),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.createShift('tenant-1', { ...dto, isOvernight: true }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.shift.create).not.toHaveBeenCalled();
     });
 
     it('should use default values when optional fields are not provided', async () => {
@@ -193,6 +245,57 @@ describe('ShiftsService', () => {
       await expect(
         service.updateShift('tenant-1', 's1', dtoWithCode),
       ).rejects.toThrow(ConflictException);
+    });
+
+    it('re-derives isOvernight from the stored start when only the end changes', async () => {
+      prisma.shift.findFirst.mockResolvedValue({
+        id: 's1',
+        tenantId: 'tenant-1',
+        startTime: '22:00',
+        endTime: '23:30',
+        isOvernight: false,
+      });
+      prisma.shift.update.mockResolvedValue({ id: 's1' });
+
+      await service.updateShift('tenant-1', 's1', { endTime: '06:00' });
+
+      expect(prisma.shift.update).toHaveBeenCalledWith({
+        where: { id: 's1' },
+        data: { endTime: '06:00', isOvernight: true },
+      });
+    });
+
+    it('clears isOvernight when the times stop crossing midnight', async () => {
+      prisma.shift.findFirst.mockResolvedValue({
+        id: 's1',
+        tenantId: 'tenant-1',
+        startTime: '22:00',
+        endTime: '06:00',
+        isOvernight: true,
+      });
+      prisma.shift.update.mockResolvedValue({ id: 's1' });
+
+      await service.updateShift('tenant-1', 's1', { startTime: '01:00' });
+
+      expect(prisma.shift.update).toHaveBeenCalledWith({
+        where: { id: 's1' },
+        data: { startTime: '01:00', isOvernight: false },
+      });
+    });
+
+    it('rejects an isOvernight that contradicts the stored times', async () => {
+      prisma.shift.findFirst.mockResolvedValue({
+        id: 's1',
+        tenantId: 'tenant-1',
+        startTime: '09:00',
+        endTime: '18:00',
+        isOvernight: false,
+      });
+
+      await expect(
+        service.updateShift('tenant-1', 's1', { isOvernight: true }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.shift.update).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException if shift does not exist', async () => {

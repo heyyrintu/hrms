@@ -10,6 +10,30 @@ import {
   UpdateShiftDto,
   AssignShiftDto,
 } from './dto/shift.dto';
+import { isOvernightShift } from '../attendance/rules/late-mark';
+
+/**
+ * `isOvernight` is DERIVED from the times — endTime <= startTime means the
+ * shift ends on the next calendar day (22:00-06:00; an equal pair is a 24-hour
+ * shift) — so it can never disagree with them. A client may still send it, but
+ * a value that contradicts the times is a client bug and is rejected with 400
+ * rather than silently overwritten.
+ */
+function deriveOvernight(
+  startTime: string,
+  endTime: string,
+  requested: boolean | undefined,
+): boolean {
+  const derived = isOvernightShift(startTime, endTime);
+  if (requested !== undefined && requested !== derived) {
+    throw new BadRequestException(
+      derived
+        ? `A ${startTime}-${endTime} shift ends on the next day, so isOvernight must be true`
+        : `A ${startTime}-${endTime} shift ends the same day, so isOvernight must be false`,
+    );
+  }
+  return derived;
+}
 
 @Injectable()
 export class ShiftsService {
@@ -26,6 +50,8 @@ export class ShiftsService {
       throw new ConflictException(`Shift with code "${dto.code}" already exists`);
     }
 
+    const isOvernight = deriveOvernight(dto.startTime, dto.endTime, dto.isOvernight);
+
     return this.prisma.shift.create({
       data: {
         tenantId,
@@ -36,6 +62,7 @@ export class ShiftsService {
         breakMinutes: dto.breakMinutes ?? 60,
         standardWorkMinutes: dto.standardWorkMinutes ?? 480,
         graceMinutes: dto.graceMinutes ?? 15,
+        isOvernight,
       },
     });
   }
@@ -60,7 +87,7 @@ export class ShiftsService {
   }
 
   async updateShift(tenantId: string, id: string, dto: UpdateShiftDto) {
-    await this.findShiftById(tenantId, id);
+    const current = await this.findShiftById(tenantId, id);
 
     if (dto.code) {
       const existing = await this.prisma.shift.findFirst({
@@ -71,9 +98,21 @@ export class ShiftsService {
       }
     }
 
+    // Only touch the flag when something that decides it was sent; a rename
+    // leaves it exactly as stored.
+    const { isOvernight: requested, ...rest } = dto;
+    const data: UpdateShiftDto = { ...rest };
+    if (dto.startTime !== undefined || dto.endTime !== undefined || requested !== undefined) {
+      data.isOvernight = deriveOvernight(
+        dto.startTime ?? current.startTime,
+        dto.endTime ?? current.endTime,
+        requested,
+      );
+    }
+
     return this.prisma.shift.update({
       where: { id },
-      data: dto,
+      data,
     });
   }
 

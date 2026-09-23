@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { shiftsApi, employeesApi } from '@/lib/api';
+import { isOvernightShift, Shift, ShiftInput } from '@/lib/api-shifts';
 import { cn } from '@/lib/utils';
 import {
     Plus,
@@ -18,19 +19,8 @@ import {
     Users,
     UserPlus,
     Clock,
+    Moon,
 } from 'lucide-react';
-
-interface Shift {
-    id: string;
-    name: string;
-    code: string;
-    startTime: string;
-    endTime: string;
-    breakMinutes: number;
-    standardWorkMinutes: number;
-    graceMinutes: number;
-    isActive: boolean;
-}
 
 interface ShiftAssignment {
     id: string;
@@ -52,7 +42,7 @@ interface Employee {
 
 type TabType = 'shifts' | 'assignments';
 
-const emptyShiftForm = {
+const emptyShiftForm: ShiftInput = {
     name: '',
     code: '',
     startTime: '09:00',
@@ -343,6 +333,15 @@ export default function ShiftsAdminPage() {
                                                         <span className="text-xs text-warm-500">
                                                             {shift.code}
                                                         </span>
+                                                        {isOvernightShift(
+                                                            shift.startTime,
+                                                            shift.endTime
+                                                        ) && (
+                                                            <Badge variant="info" className="ml-2">
+                                                                <Moon className="w-3 h-3 mr-1 inline" />
+                                                                Overnight
+                                                            </Badge>
+                                                        )}
                                                     </div>
                                                 </div>
                                                 <div className="flex gap-1">
@@ -474,7 +473,14 @@ export default function ShiftsAdminPage() {
                                                     <td className="px-4 py-3 text-sm text-warm-600">
                                                         {assignment.shift?.startTime &&
                                                         assignment.shift?.endTime
-                                                            ? `${formatTime(assignment.shift.startTime)} - ${formatTime(assignment.shift.endTime)}`
+                                                            ? `${formatTime(assignment.shift.startTime)} - ${formatTime(assignment.shift.endTime)}${
+                                                                  isOvernightShift(
+                                                                      assignment.shift.startTime,
+                                                                      assignment.shift.endTime
+                                                                  )
+                                                                      ? ' (+1 day)'
+                                                                      : ''
+                                                              }`
                                                             : '—'}
                                                     </td>
                                                     <td className="px-4 py-3 text-sm text-warm-600">
@@ -553,10 +559,14 @@ export default function ShiftsAdminPage() {
 
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-warm-700 mb-1">
+                            <label
+                                htmlFor="shift-start-time"
+                                className="block text-sm font-medium text-warm-700 mb-1"
+                            >
                                 Start Time *
                             </label>
                             <input
+                                id="shift-start-time"
                                 type="time"
                                 value={shiftForm.startTime}
                                 onChange={(e) =>
@@ -566,10 +576,14 @@ export default function ShiftsAdminPage() {
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-warm-700 mb-1">
+                            <label
+                                htmlFor="shift-end-time"
+                                className="block text-sm font-medium text-warm-700 mb-1"
+                            >
                                 End Time *
                             </label>
                             <input
+                                id="shift-end-time"
                                 type="time"
                                 value={shiftForm.endTime}
                                 onChange={(e) =>
@@ -579,6 +593,16 @@ export default function ShiftsAdminPage() {
                             />
                         </div>
                     </div>
+
+                    {/* Derived, not a checkbox: the server computes isOvernight
+                        from the times and rejects a value that disagrees. */}
+                    {isOvernightShift(shiftForm.startTime, shiftForm.endTime) && (
+                        <p className="flex items-center gap-2 text-sm text-primary-700 bg-primary-50 rounded-lg px-3 py-2">
+                            <Moon className="w-4 h-4" />
+                            Overnight shift: ends the next day. Punches after midnight
+                            count towards the day the shift started.
+                        </p>
+                    )}
 
                     <div className="grid grid-cols-3 gap-4">
                         <div>

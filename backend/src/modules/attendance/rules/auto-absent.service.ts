@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { isOvernightShift } from './late-mark';
 
 /** What one day's sweep did for one tenant. */
 export interface AutoAbsentResult {
@@ -16,6 +17,19 @@ export interface AutoAbsentRunResult extends AutoAbsentResult {
 }
 
 const ABSENT_STANDARD_WORK_MINUTES = 480;
+
+/**
+ * Which employees a sweep covers. A night shift that starts on day D ends on
+ * D+1, and its after-midnight punches are filed under D, so D cannot be closed
+ * for night-shift employees at the same moment as for everyone else.
+ *
+ * - ALL: everyone (a past day swept by hand, when every shift has ended).
+ * - DAY_SHIFTS: everyone except employees on an overnight shift that day.
+ * - NIGHT_SHIFTS: only employees on an overnight shift that day.
+ */
+export type AutoAbsentScope = 'ALL' | 'DAY_SHIFTS' | 'NIGHT_SHIFTS';
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
  * Sweeps a calendar day and records ABSENT for everyone who left no trace.
@@ -41,7 +55,11 @@ export class AutoAbsentService {
    * in `runForAllTenants`, so HR can still sweep a past day by hand from
    * `POST /attendance/mark-absent` on a tenant that leaves the cron off.
    */
-  async markAbsentForDate(tenantId: string, date: Date): Promise<AutoAbsentResult> {
+  async markAbsentForDate(
+    tenantId: string,
+    date: Date,
+    scope: AutoAbsentScope = 'ALL',
+  ): Promise<AutoAbsentResult> {
     const day = toDateOnlyUtc(date);
 
     // Saturday and Sunday are not working days anywhere this product ships.
@@ -69,7 +87,8 @@ export class AutoAbsentService {
       },
       select: { id: true },
     });
-    if (employees.length === 0) return { marked: 0, skipped: 0 };
+    const inScope = await this.filterByScope(tenantId, day, employees, scope);
+    if (inScope.length === 0) return { marked: 0, skipped: 0 };
 
     const [existing, leaves, compOffs] = await Promise.all([
       this.prisma.attendanceRecord.findMany({
@@ -99,7 +118,7 @@ export class AutoAbsentService {
       ...compOffs.map((c) => c.employeeId),
     ]);
 
-    const toCreate = employees
+    const toCreate = inScope
       .filter((e) => !accountedFor.has(e.id))
       .map((e) => ({
         tenantId,
@@ -111,7 +130,7 @@ export class AutoAbsentService {
         standardWorkMinutes: ABSENT_STANDARD_WORK_MINUTES,
       }));
 
-    const skipped = employees.length - toCreate.length;
+    const skipped = inScope.length - toCreate.length;
     if (toCreate.length === 0) return { marked: 0, skipped };
 
     const result = await this.prisma.attendanceRecord.createMany({
@@ -123,8 +142,47 @@ export class AutoAbsentService {
   }
 
   /**
-   * Sweep the day for every tenant that turned `autoMarkAbsent` on. One
-   * tenant's failure is logged and stepped over so the rest still run.
+   * Narrow the roster to the sweep's scope. Overnight-ness is derived from
+   * the shift times, not `Shift.isOvernight`, because rows that predate that
+   * column all default to false. When two assignments cover the day (a shift
+   * change: the old one ends the day the new one starts) the newest wins.
+   */
+  private async filterByScope(
+    tenantId: string,
+    day: Date,
+    employees: { id: string }[],
+    scope: AutoAbsentScope,
+  ): Promise<{ id: string }[]> {
+    if (scope === 'ALL' || employees.length === 0) return employees;
+
+    const assignments = await this.prisma.shiftAssignment.findMany({
+      where: {
+        tenantId,
+        startDate: { lte: day },
+        OR: [{ endDate: null }, { endDate: { gte: day } }],
+      },
+      select: { employeeId: true, shift: { select: { startTime: true, endTime: true } } },
+      orderBy: { startDate: 'desc' },
+    });
+
+    const overnight = new Set<string>();
+    const seen = new Set<string>();
+    for (const a of assignments) {
+      if (seen.has(a.employeeId)) continue;
+      seen.add(a.employeeId);
+      if (isOvernightShift(a.shift.startTime, a.shift.endTime)) overnight.add(a.employeeId);
+    }
+
+    return employees.filter((e) =>
+      scope === 'NIGHT_SHIFTS' ? overnight.has(e.id) : !overnight.has(e.id),
+    );
+  }
+
+  /**
+   * Close the day for every tenant that turned `autoMarkAbsent` on: `date`
+   * for day-shift employees, and the day before for night-shift employees,
+   * whose shift that started then has only now certainly ended. One tenant's
+   * failure is logged and stepped over so the rest still run.
    */
   async runForAllTenants(date: Date): Promise<AutoAbsentRunResult> {
     const policies = await this.prisma.attendancePolicy.findMany({
@@ -138,9 +196,15 @@ export class AutoAbsentService {
 
     for (const { tenantId } of policies) {
       try {
-        const result = await this.markAbsentForDate(tenantId, date);
-        marked += result.marked;
-        skipped += result.skipped;
+        const day = toDateOnlyUtc(date);
+        const previousDay = new Date(day.getTime() - MS_PER_DAY);
+        for (const result of [
+          await this.markAbsentForDate(tenantId, day, 'DAY_SHIFTS'),
+          await this.markAbsentForDate(tenantId, previousDay, 'NIGHT_SHIFTS'),
+        ]) {
+          marked += result.marked;
+          skipped += result.skipped;
+        }
       } catch (error) {
         failed += 1;
         this.logger.error(

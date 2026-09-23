@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AttendancePolicyService } from './attendance-policy.service';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -108,6 +109,40 @@ describe('AttendancePolicyService', () => {
       expect(prisma.attendancePolicy.update).toHaveBeenCalledWith({
         where: { tenantId },
         data: { lateMarksPerHalfDay: null },
+      });
+    });
+
+    it('rejects a half-day threshold above the full-day threshold', async () => {
+      prisma.attendancePolicy.findUnique.mockResolvedValue(storedPolicy);
+
+      await expect(
+        service.update(tenantId, { minHalfDayMinutes: 500, minFullDayMinutes: 480 }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.attendancePolicy.update).not.toHaveBeenCalled();
+    });
+
+    it('checks one threshold against the stored value of the other', async () => {
+      prisma.attendancePolicy.findUnique.mockResolvedValue(storedPolicy);
+
+      // Stored full day is 480.
+      await expect(
+        service.update(tenantId, { minHalfDayMinutes: 481 }),
+      ).rejects.toThrow(BadRequestException);
+      // Stored half day is 240.
+      await expect(
+        service.update(tenantId, { minFullDayMinutes: 200 }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('allows either threshold to be switched off with 0', async () => {
+      prisma.attendancePolicy.findUnique.mockResolvedValue(storedPolicy);
+      prisma.attendancePolicy.update.mockResolvedValue(storedPolicy);
+
+      await service.update(tenantId, { minFullDayMinutes: 0 });
+
+      expect(prisma.attendancePolicy.update).toHaveBeenCalledWith({
+        where: { tenantId },
+        data: { minFullDayMinutes: 0 },
       });
     });
 

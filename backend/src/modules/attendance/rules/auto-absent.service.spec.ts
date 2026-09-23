@@ -22,6 +22,7 @@ describe('AutoAbsentService', () => {
     prisma.leaveRequest.findMany.mockResolvedValue([]);
     prisma.compOffRequest.findMany.mockResolvedValue([]);
     prisma.attendanceRecord.createMany.mockResolvedValue({ count: 0 });
+    prisma.shiftAssignment.findMany.mockResolvedValue([]);
   }
 
   beforeEach(async () => {
@@ -211,6 +212,102 @@ describe('AutoAbsentService', () => {
         select: { employeeId: true },
       });
       expect(prisma.attendanceRecord.createMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('night shifts', () => {
+    const tuesday = new Date('2026-03-17T12:00:00Z');
+
+    function primeRoster() {
+      prisma.employee.findMany.mockResolvedValue([
+        { id: 'emp-day' },
+        { id: 'emp-night' },
+        { id: 'emp-none' },
+      ]);
+      prisma.shiftAssignment.findMany.mockResolvedValue([
+        { employeeId: 'emp-night', shift: { startTime: '22:00', endTime: '06:00' } },
+        { employeeId: 'emp-day', shift: { startTime: '09:00', endTime: '18:00' } },
+      ]);
+      prisma.attendanceRecord.createMany.mockImplementation(async ({ data }: any) => ({
+        count: data.length,
+      }));
+    }
+
+    const markedIds = (call = 0) =>
+      prisma.attendanceRecord.createMany.mock.calls[call][0].data.map(
+        (row: any) => row.employeeId,
+      );
+
+    it('leaves overnight-shift employees out of a day-shift sweep', async () => {
+      primeRoster();
+
+      await expect(
+        service.markAbsentForDate(tenantId, workday, 'DAY_SHIFTS'),
+      ).resolves.toEqual({ marked: 2, skipped: 0 });
+
+      expect(markedIds()).toEqual(['emp-day', 'emp-none']);
+      expect(prisma.shiftAssignment.findMany).toHaveBeenCalledWith({
+        where: {
+          tenantId,
+          startDate: { lte: workdayUtcMidnight },
+          OR: [{ endDate: null }, { endDate: { gte: workdayUtcMidnight } }],
+        },
+        select: { employeeId: true, shift: { select: { startTime: true, endTime: true } } },
+        orderBy: { startDate: 'desc' },
+      });
+    });
+
+    it('sweeps only overnight-shift employees in a night-shift sweep', async () => {
+      primeRoster();
+
+      await expect(
+        service.markAbsentForDate(tenantId, workday, 'NIGHT_SHIFTS'),
+      ).resolves.toEqual({ marked: 1, skipped: 0 });
+
+      expect(markedIds()).toEqual(['emp-night']);
+    });
+
+    it('uses the newest assignment when two cover the same day', async () => {
+      primeRoster();
+      // Moved from nights to days on this very day: the old assignment's end
+      // date equals the new one's start date, and newest-first wins.
+      prisma.shiftAssignment.findMany.mockResolvedValue([
+        { employeeId: 'emp-night', shift: { startTime: '09:00', endTime: '18:00' } },
+        { employeeId: 'emp-night', shift: { startTime: '22:00', endTime: '06:00' } },
+      ]);
+
+      await service.markAbsentForDate(tenantId, workday, 'DAY_SHIFTS');
+
+      expect(markedIds()).toEqual(['emp-day', 'emp-night', 'emp-none']);
+    });
+
+    it('sweeps everyone, without reading shifts, when no scope is given', async () => {
+      primeRoster();
+
+      await service.markAbsentForDate(tenantId, workday);
+
+      expect(prisma.shiftAssignment.findMany).not.toHaveBeenCalled();
+      expect(markedIds()).toEqual(['emp-day', 'emp-night', 'emp-none']);
+    });
+
+    it('nightly run closes today for day shifts and yesterday for night shifts', async () => {
+      prisma.attendancePolicy.findMany.mockResolvedValue([{ tenantId }]);
+      primeRoster();
+
+      const result = await service.runForAllTenants(tuesday);
+
+      const calls = prisma.attendanceRecord.createMany.mock.calls.map(([arg]: any) => ({
+        date: arg.data[0].date.toISOString(),
+        ids: arg.data.map((row: any) => row.employeeId),
+      }));
+      expect(calls).toEqual(
+        expect.arrayContaining([
+          { date: '2026-03-17T00:00:00.000Z', ids: ['emp-day', 'emp-none'] },
+          { date: '2026-03-16T00:00:00.000Z', ids: ['emp-night'] },
+        ]),
+      );
+      expect(calls).toHaveLength(2);
+      expect(result).toEqual({ tenants: 1, marked: 3, skipped: 0, failed: 0 });
     });
   });
 

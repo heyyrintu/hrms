@@ -6,6 +6,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OtCalculationService } from './ot-calculation.service';
 import {
+  AttendancePolicyService,
+  ATTENDANCE_POLICY_DEFAULTS,
+} from './policy/attendance-policy.service';
+import {
   createMockPrismaService,
   createMockNotificationsService,
 } from '../../test/helpers';
@@ -14,6 +18,7 @@ describe('RegularizationService', () => {
   let service: RegularizationService;
   let prisma: any;
   let otCalculation: { getOtRule: jest.Mock; calculateOtMinutes: jest.Mock };
+  let policyService: { getOrCreate: jest.Mock };
 
   const tenantId = 'test-tenant';
   const approverId = 'emp-manager';
@@ -49,12 +54,21 @@ describe('RegularizationService', () => {
             calculateOtMinutes: jest.fn().mockReturnValue(60),
           },
         },
+        {
+          provide: AttendancePolicyService,
+          useValue: {
+            getOrCreate: jest
+              .fn()
+              .mockResolvedValue({ id: 'pol-1', tenantId, ...ATTENDANCE_POLICY_DEFAULTS }),
+          },
+        },
       ],
     }).compile();
 
     service = module.get(RegularizationService);
     prisma = module.get(PrismaService);
     otCalculation = module.get(OtCalculationService);
+    policyService = module.get(AttendancePolicyService);
   });
 
   // `AttendanceRecord.date` is `@db.Date`, and the clock-in path and the
@@ -148,6 +162,87 @@ describe('RegularizationService', () => {
       expect(prisma.attendanceRegularization.update).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'reg-1', status: 'PENDING' } }),
       );
+    });
+
+    describe('worked-hours classification', () => {
+      function primeApprove(
+        requestedClockOut: string,
+        existing: Record<string, unknown> | null = {
+          id: 'att-1',
+          status: 'PRESENT',
+          standardWorkMinutes: 480,
+        },
+      ) {
+        prisma.attendanceRegularization.findFirst.mockResolvedValue({
+          ...pendingRequest,
+          requestedClockOut: new Date(requestedClockOut),
+        });
+        prisma.attendanceRegularization.update.mockResolvedValue({
+          ...pendingRequest,
+          status: 'APPROVED',
+        });
+        prisma.employee.findFirst.mockResolvedValue({ id: 'emp-1', employmentType: 'PERMANENT' });
+        prisma.attendanceRecord.findUnique.mockResolvedValue(existing);
+        prisma.attendanceRecord.update.mockResolvedValue({});
+        prisma.attendanceRecord.create.mockResolvedValue({ id: 'att-new' });
+      }
+
+      const statusWritten = () =>
+        (prisma.attendanceRecord.update.mock.calls[0] ??
+          prisma.attendanceRecord.create.mock.calls[0])[0].data.status;
+
+      it('keeps a regularized full day PRESENT', async () => {
+        // 03:30 -> 12:30 UTC is 540 minutes.
+        primeApprove('2025-03-15T12:30:00Z');
+
+        await service.approve(tenantId, 'reg-1', approverId, UserRole.MANAGER, {});
+
+        expect(policyService.getOrCreate).toHaveBeenCalledWith(tenantId);
+        expect(statusWritten()).toBe('PRESENT');
+      });
+
+      it('makes regularized hours between the thresholds a HALF_DAY', async () => {
+        // 03:30 -> 08:30 UTC is 300 minutes.
+        primeApprove('2025-03-15T08:30:00Z');
+
+        await service.approve(tenantId, 'reg-1', approverId, UserRole.MANAGER, {});
+
+        expect(statusWritten()).toBe('HALF_DAY');
+      });
+
+      it('makes regularized hours short of a half day ABSENT, on a new record too', async () => {
+        // 03:30 -> 06:30 UTC is 180 minutes.
+        primeApprove('2025-03-15T06:30:00Z', null);
+
+        await service.approve(tenantId, 'reg-1', approverId, UserRole.MANAGER, {});
+
+        expect(statusWritten()).toBe('ABSENT');
+      });
+
+      it('keeps a full work-from-home day as WFH', async () => {
+        primeApprove('2025-03-15T12:30:00Z', {
+          id: 'att-1',
+          status: 'WFH',
+          standardWorkMinutes: 480,
+        });
+
+        await service.approve(tenantId, 'reg-1', approverId, UserRole.MANAGER, {});
+
+        expect(statusWritten()).toBe('WFH');
+      });
+
+      it('falls back to PRESENT when the tenant switched both thresholds off', async () => {
+        policyService.getOrCreate.mockResolvedValue({
+          ...ATTENDANCE_POLICY_DEFAULTS,
+          minHalfDayMinutes: 0,
+          minFullDayMinutes: 0,
+        });
+        primeApprove('2025-03-15T04:00:00Z');
+
+        await service.approve(tenantId, 'reg-1', approverId, UserRole.MANAGER, {});
+
+        expect(statusWritten()).toBe('PRESENT');
+      });
     });
 
     it('should throw ConflictException and not rewrite attendance when already processed concurrently', async () => {
