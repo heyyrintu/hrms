@@ -9,15 +9,19 @@ import {
   LoanStatus,
   LoanType,
   NotificationType,
+  Prisma,
   RepaymentSource,
   UserRole,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import {
   buildSchedule,
+  computeArrears,
   computeEmi,
   computeTotalPayable,
+  LoanArrears,
   round2,
   ScheduleRow,
 } from './loan-schedule';
@@ -72,11 +76,43 @@ export interface PayrollRepaymentLine {
   amount: number;
 }
 
+/** A leaver's loan still owed, as the final settlement reads it. */
+export interface SettlementOutstandingLoan {
+  loanId: string;
+  type: LoanType;
+  outstanding: number;
+}
+
+/** What a committed settlement recovered, loan by loan. */
+export interface SettlementRecoveryInput {
+  tenantId: string;
+  employeeId: string;
+  settlementId: string;
+  /** The settlement's month (the last working day's), for the repayment row. */
+  month: number;
+  year: number;
+  lines: {
+    loanId: string;
+    /** What the settlement deducts for it; zero when nothing could be. */
+    amount: number;
+    /** The balance the settlement was computed against. */
+    outstandingAtCompute: number;
+  }[];
+}
+
+/** A loan a repayment write brought to zero, for telling its borrower. */
+export interface ClosedLoan {
+  id: string;
+  employeeId: string;
+  type: LoanType;
+}
+
 @Injectable()
 export class LoansService {
   constructor(
     private prisma: PrismaService,
     private notificationsService: NotificationsService,
+    private webhookDispatcher: WebhookDispatcherService,
   ) {}
 
   private isAdmin(role: UserRole) {
@@ -301,10 +337,31 @@ export class LoansService {
       throw new ForbiddenException('You do not have access to this loan');
     }
 
+    const schedule = this.buildSchedule(loan);
     return {
       ...this.serialize(loan),
-      schedule: this.buildSchedule(loan),
+      schedule,
+      arrears: this.arrearsFor(loan, schedule),
     };
+  }
+
+  /**
+   * The post-tenure instalment an ACTIVE loan is heading for, so the borrower
+   * is told why an extra deduction will appear before it does. Null for a
+   * loan payroll is not collecting.
+   */
+  private arrearsFor(loan: any, schedule: ScheduleRow[]): LoanArrears | null {
+    if (loan.status !== LoanStatus.ACTIVE) return null;
+    const now = new Date();
+    return computeArrears({
+      schedule,
+      outstanding: Number(loan.outstandingAmount),
+      emiAmount: Number(loan.emiAmount),
+      payrollMonths: (loan.repayments ?? [])
+        .filter((r: any) => r.source === RepaymentSource.PAYROLL)
+        .map((r: any) => ({ month: r.month, year: r.year })),
+      asOf: { month: now.getUTCMonth() + 1, year: now.getUTCFullYear() },
+    });
   }
 
   async approve(tenantId: string, id: string, approvedById: string) {
@@ -330,6 +387,25 @@ export class LoansService {
       `Your request for ₹${Number(loan.principal)} was approved`,
       '/loans',
     );
+
+    // The approval has committed, so tell subscribed webhooks. Not awaited on
+    // purpose, as leave does it: dispatch never rejects, but it retries a slow
+    // endpoint with backoff, and an HR click must not wait on a customer's
+    // server. The `.catch` is belt and braces should that contract ever slip.
+    // Ids and terms only — no purpose text or borrower name leaves the tenant.
+    void this.webhookDispatcher
+      .dispatch(tenantId, 'loan.approved', {
+        loanId: updated.id,
+        employeeId: updated.employeeId,
+        type: updated.type,
+        amount: Number(updated.principal),
+        emi: Number(updated.emiAmount),
+        tenureMonths: updated.tenureMonths,
+        approvedAt: updated.approvedAt
+          ? new Date(updated.approvedAt).toISOString()
+          : null,
+      })
+      .catch(() => undefined);
 
     return this.serialize(updated);
   }
@@ -460,9 +536,12 @@ export class LoansService {
   /**
    * What payroll should deduct for this employee this month.
    *
-   * Only ACTIVE loans count, only months the schedule actually covers, and
-   * only where payroll has not already taken an instalment for that month —
-   * so a re-run of the same payroll month deducts nothing a second time.
+   * Only loans payroll is collecting count, and only months the schedule
+   * covers (or arrears past it). A re-run of the same month proposes the same
+   * instalment again rather than nothing: it reads the balance as if that
+   * month's own payroll rows were reversed, because the caller reverses and
+   * re-records them in one transaction — `recordPayrollRepayments`'s own
+   * existing-row check is what stops a double write.
    */
   async getPayrollDeductions(
     tenantId: string,
@@ -470,12 +549,34 @@ export class LoansService {
     month: number,
     year: number,
   ): Promise<PayrollDeductions> {
+    // Read as if this month's payroll repayments had already been reversed.
+    //
+    // Every caller (process, recompute) reverses them and re-records inside
+    // one write transaction, *after* this calculation has run outside it —
+    // the calculation stays outside so that transaction does not hold row
+    // locks for the length of every employee's computation. So the figure
+    // wanted here is the balance that will stand once the reversal has been
+    // applied: the stored balance plus this month's own payroll row, and a
+    // loan that row closed counts as open again. There is at most one payroll
+    // run per tenant and month, so those rows can only belong to the run
+    // being (re)computed.
+    const thisMonthsPayroll = { month, year, source: RepaymentSource.PAYROLL };
     const loans = await this.prisma.employeeLoan.findMany({
-      where: { tenantId, employeeId, status: LoanStatus.ACTIVE },
+      where: {
+        tenantId,
+        employeeId,
+        OR: [
+          { status: LoanStatus.ACTIVE },
+          {
+            status: LoanStatus.CLOSED,
+            repayments: { some: thisMonthsPayroll },
+          },
+        ],
+      },
       include: {
         repayments: {
-          where: { month, year, source: RepaymentSource.PAYROLL },
-          select: { id: true },
+          where: thisMonthsPayroll,
+          select: { id: true, amount: true },
         },
       },
       orderBy: { createdAt: 'asc' },
@@ -484,9 +585,11 @@ export class LoansService {
     const lines: PayrollDeductionLine[] = [];
 
     for (const loan of loans) {
-      if (loan.repayments && loan.repayments.length > 0) continue;
-
-      const outstanding = Number(loan.outstandingAmount);
+      const reversed = (loan.repayments ?? []).reduce(
+        (sum: number, r: { amount?: unknown }) => sum + Number(r.amount ?? 0),
+        0,
+      );
+      const outstanding = round2(Number(loan.outstandingAmount) + reversed);
       if (!(outstanding > 0)) continue;
 
       const row = this.buildSchedule(loan).find(
@@ -522,9 +625,21 @@ export class LoansService {
    * Write the instalments payroll actually deducted, decrement each loan and
    * close the ones that reach zero.
    *
-   * Called from the payroll run after a payslip is finalised, so the rows are
-   * written in one transaction with the balance updates: a half-written set
-   * would leave a loan looking either unpaid or overpaid.
+   * The rows are written in one transaction with the balance updates: a
+   * half-written set would leave a loan looking either unpaid or overpaid.
+   *
+   * Pass `tx` to run inside the caller's transaction — payroll does, so the
+   * reversal of a previous attempt, the replacement payslips and these rows
+   * commit or roll back together. With a `tx` the loans are read through it
+   * (so they reflect that transaction's own reversal) and nobody is notified,
+   * because nothing has committed yet: the loans it closed are returned and
+   * the caller hands them to `notifyLoansClosed` after its commit. Without a
+   * `tx` this opens its own transaction and notifies itself, as before.
+   *
+   * With a `tx` it is also strict: a line whose loan is no longer ACTIVE, or
+   * that exceeds the balance, is a 409 rather than a skip or a trim, because
+   * the payslip in the same commit deducts the line in full. Without a `tx`
+   * such lines are skipped / capped at the balance.
    */
   async recordPayrollRepayments(
     tenantId: string,
@@ -533,11 +648,13 @@ export class LoansService {
     year: number,
     payslipId: string,
     lines: PayrollRepaymentLine[],
-  ): Promise<void> {
-    if (!lines || lines.length === 0) return;
+    tx?: Prisma.TransactionClient,
+  ): Promise<ClosedLoan[]> {
+    if (!lines || lines.length === 0) return [];
 
+    const reader: any = tx ?? this.prisma;
     const loanIds = lines.map((l) => l.loanId);
-    const loans = await this.prisma.employeeLoan.findMany({
+    const loans = await reader.employeeLoan.findMany({
       where: {
         id: { in: loanIds },
         tenantId,
@@ -546,17 +663,47 @@ export class LoansService {
       },
     });
 
-    const byId = new Map(loans.map((l: any) => [l.id, l]));
-    const closed: any[] = [];
+    const byId = new Map<string, any>(loans.map((l: any) => [l.id, l]));
+    const closed: ClosedLoan[] = [];
 
-    await this.prisma.$transaction(async (tx: any) => {
+    // Inside payroll's transaction the payslip carrying these lines is being
+    // written in the same commit, and it deducts `line.amount` in full. The
+    // loan has to be credited exactly that, or the run must not commit at
+    // all: the calculation ran outside this transaction (it can take
+    // minutes), so a settlement that closed the loan, or a manual repayment
+    // that shrank it, may have landed in between. Skipping or trimming the
+    // line here would leave a payslip that deducts money the loan never
+    // receives. Refusing rolls the whole run back; a re-run recalculates
+    // against the balances as they now stand.
+    //
+    // `outstandingAmount` read through `tx` is already net of this month's
+    // earlier payroll rows, which the same transaction reversed first — the
+    // same as-if-reversed figure `getPayrollDeductions` proposed against.
+    const strict = !!tx;
+    const staleLine = (loanId: string, why: string) =>
+      new ConflictException(
+        `Loan ${loanId} ${why} while payroll was being calculated, so a payslip would deduct an instalment the loan cannot be credited with. Nothing was saved; re-run payroll to recalculate against the current balance.`,
+      );
+
+    const write = async (tx: any) => {
       for (const line of lines) {
-        const loan = byId.get(line.loanId);
-        // A loan that is not this employee's, not in this tenant or no longer
-        // active is skipped rather than throwing: payroll has already paid the
-        // payslip and must not be rolled back by a stale deduction line.
-        if (!loan) continue;
         if (line.amount <= 0) continue;
+        const loan = byId.get(line.loanId);
+        if (!loan) {
+          if (strict) {
+            throw staleLine(line.loanId, 'was closed or is no longer active');
+          }
+          // Called on its own (no payroll transaction), a loan that is not
+          // this employee's, not in this tenant or no longer active is
+          // skipped: there is no payslip here to keep in step with.
+          continue;
+        }
+        if (
+          strict &&
+          round2(line.amount) > round2(Number(loan.outstandingAmount))
+        ) {
+          throw staleLine(loan.id, 'was partly repaid');
+        }
 
         // Payroll retries. Without this read the second run collides with the
         // unique (loanId, month, year, source) index, and because everything
@@ -603,11 +750,172 @@ export class LoansService {
             `The balance of loan ${loan.id} changed while payroll repayments were being recorded. Try again.`,
           );
         }
-        if (settled) closed.push(loan);
+        if (settled) {
+          closed.push({ id: loan.id, employeeId: loan.employeeId, type: loan.type });
+        }
       }
+    };
+
+    if (tx) {
+      await write(tx);
+      return closed;
+    }
+
+    await this.prisma.$transaction(write);
+    await this.notifyLoansClosed(tenantId, closed);
+    return closed;
+  }
+
+  // ============================================
+  // Final settlement contract
+  // ============================================
+
+  /**
+   * What a leaver still owes, loan by loan, oldest first — the order the
+   * settlement recovers them in, as payroll services them.
+   */
+  async getOutstandingForSettlement(
+    tenantId: string,
+    employeeId: string,
+  ): Promise<SettlementOutstandingLoan[]> {
+    const loans = await this.prisma.employeeLoan.findMany({
+      where: { tenantId, employeeId, status: LoanStatus.ACTIVE },
+      orderBy: { createdAt: 'asc' },
     });
 
-    for (const loan of closed) {
+    return loans
+      .map((loan: any) => ({
+        loanId: loan.id,
+        type: loan.type,
+        outstanding: round2(Number(loan.outstandingAmount)),
+      }))
+      .filter((loan) => loan.outstanding > 0);
+  }
+
+  /**
+   * Write the repayments a final settlement recovered, inside the caller's
+   * transaction — the one that moves the settlement to the state where its
+   * figures are committed — so the settlement cannot be committed without
+   * its recoveries, nor the recoveries without the settlement.
+   *
+   * The settlement was computed against the balances as they then stood. It
+   * is committed only if they still stand: a payroll EMI taken since, a
+   * manual repayment, or a loan disbursed after the compute would each make
+   * the settlement's deduction wrong, and a settlement that deducts one
+   * figure while the loan is credited with another is the failure this
+   * exists to prevent. Any mismatch is a 409 asking for a recompute.
+   *
+   * Idempotent per loan: a loan that already has a SETTLEMENT row for the
+   * settlement's month is skipped entirely (no row, no second decrement) and
+   * left out of the balance check, so re-running cannot double-record.
+   *
+   * Nobody is notified from here — the caller's transaction has not
+   * committed. The loans closed are returned for `notifyLoansClosed`.
+   */
+  async recordSettlementRepayments(
+    tx: Prisma.TransactionClient,
+    input: SettlementRecoveryInput,
+  ): Promise<{ recorded: PayrollRepaymentLine[]; closed: ClosedLoan[] }> {
+    const client: any = tx;
+    const { tenantId, employeeId, settlementId, month, year } = input;
+    const lines = input.lines ?? [];
+
+    const alreadyRecorded = new Set<string>();
+    for (const line of lines) {
+      const existing = await client.loanRepayment.findFirst({
+        where: {
+          tenantId,
+          loanId: line.loanId,
+          month,
+          year,
+          source: RepaymentSource.SETTLEMENT,
+        },
+        select: { id: true },
+      });
+      if (existing) alreadyRecorded.add(line.loanId);
+    }
+    const pending = lines.filter((l) => !alreadyRecorded.has(l.loanId));
+
+    const active: any[] = await client.employeeLoan.findMany({
+      where: { tenantId, employeeId, status: LoanStatus.ACTIVE },
+    });
+    const owed = new Map<string, any>(
+      active
+        .filter(
+          (loan) =>
+            Number(loan.outstandingAmount) > 0 && !alreadyRecorded.has(loan.id),
+        )
+        .map((loan) => [loan.id, loan]),
+    );
+
+    const stale = () =>
+      new ConflictException(
+        "The leaver's loan balances have changed since this settlement was computed. Recompute it before approving.",
+      );
+
+    for (const line of pending) {
+      const loan = owed.get(line.loanId);
+      if (!loan) throw stale();
+      if (round2(Number(loan.outstandingAmount)) !== round2(line.outstandingAtCompute)) {
+        throw stale();
+      }
+    }
+    const covered = new Set(pending.map((l) => l.loanId));
+    for (const loanId of owed.keys()) {
+      if (!covered.has(loanId)) throw stale();
+    }
+
+    const recorded: PayrollRepaymentLine[] = [];
+    const closed: ClosedLoan[] = [];
+
+    for (const line of pending) {
+      const loan = owed.get(line.loanId);
+      const amount = round2(
+        Math.min(line.amount, Number(loan.outstandingAmount)),
+      );
+      if (!(amount > 0)) continue;
+
+      await client.loanRepayment.create({
+        data: {
+          tenantId,
+          loanId: loan.id,
+          month,
+          year,
+          amount,
+          source: RepaymentSource.SETTLEMENT,
+          note: `Recovered from final settlement ${settlementId}`,
+        },
+      });
+
+      const { applied, settled } = await this.applyRepayment(
+        client,
+        tenantId,
+        loan,
+        amount,
+      );
+      if (!applied) throw stale();
+
+      recorded.push({ loanId: loan.id, amount });
+      if (settled) {
+        closed.push({ id: loan.id, employeeId: loan.employeeId, type: loan.type });
+      }
+    }
+
+    return { recorded, closed };
+  }
+
+  /**
+   * Tell each borrower their loan has been fully repaid.
+   *
+   * Separate from the write so a caller that recorded the repayments inside
+   * its own transaction can announce them only once that transaction has
+   * committed — never for a closure that might still roll back.
+   */
+  async notifyLoansClosed(
+    tenantId: string,
+    loans: ClosedLoan[] | null | undefined,
+  ): Promise<void> {
+    for (const loan of loans ?? []) {
       await this.notificationsService.notifyEmployee(
         tenantId,
         loan.employeeId,
@@ -626,29 +934,64 @@ export class LoansService {
    * A payroll run can be reset or recomputed, which throws its payslips away
    * and regenerates them. The repayment rows the previous attempt wrote would
    * otherwise outlive the payslip that caused them, and two things go wrong:
-   * `getPayrollDeductions` skips a loan that already has a row for the month,
-   * so the regenerated payslip would show no instalment at all and pay the
-   * employee their whole salary; and where the recompute clamps differently,
-   * the surviving row credits a figure the new payslip never deducted.
+   * `recordPayrollRepayments` skips a loan that already has a row for the
+   * month, so the regenerated payslip's instalment would never be recorded;
+   * and where the recompute clamps differently, the surviving row credits a
+   * figure the new payslip never deducted.
    *
    * Reversing is safe to call when there is nothing to reverse, and there is
    * at most one payroll run per tenant and month, so the month alone
    * identifies the rows this run owns.
+   *
+   * Refused with a 409 when any of those loans has a SETTLEMENT repayment in
+   * that month or later: reopening a leaver's loan would leave a balance no
+   * payroll collects. That blocks reset, delete and recompute of the month's
+   * run for that case.
+   *
+   * Pass `tx` to reverse inside the caller's transaction. Payroll does, so the
+   * reversal commits only together with the replacement payslips and the
+   * re-recorded repayments: a failure in between rolls the reversal back too,
+   * instead of leaving every balance high until the next good run.
    */
   async clearPayrollRepayments(
     tenantId: string,
     month: number,
     year: number,
+    tx?: Prisma.TransactionClient,
   ): Promise<void> {
-    const rows = await this.prisma.loanRepayment.findMany({
+    const reader: any = tx ?? this.prisma;
+    const rows = await reader.loanRepayment.findMany({
       where: { tenantId, month, year, source: RepaymentSource.PAYROLL },
       include: {
         loan: { select: { id: true, outstandingAmount: true, status: true } },
       },
     });
-    if (rows.length === 0) return;
+    if (!rows || rows.length === 0) return;
 
-    await this.prisma.$transaction(async (tx: any) => {
+    // A loan a final settlement has since recovered belongs to a leaver.
+    // Reversing its payroll instalment would reopen it with that EMI as the
+    // balance, and nothing would ever collect it: payroll only covers ACTIVE
+    // employees, and the settlement's "unrecovered" figure was computed
+    // without it. So resetting, deleting or recomputing this month's run is
+    // refused while such a settlement stands. Correct the month with an
+    // adjustment instead.
+    const loanIds = [...new Set((rows as any[]).map((row) => row.loanId))];
+    const settlement = await reader.loanRepayment.findFirst({
+      where: {
+        tenantId,
+        loanId: { in: loanIds },
+        source: RepaymentSource.SETTLEMENT,
+        OR: [{ year: { gt: year } }, { year, month: { gte: month } }],
+      },
+      select: { id: true, loanId: true, month: true, year: true },
+    });
+    if (settlement) {
+      throw new ConflictException(
+        `Loan ${settlement.loanId} was recovered by a final settlement in ${settlement.month}/${settlement.year}. Reversing this month's payroll instalment would reopen it with a balance nothing will collect, so this payroll run cannot be reset, deleted or recomputed. Correct it with an adjustment in a later run instead.`,
+      );
+    }
+
+    const reverse = async (tx: any) => {
       for (const row of rows as any[]) {
         await tx.loanRepayment.delete({ where: { id: row.id } });
 
@@ -675,7 +1018,13 @@ export class LoansService {
           );
         }
       }
-    });
+    };
+
+    if (tx) {
+      await reverse(tx);
+      return;
+    }
+    await this.prisma.$transaction(reverse);
   }
 
   // ============================================

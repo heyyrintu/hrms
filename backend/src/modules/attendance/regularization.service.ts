@@ -14,8 +14,15 @@ import {
   ApproveRegularizationDto,
   RegularizationQueryDto,
 } from './dto/regularization.dto';
-import { RegularizationStatus, UserRole, NotificationType } from '@prisma/client';
+import {
+  AttendanceStatus,
+  RegularizationStatus,
+  UserRole,
+  NotificationType,
+} from '@prisma/client';
 import { zonedDateOnlyUtc, DEFAULT_ATTENDANCE_TIME_ZONE } from './rules/late-mark';
+import { classifyWorkedDay } from './rules/day-classification';
+import { AttendancePolicyService } from './policy/attendance-policy.service';
 
 @Injectable()
 export class RegularizationService {
@@ -23,6 +30,7 @@ export class RegularizationService {
     private prisma: PrismaService,
     private notificationsService: NotificationsService,
     private otCalculation: OtCalculationService,
+    private policyService: AttendancePolicyService,
   ) {}
 
   /**
@@ -286,6 +294,17 @@ export class RegularizationService {
       otRule,
     );
 
+    // The corrected hours are scored exactly as a clock-out would score them,
+    // so regularizing a two-hour day cannot turn it into a paid full day. The
+    // approval itself asserts presence, so the base is PRESENT (or WFH, when
+    // the day was already a work-from-home day) whatever the row said before.
+    const policy = await this.policyService.getOrCreate(tenantId);
+    const baseStatus: AttendanceStatus =
+      existingAttendance?.status === AttendanceStatus.WFH
+        ? AttendanceStatus.WFH
+        : AttendanceStatus.PRESENT;
+    const status = classifyWorkedDay(workedMinutes, baseStatus, policy) ?? baseStatus;
+
     let attendanceId: string;
     if (existingAttendance) {
       // Update existing attendance record
@@ -296,7 +315,9 @@ export class RegularizationService {
           clockOutTime: clockOut,
           workedMinutes,
           otMinutesCalculated,
-          status: 'PRESENT',
+          status,
+          // The approver has settled the day; nothing left to restore.
+          preClassificationStatus: null,
         },
       });
       attendanceId = existingAttendance.id;
@@ -311,7 +332,7 @@ export class RegularizationService {
           clockOutTime: clockOut,
           workedMinutes,
           otMinutesCalculated,
-          status: 'PRESENT',
+          status,
           source: 'API',
           standardWorkMinutes,
           remarks: `Regularized: ${regularization.reason}`,

@@ -31,6 +31,17 @@ export class CreateImprovementPlanDto {
   @IsUUID()
   employeeId: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Employee who owns the plan. HR/admin only: must be an employee of the ' +
+      'tenant other than the subject. When omitted, HR defaults to their own ' +
+      "employee profile, then to the subject's reporting manager. A MANAGER " +
+      'always owns the plans they raise and may only send their own id here.',
+  })
+  @IsOptional()
+  @IsUUID()
+  managerId?: string;
+
   @ApiProperty()
   @IsString()
   title: string;

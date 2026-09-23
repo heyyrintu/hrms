@@ -83,8 +83,20 @@ const STATUS_OPTIONS: PIPStatus[] = [
   'TERMINATED',
 ];
 
+/** The API's own message for a failed request, so a 400 can say what to fix. */
+function apiErrorMessage(error: unknown, fallback: string): string {
+  const message = (error as { response?: { data?: { message?: unknown } } })?.response?.data
+    ?.message;
+  if (typeof message === 'string' && message.trim() !== '') return message;
+  if (Array.isArray(message) && typeof message[0] === 'string') return message[0];
+  return fallback;
+}
+
 const emptyPlanForm = {
   employeeId: '',
+  // Plan owner. HR only; empty lets the server default it (the caller's own
+  // profile, else the employee's reporting manager).
+  managerId: '',
   title: '',
   description: '',
   startDate: '',
@@ -206,6 +218,8 @@ export default function ImprovementPlansPage() {
     try {
       await improvementPlansApi.create({
         employeeId: planForm.employeeId,
+        // Only HR may choose the owner; a manager always owns their own plans.
+        managerId: isAdmin && planForm.managerId ? planForm.managerId : undefined,
         title: planForm.title,
         description: planForm.description,
         startDate: planForm.startDate,
@@ -216,8 +230,8 @@ export default function ImprovementPlansPage() {
       toast.success('Improvement plan created');
       setCreateModal(false);
       loadPlans(1);
-    } catch {
-      toast.error('Failed to create improvement plan');
+    } catch (error) {
+      toast.error(apiErrorMessage(error, 'Failed to create improvement plan'));
     } finally {
       setSaving(false);
     }
@@ -679,7 +693,14 @@ export default function ImprovementPlansPage() {
             </label>
             <select
               value={planForm.employeeId}
-              onChange={(e) => setPlanForm({ ...planForm, employeeId: e.target.value })}
+              onChange={(e) =>
+                setPlanForm({
+                  ...planForm,
+                  employeeId: e.target.value,
+                  // The employee cannot own their own plan.
+                  managerId: planForm.managerId === e.target.value ? '' : planForm.managerId,
+                })
+              }
               aria-label="Employee"
               className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
             >
@@ -692,6 +713,34 @@ export default function ImprovementPlansPage() {
               ))}
             </select>
           </div>
+          {isAdmin && (
+            <div>
+              <label className="block text-sm font-medium text-warm-700 mb-1">
+                Plan owner
+              </label>
+              <select
+                value={planForm.managerId}
+                onChange={(e) => setPlanForm({ ...planForm, managerId: e.target.value })}
+                aria-label="Plan owner"
+                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+              >
+                <option value="">
+                  {user?.employeeId ? 'Default (you)' : "Default (employee's reporting manager)"}
+                </option>
+                {employees
+                  .filter((emp) => emp.id !== planForm.employeeId)
+                  .map((emp) => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.firstName} {emp.lastName}
+                      {emp.employeeCode ? ` (${emp.employeeCode})` : ''}
+                    </option>
+                  ))}
+              </select>
+              <p className="mt-1 text-xs text-warm-500">
+                The person responsible for running the plan. Optional.
+              </p>
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-warm-700 mb-1">Title *</label>
             <input

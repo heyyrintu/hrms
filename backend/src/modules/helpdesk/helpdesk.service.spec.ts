@@ -8,6 +8,7 @@ import {
 import { HelpdeskService } from './helpdesk.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import {
   createMockPrismaService,
   createMockNotificationsService,
@@ -15,6 +16,7 @@ import {
 } from '../../test/helpers';
 import {
   NotificationType,
+  Prisma,
   TicketPriority,
   TicketStatus,
   UserRole,
@@ -25,6 +27,13 @@ describe('HelpdeskService', () => {
   let service: HelpdeskService;
   let prisma: any;
   let notifications: any;
+  let webhooks: { dispatch: jest.Mock };
+
+  const uniqueViolation = () =>
+    new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+      code: 'P2002',
+      clientVersion: 'test',
+    });
 
   const tenantId = 'tenant-1';
   const ownerEmployeeId = 'emp-owner';
@@ -90,12 +99,17 @@ describe('HelpdeskService', () => {
           provide: NotificationsService,
           useValue: createMockNotificationsService(),
         },
+        {
+          provide: WebhookDispatcherService,
+          useValue: { dispatch: jest.fn().mockResolvedValue(undefined) },
+        },
       ],
     }).compile();
 
     service = module.get<HelpdeskService>(HelpdeskService);
     prisma = module.get(PrismaService);
     notifications = module.get(NotificationsService);
+    webhooks = module.get(WebhookDispatcherService);
   });
 
   it('should be defined', () => {
@@ -150,6 +164,37 @@ describe('HelpdeskService', () => {
         service.createCategory(tenantId, { name: 'Payroll', code: 'PAY' }),
       ).rejects.toThrow(ConflictException);
       expect(prisma.hrTicketCategory.create).not.toHaveBeenCalled();
+    });
+
+    it('turns a concurrent duplicate on create into a 409, not a 500', async () => {
+      // The find-then-create check passed, but a racing request inserted the
+      // same code first and the unique index caught it.
+      prisma.hrTicketCategory.findFirst.mockResolvedValue(null);
+      prisma.hrTicketCategory.create.mockRejectedValue(uniqueViolation());
+
+      await expect(
+        service.createCategory(tenantId, { name: 'Payroll', code: 'PAY' }),
+      ).rejects.toThrow(new ConflictException('A category with code PAY already exists'));
+    });
+
+    it('turns a concurrent duplicate on update into a 409, not a 500', async () => {
+      prisma.hrTicketCategory.findFirst
+        .mockResolvedValueOnce({ id: 'cat-1', code: 'PAY' })
+        .mockResolvedValueOnce(null);
+      prisma.hrTicketCategory.update.mockRejectedValue(uniqueViolation());
+
+      await expect(
+        service.updateCategory(tenantId, 'cat-1', { code: 'LEAVE' }),
+      ).rejects.toThrow(new ConflictException('A category with code LEAVE already exists'));
+    });
+
+    it('lets other database errors through untouched', async () => {
+      prisma.hrTicketCategory.findFirst.mockResolvedValue(null);
+      prisma.hrTicketCategory.create.mockRejectedValue(new Error('connection lost'));
+
+      await expect(
+        service.createCategory(tenantId, { name: 'Payroll', code: 'PAY' }),
+      ).rejects.toThrow('connection lost');
     });
 
     it('404s when updating a category from another tenant', async () => {
@@ -318,6 +363,61 @@ describe('HelpdeskService', () => {
 
       await expect(service.createTicket(tenantId, ownerEmployeeId, dto)).rejects.toThrow();
       expect(prisma.hrTicket.create).toHaveBeenCalledTimes(2);
+    });
+
+    describe('ticket.created webhook', () => {
+      beforeEach(() => {
+        prisma.hrTicketCategory.findFirst.mockResolvedValue({ id: 'cat-1', slaHours: 48 });
+        prisma.hrTicket.aggregate.mockResolvedValue({ _max: { ticketNumber: 6 } });
+        prisma.hrTicket.create.mockResolvedValue(ticketFixture());
+      });
+
+      it('fires ticket.created with ids and status, not the ticket text, after commit', async () => {
+        let committed = false;
+        prisma.$transaction.mockImplementationOnce(async (fn: any) => {
+          const out = await fn(prisma);
+          committed = true;
+          return out;
+        });
+        webhooks.dispatch.mockImplementation(async () => {
+          expect(committed).toBe(true);
+        });
+
+        await service.createTicket(tenantId, ownerEmployeeId, dto);
+
+        expect(webhooks.dispatch).toHaveBeenCalledTimes(1);
+        expect(webhooks.dispatch).toHaveBeenCalledWith(tenantId, 'ticket.created', {
+          ticketId: 'ticket-1',
+          ticketNumber: 7,
+          employeeId: ownerEmployeeId,
+          categoryId: 'cat-1',
+          priority: TicketPriority.MEDIUM,
+          status: TicketStatus.OPEN,
+          slaDeadline: '2026-03-17T12:00:00.000Z',
+          createdAt: '2026-03-15T12:00:00.000Z',
+        });
+        const payload = webhooks.dispatch.mock.calls[0][2];
+        expect(payload).not.toHaveProperty('subject');
+        expect(payload).not.toHaveProperty('description');
+      });
+
+      it('does not wait for webhook delivery before returning', async () => {
+        webhooks.dispatch.mockReturnValue(new Promise(() => {}));
+
+        const result = await service.createTicket(tenantId, ownerEmployeeId, dto);
+
+        expect(result.id).toBe('ticket-1');
+        expect(webhooks.dispatch).toHaveBeenCalled();
+      });
+
+      it('does not fire when the ticket could not be created', async () => {
+        prisma.hrTicketCategory.findFirst.mockResolvedValue(null);
+
+        await expect(service.createTicket(tenantId, ownerEmployeeId, dto)).rejects.toThrow(
+          NotFoundException,
+        );
+        expect(webhooks.dispatch).not.toHaveBeenCalled();
+      });
     });
 
     it('notifies HR that a ticket was raised', async () => {

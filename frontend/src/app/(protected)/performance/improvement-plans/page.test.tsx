@@ -1,7 +1,8 @@
 import React from 'react';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import ImprovementPlansPage from './page';
-import { improvementPlansApi } from '@/lib/api';
+import { improvementPlansApi, employeesApi } from '@/lib/api';
+import toast from 'react-hot-toast';
 
 // Mock lucide-react icons
 jest.mock('lucide-react', () =>
@@ -16,25 +17,43 @@ jest.mock('lucide-react', () =>
   ),
 );
 
-// Mock AuthContext -- a manager who owns the plans below
+// Mock AuthContext -- by default a manager who owns the plans below. Tests that
+// need HR swap `mockAuth` before rendering.
+const managerAuth = {
+  user: {
+    id: 'u1',
+    email: 'manager@test.com',
+    role: 'MANAGER',
+    tenantId: 't1',
+    employeeId: 'emp-manager',
+  },
+  isAuthenticated: true,
+  isLoading: false,
+  isManager: true,
+  isAdmin: false,
+  isSuperAdmin: false,
+  hasRole: jest.fn().mockReturnValue(true),
+  login: jest.fn(),
+  logout: jest.fn(),
+};
+
+// An HR admin account with no employee profile -- the case the owner picker exists for.
+const hrNoProfileAuth = {
+  ...managerAuth,
+  user: { id: 'u-hr', email: 'hr@test.com', role: 'HR_ADMIN', tenantId: 't1', employeeId: undefined },
+  isManager: false,
+  isAdmin: true,
+};
+
+let mockAuth: typeof managerAuth | typeof hrNoProfileAuth = managerAuth;
+
 jest.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({
-    user: {
-      id: 'u1',
-      email: 'manager@test.com',
-      role: 'MANAGER',
-      tenantId: 't1',
-      employeeId: 'emp-manager',
-    },
-    isAuthenticated: true,
-    isLoading: false,
-    isManager: true,
-    isAdmin: false,
-    isSuperAdmin: false,
-    hasRole: jest.fn().mockReturnValue(true),
-    login: jest.fn(),
-    logout: jest.fn(),
-  }),
+  useAuth: () => mockAuth,
+}));
+
+jest.mock('react-hot-toast', () => ({
+  __esModule: true,
+  default: { success: jest.fn(), error: jest.fn() },
 }));
 
 jest.mock('@/components/ui/Card', () => ({
@@ -116,6 +135,17 @@ const listResponse = {
 describe('ImprovementPlansPage', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockAuth = managerAuth;
+    (employeesApi.getAll as jest.Mock).mockResolvedValue({
+      data: {
+        data: [
+          { id: 'emp-employee', firstName: 'Asha', lastName: 'Rao', employeeCode: 'E1' },
+          { id: 'emp-manager', firstName: 'Ravi', lastName: 'Kumar', employeeCode: 'M1' },
+          { id: 'emp-lead', firstName: 'Lina', lastName: 'Das', employeeCode: 'L1' },
+        ],
+      },
+    });
+    api.create.mockResolvedValue({ data: { id: 'pip-new' } } as any);
     api.getTeam.mockResolvedValue(listResponse as any);
     api.getMine.mockResolvedValue(emptyPage as any);
     api.getAll.mockResolvedValue(emptyPage as any);
@@ -244,6 +274,82 @@ describe('ImprovementPlansPage', () => {
       expect(api.updateGoal).toHaveBeenCalledWith('pip-1', 'goal-1', {
         notes: 'Shipped four weeks running',
       });
+    });
+  });
+
+  describe('plan owner', () => {
+    /** Opens the create modal and fills every required field. */
+    const fillCreateForm = async () => {
+      await waitFor(() => expect(screen.getByText('New Plan')).toBeInTheDocument());
+      fireEvent.click(screen.getByText('New Plan'));
+      await waitFor(() =>
+        expect(screen.getAllByRole('option', { name: 'Asha Rao (E1)' }).length).toBeGreaterThan(0),
+      );
+
+      fireEvent.change(screen.getByLabelText('Employee'), { target: { value: 'emp-employee' } });
+      fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Improve delivery' } });
+      fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Focus' } });
+      fireEvent.change(screen.getByLabelText('Start date'), { target: { value: '2025-03-01' } });
+      fireEvent.change(screen.getByLabelText('End date'), { target: { value: '2025-06-01' } });
+    };
+
+    it('is not offered to a manager, who always owns the plans they raise', async () => {
+      render(<ImprovementPlansPage />);
+      await fillCreateForm();
+
+      expect(screen.queryByLabelText('Plan owner')).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByText('Create Plan'));
+      await waitFor(() => expect(api.create).toHaveBeenCalled());
+      expect(api.create.mock.calls[0][0].managerId).toBeUndefined();
+    });
+
+    it('lets HR pick an owner, and never offers the employee as their own owner', async () => {
+      mockAuth = hrNoProfileAuth;
+      api.getAll.mockResolvedValue(emptyPage as any);
+
+      render(<ImprovementPlansPage />);
+      await fillCreateForm();
+
+      const picker = screen.getByLabelText('Plan owner');
+      const ownerOptions = Array.from((picker as HTMLSelectElement).options).map((o) => o.value);
+      expect(ownerOptions).toEqual(['', 'emp-manager', 'emp-lead']);
+      expect(screen.getByRole('option', { name: "Default (employee's reporting manager)" })).toBeInTheDocument();
+
+      fireEvent.change(picker, { target: { value: 'emp-lead' } });
+      fireEvent.click(screen.getByText('Create Plan'));
+
+      await waitFor(() => {
+        expect(api.create).toHaveBeenCalledWith(
+          expect.objectContaining({ employeeId: 'emp-employee', managerId: 'emp-lead' }),
+        );
+      });
+    });
+
+    it('leaves the owner to the server when HR keeps the default', async () => {
+      mockAuth = hrNoProfileAuth;
+      api.getAll.mockResolvedValue(emptyPage as any);
+
+      render(<ImprovementPlansPage />);
+      await fillCreateForm();
+      fireEvent.click(screen.getByText('Create Plan'));
+
+      await waitFor(() => expect(api.create).toHaveBeenCalled());
+      expect(api.create.mock.calls[0][0].managerId).toBeUndefined();
+    });
+
+    it("shows the server's reason when no owner can be resolved", async () => {
+      mockAuth = hrNoProfileAuth;
+      api.getAll.mockResolvedValue(emptyPage as any);
+      const reason =
+        'Pick a plan owner: this employee has no reporting manager and your account has no employee profile';
+      api.create.mockRejectedValue({ response: { status: 400, data: { message: reason } } });
+
+      render(<ImprovementPlansPage />);
+      await fillCreateForm();
+      fireEvent.click(screen.getByText('Create Plan'));
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(reason));
     });
   });
 

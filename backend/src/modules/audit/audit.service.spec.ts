@@ -61,6 +61,21 @@ describe('AuditService', () => {
       expect(result).toEqual(created);
     });
 
+    it('writes through the given transaction client instead of the root client', async () => {
+      const tx = { auditLog: { create: jest.fn().mockResolvedValue({ id: 'log-tx' }) } };
+
+      const result = await service.log(
+        { tenantId: 'tenant-1', action: 'CREATE' as any, entityType: 'EmployeeImport' },
+        tx as any,
+      );
+
+      expect(tx.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ tenantId: 'tenant-1', entityType: 'EmployeeImport' }),
+      });
+      expect(prisma.auditLog.create).not.toHaveBeenCalled();
+      expect(result).toEqual({ id: 'log-tx' });
+    });
+
     it('should handle minimal input (only required fields)', async () => {
       const input: CreateAuditLogInput = {
         tenantId: 'tenant-1',

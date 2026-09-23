@@ -152,8 +152,13 @@ export function webhookFetch(
 
         res.on('data', (chunk: Buffer) => {
           if (size >= MAX_BODY_BYTES) return;
-          chunks.push(chunk);
-          size += chunk.length;
+          // Keep only what fits, so the buffered body is never more than the
+          // cap even when one chunk straddles it. A multi-byte character cut
+          // in half decodes as U+FFFD, which is fine for a debug excerpt.
+          const room = MAX_BODY_BYTES - size;
+          const kept = chunk.length > room ? chunk.subarray(0, room) : chunk;
+          chunks.push(kept);
+          size += kept.length;
           if (size >= MAX_BODY_BYTES) {
             // Enough to debug with. Stop the download rather than buffer it.
             finish();

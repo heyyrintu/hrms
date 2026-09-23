@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { AttendancePolicy, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import {
@@ -64,7 +64,17 @@ export class AttendancePolicyService {
     tenantId: string,
     dto: UpdateAttendancePolicyDto,
   ): Promise<AttendancePolicy> {
-    await this.getOrCreate(tenantId);
+    const current = await this.getOrCreate(tenantId);
+
+    // Checked against the stored value of whichever threshold was not sent.
+    // 0 switches a threshold off, so the ordering only matters when both are on.
+    const half = dto.minHalfDayMinutes ?? current.minHalfDayMinutes;
+    const full = dto.minFullDayMinutes ?? current.minFullDayMinutes;
+    if (half > 0 && full > 0 && half > full) {
+      throw new BadRequestException(
+        'minHalfDayMinutes cannot be greater than minFullDayMinutes',
+      );
+    }
 
     const data: Prisma.AttendancePolicyUpdateInput = {};
     if (dto.defaultShiftStart !== undefined) data.defaultShiftStart = dto.defaultShiftStart;

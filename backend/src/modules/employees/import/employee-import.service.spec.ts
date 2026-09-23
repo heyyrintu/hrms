@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditService } from '../../audit/audit.service';
+import { WebhookDispatcherService } from '../../webhooks/webhook-dispatcher.service';
 import { createMockPrismaService } from '../../../test/helpers';
 import { EmployeeImportService } from './employee-import.service';
 import { parseCsv } from './csv-parser';
@@ -44,20 +45,26 @@ describe('parseCsv', () => {
   });
 });
 
+/** Let fire-and-forget work queued by the service run to its next await. */
+const flushBackground = () => new Promise((resolve) => setImmediate(resolve));
+
 describe('EmployeeImportService', () => {
   let service: EmployeeImportService;
   let prisma: ReturnType<typeof createMockPrismaService>;
   let audit: { log: jest.Mock };
+  let webhooks: { dispatch: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrismaService();
     audit = { log: jest.fn().mockResolvedValue({}) };
+    webhooks = { dispatch: jest.fn().mockResolvedValue(undefined) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         EmployeeImportService,
         { provide: PrismaService, useValue: prisma },
         { provide: AuditService, useValue: audit },
+        { provide: WebhookDispatcherService, useValue: webhooks },
       ],
     }).compile();
 
@@ -317,6 +324,7 @@ describe('EmployeeImportService', () => {
       expect(prisma.employee.create).not.toHaveBeenCalled();
       expect(prisma.user.create).not.toHaveBeenCalled();
       expect(audit.log).not.toHaveBeenCalled();
+      expect(webhooks.dispatch).not.toHaveBeenCalled();
     });
   });
 
@@ -448,6 +456,7 @@ describe('EmployeeImportService', () => {
 
     it('writes one audit log entry for the import', async () => {
       await realRun(csv('E1,Asha,Rao,a@x.com,2026-03-15'));
+      expect(audit.log).toHaveBeenCalledTimes(1);
       expect(audit.log).toHaveBeenCalledWith(
         expect.objectContaining({
           tenantId: TENANT,
@@ -456,7 +465,166 @@ describe('EmployeeImportService', () => {
           entityType: 'EmployeeImport',
           newValues: expect.objectContaining({ created: 1, employeeCodes: ['E1'] }),
         }),
+        expect.anything(),
       );
+    });
+
+    it('writes the audit entry inside the import transaction, through the tx client', async () => {
+      const tx = prisma; // the mock hands itself to the callback as the tx client
+      let inTx = false;
+      (prisma.$transaction as jest.Mock).mockImplementationOnce(async (fn: any) => {
+        inTx = true;
+        try {
+          return await fn(tx);
+        } finally {
+          inTx = false;
+        }
+      });
+      audit.log.mockImplementation(async () => {
+        expect(inTx).toBe(true);
+        return {};
+      });
+
+      await realRun(csv('E1,Asha,Rao,a@x.com,2026-03-15'));
+
+      expect(audit.log).toHaveBeenCalledTimes(1);
+      expect(audit.log.mock.calls[0][1]).toBe(tx);
+    });
+
+    it('fails the import when the audit write fails, and fires no webhooks', async () => {
+      audit.log.mockRejectedValue(new Error('audit down'));
+
+      await expect(realRun(csv('E1,Asha,Rao,a@x.com,2026-03-15'))).rejects.toThrow('audit down');
+      expect(webhooks.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('fires employee.created once per created employee after the transaction commits', async () => {
+      (prisma.department.findMany as jest.Mock).mockResolvedValue([{ id: 'd1', code: 'ENG' }]);
+      (prisma.designation.findMany as jest.Mock).mockResolvedValue([{ id: 'g1', name: 'SDE' }]);
+      let committed = false;
+      (prisma.$transaction as jest.Mock).mockImplementationOnce(async (fn: any) => {
+        const out = await fn(prisma);
+        committed = true;
+        return out;
+      });
+      webhooks.dispatch.mockImplementation(async () => {
+        expect(committed).toBe(true);
+      });
+
+      await realRun(
+        csv(
+          'M1,Meera,Nair,m@x.com,2026-01-01,ENG,SDE',
+          'E1,Asha,Rao,a@x.com,2026-03-15,,,,M1,,+91,1990-05-02,F',
+        ),
+      );
+      // Delivered one after another in the background: let the loop drain.
+      await flushBackground();
+
+      expect(webhooks.dispatch).toHaveBeenCalledTimes(2);
+      expect(webhooks.dispatch).toHaveBeenNthCalledWith(1, TENANT, 'employee.created', {
+        employeeId: 'emp-M1',
+        employeeCode: 'M1',
+        firstName: 'Meera',
+        lastName: 'Nair',
+        email: 'm@x.com',
+        departmentId: 'd1',
+        designationId: 'g1',
+        dateOfJoining: '2026-01-01',
+        source: 'import',
+      });
+      const second = webhooks.dispatch.mock.calls[1][2];
+      expect(second).toMatchObject({ employeeId: 'emp-E1', employeeCode: 'E1', source: 'import' });
+      // Minimal PII: no phone, date of birth or gender on the wire.
+      expect(second).not.toHaveProperty('phone');
+      expect(second).not.toHaveProperty('dateOfBirth');
+      expect(second).not.toHaveProperty('gender');
+    });
+
+    it('does not wait for webhook delivery before returning', async () => {
+      webhooks.dispatch.mockReturnValue(new Promise(() => {}));
+
+      const result = await realRun(csv('E1,Asha,Rao,a@x.com,2026-03-15'));
+
+      expect(result.created).toBe(1);
+      expect(webhooks.dispatch).toHaveBeenCalledTimes(1);
+    });
+
+    it('dispatches one employee at a time, never the whole file at once', async () => {
+      // A 2,000-row import used to start 2,000 concurrent dispatches, each
+      // with its own lookups, POSTs, retries and log writes.
+      const releases: Array<() => void> = [];
+      let inFlight = 0;
+      let maxInFlight = 0;
+      webhooks.dispatch.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            inFlight++;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            releases.push(() => {
+              inFlight--;
+              resolve();
+            });
+          }),
+      );
+
+      const result = await realRun(
+        csv(
+          'E1,Asha,Rao,a@x.com,2026-03-15',
+          'E2,Bina,Sen,b@x.com,2026-03-15',
+          'E3,Chitra,Iyer,c@x.com,2026-03-15',
+        ),
+      );
+      expect(result.created).toBe(3);
+
+      // The request returned while the first delivery is still in flight.
+      await flushBackground();
+      expect(webhooks.dispatch).toHaveBeenCalledTimes(1);
+
+      releases[0]();
+      await flushBackground();
+      expect(webhooks.dispatch).toHaveBeenCalledTimes(2);
+
+      releases[1]();
+      await flushBackground();
+      releases[2]();
+      await flushBackground();
+
+      expect(webhooks.dispatch).toHaveBeenCalledTimes(3);
+      expect(maxInFlight).toBe(1);
+      expect(webhooks.dispatch.mock.calls.map((c) => c[2].employeeCode)).toEqual([
+        'E1',
+        'E2',
+        'E3',
+      ]);
+    });
+
+    it('keeps delivering the rest when one dispatch rejects or throws', async () => {
+      webhooks.dispatch
+        .mockRejectedValueOnce(new Error('endpoint down'))
+        .mockImplementationOnce(() => {
+          throw new Error('boom');
+        })
+        .mockResolvedValue(undefined);
+
+      const result = await realRun(
+        csv(
+          'E1,Asha,Rao,a@x.com,2026-03-15',
+          'E2,Bina,Sen,b@x.com,2026-03-15',
+          'E3,Chitra,Iyer,c@x.com,2026-03-15',
+        ),
+      );
+      await flushBackground();
+
+      expect(result.created).toBe(3);
+      expect(webhooks.dispatch).toHaveBeenCalledTimes(3);
+      expect(webhooks.dispatch.mock.calls[2][2]).toMatchObject({ employeeCode: 'E3' });
+    });
+
+    it('fires no webhooks when the file is rejected', async () => {
+      await expect(
+        realRun(csv('E1,Asha,Rao,a@x.com,2026-03-15', 'E2,Bina,Sen,bad-email,2026-03-15')),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(webhooks.dispatch).not.toHaveBeenCalled();
     });
   });
 });

@@ -206,6 +206,144 @@ describe('PipService', () => {
 
       expect(result).toEqual(basePlan);
     });
+
+    describe('plan owner', () => {
+      const ownerOfCreate = () =>
+        prisma.improvementPlan.create.mock.calls[0][0].data.managerId;
+
+      beforeEach(() => {
+        prisma.improvementPlan.create.mockResolvedValue({ id: 'pip-1' });
+        prisma.improvementPlan.findUnique.mockResolvedValue(basePlan);
+      });
+
+      describe('as a MANAGER', () => {
+        it('requires the manager to have an employee profile', async () => {
+          prisma.employee.findFirst.mockResolvedValue({ id: employeeId, managerId });
+
+          await expect(
+            service.create(tenantId, undefined, UserRole.MANAGER, dto),
+          ).rejects.toThrow(new BadRequestException('No employee profile linked to your account'));
+          expect(prisma.improvementPlan.create).not.toHaveBeenCalled();
+        });
+
+        it('forbids naming someone else as the owner', async () => {
+          prisma.employee.findFirst.mockResolvedValue({ id: employeeId, managerId });
+
+          await expect(
+            service.create(tenantId, managerId, UserRole.MANAGER, {
+              ...dto,
+              managerId: 'someone-else',
+            }),
+          ).rejects.toThrow(ForbiddenException);
+          expect(prisma.improvementPlan.create).not.toHaveBeenCalled();
+        });
+
+        it('accepts naming themselves, and always owns the plan', async () => {
+          prisma.employee.findFirst.mockResolvedValue({ id: employeeId, managerId });
+
+          await service.create(tenantId, managerId, UserRole.MANAGER, { ...dto, managerId });
+
+          expect(ownerOfCreate()).toBe(managerId);
+          // No second lookup: the manager is already known to be the report's manager.
+          expect(prisma.employee.findFirst).toHaveBeenCalledTimes(1);
+        });
+      });
+
+      describe('as HR', () => {
+        it('uses the owner named in the body when they are an employee of the tenant', async () => {
+          prisma.employee.findFirst
+            .mockResolvedValueOnce({ id: employeeId, managerId })
+            .mockResolvedValueOnce({ id: 'emp-chosen-owner' });
+
+          await service.create(tenantId, hrId, UserRole.HR_ADMIN, {
+            ...dto,
+            managerId: 'emp-chosen-owner',
+          });
+
+          expect(prisma.employee.findFirst).toHaveBeenLastCalledWith({
+            where: { id: 'emp-chosen-owner', tenantId },
+            select: { id: true },
+          });
+          expect(ownerOfCreate()).toBe('emp-chosen-owner');
+        });
+
+        it('lets a super admin with no employee profile name the owner', async () => {
+          prisma.employee.findFirst
+            .mockResolvedValueOnce({ id: employeeId, managerId: null })
+            .mockResolvedValueOnce({ id: 'emp-chosen-owner' });
+
+          await service.create(tenantId, undefined, UserRole.SUPER_ADMIN, {
+            ...dto,
+            managerId: 'emp-chosen-owner',
+          });
+
+          expect(ownerOfCreate()).toBe('emp-chosen-owner');
+        });
+
+        it('rejects an owner who is not an employee of the tenant', async () => {
+          prisma.employee.findFirst
+            .mockResolvedValueOnce({ id: employeeId, managerId })
+            .mockResolvedValueOnce(null);
+
+          await expect(
+            service.create(tenantId, hrId, UserRole.HR_ADMIN, {
+              ...dto,
+              managerId: 'emp-elsewhere',
+            }),
+          ).rejects.toThrow(BadRequestException);
+          expect(prisma.improvementPlan.create).not.toHaveBeenCalled();
+        });
+
+        it('rejects making the employee the owner of their own plan', async () => {
+          prisma.employee.findFirst.mockResolvedValueOnce({ id: employeeId, managerId });
+
+          await expect(
+            service.create(tenantId, hrId, UserRole.HR_ADMIN, {
+              ...dto,
+              managerId: employeeId,
+            }),
+          ).rejects.toThrow(BadRequestException);
+          expect(prisma.improvementPlan.create).not.toHaveBeenCalled();
+        });
+
+        it('defaults to the HR caller when they have an employee profile', async () => {
+          prisma.employee.findFirst.mockResolvedValue({ id: employeeId, managerId });
+
+          await service.create(tenantId, hrId, UserRole.HR_ADMIN, dto);
+
+          expect(ownerOfCreate()).toBe(hrId);
+        });
+
+        it("falls back to the employee's reporting manager when the caller has no profile", async () => {
+          prisma.employee.findFirst.mockResolvedValue({ id: employeeId, managerId });
+
+          await service.create(tenantId, undefined, UserRole.HR_ADMIN, dto);
+
+          expect(ownerOfCreate()).toBe(managerId);
+        });
+
+        it('never defaults the owner to the subject: HR raising a plan on themselves gets their manager', async () => {
+          prisma.employee.findFirst.mockResolvedValue({ id: hrId, managerId });
+
+          await service.create(tenantId, hrId, UserRole.HR_ADMIN, { ...dto, employeeId: hrId });
+
+          expect(ownerOfCreate()).toBe(managerId);
+        });
+
+        it('asks for an owner when there is no caller profile and no reporting manager', async () => {
+          prisma.employee.findFirst.mockResolvedValue({ id: employeeId, managerId: null });
+
+          await expect(
+            service.create(tenantId, undefined, UserRole.HR_ADMIN, dto),
+          ).rejects.toThrow(
+            new BadRequestException(
+              'Pick a plan owner: this employee has no reporting manager and your account has no employee profile',
+            ),
+          );
+          expect(prisma.improvementPlan.create).not.toHaveBeenCalled();
+        });
+      });
+    });
   });
 
   // ============================================

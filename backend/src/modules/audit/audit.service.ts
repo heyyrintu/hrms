@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { AuditAction } from '@prisma/client';
+import { AuditAction, Prisma } from '@prisma/client';
 import { AuditQueryDto } from './dto/audit.dto';
 
 export interface CreateAuditLogInput {
@@ -19,8 +19,14 @@ export interface CreateAuditLogInput {
 export class AuditService {
   constructor(private prisma: PrismaService) {}
 
-  async log(input: CreateAuditLogInput) {
-    return this.prisma.auditLog.create({
+  /**
+   * Write one audit row. Pass `tx` (the client handed to a `$transaction`
+   * callback) to make the audit entry commit or roll back with the change it
+   * describes; without it the row is written on its own.
+   */
+  async log(input: CreateAuditLogInput, tx?: Prisma.TransactionClient) {
+    const client = tx ?? this.prisma;
+    return client.auditLog.create({
       data: {
         tenantId: input.tenantId,
         userId: input.userId,

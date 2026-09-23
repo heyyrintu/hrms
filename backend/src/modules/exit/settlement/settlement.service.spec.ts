@@ -9,6 +9,7 @@ import { Decimal } from '@prisma/client/runtime/library';
 import { SettlementService } from './settlement.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { createMockPrismaService } from '../../../test/helpers';
+import { LoansService } from '../../loans/loans.service';
 
 // The gratuity calculator is owned by another module and has its own tests.
 // Mocking it keeps the arithmetic under test here to the settlement's own
@@ -183,12 +184,27 @@ const GRATUITY_RESULT = {
 describe('SettlementService', () => {
   let service: SettlementService;
   let prisma: any;
+  let loans: {
+    getOutstandingForSettlement: jest.Mock;
+    recordSettlementRepayments: jest.Mock;
+    notifyLoansClosed: jest.Mock;
+  };
 
   beforeEach(async () => {
+    loans = {
+      // No loans unless a test says otherwise, so every figure asserted before
+      // loan recovery existed still holds.
+      getOutstandingForSettlement: jest.fn().mockResolvedValue([]),
+      recordSettlementRepayments: jest
+        .fn()
+        .mockResolvedValue({ recorded: [], closed: [] }),
+      notifyLoansClosed: jest.fn().mockResolvedValue(undefined),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SettlementService,
         { provide: PrismaService, useValue: createMockPrismaService() },
+        { provide: LoansService, useValue: loans },
       ],
     }).compile();
 
@@ -683,6 +699,144 @@ describe('SettlementService', () => {
     });
   });
 
+  // ── outstanding loans ─────────────────────────────────────
+
+  describe('recovering outstanding loans', () => {
+    it('reads the leaver-s current balances on every compute', async () => {
+      arrangeCompute();
+
+      await service.compute(TENANT, 'sep-1', {});
+
+      expect(loans.getOutstandingForSettlement).toHaveBeenCalledWith(TENANT, 'emp-1');
+    });
+
+    it('deducts each outstanding loan as its own clearly labelled recovery', async () => {
+      arrangeCompute();
+      loans.getOutstandingForSettlement.mockResolvedValue([
+        { loanId: 'loan-1', type: 'LOAN', outstanding: 40000 },
+        { loanId: 'loan-2', type: 'SALARY_ADVANCE', outstanding: 10000 },
+      ]);
+
+      const result: any = await service.compute(TENANT, 'sep-1', {});
+
+      // 15,870.97 notice + 50,000.00 loans
+      expect(result.totalRecoveries.toFixed(2)).toBe('65870.97');
+      // 290,114.14 - 50,000.00
+      expect(result.netPayable.toFixed(2)).toBe('240114.14');
+      expect(result.breakdown.loanRecovery).toMatchObject({
+        total: '50000.00',
+        unrecovered: '0.00',
+        loans: [
+          {
+            loanId: 'loan-1',
+            label: 'Loan recovery',
+            outstanding: '40000.00',
+            recovered: '40000.00',
+            unrecovered: '0.00',
+          },
+          {
+            loanId: 'loan-2',
+            label: 'Salary advance recovery',
+            outstanding: '10000.00',
+            recovered: '10000.00',
+            unrecovered: '0.00',
+          },
+        ],
+      });
+      expect(result.breakdown.totals).toMatchObject({
+        loanRecovery: '50000.00',
+        totalRecoveries: '65870.97',
+        netPayable: '240114.14',
+      });
+    });
+
+    it('stops at a zero net payable and surfaces what could not be recovered', async () => {
+      arrangeCompute();
+      loans.getOutstandingForSettlement.mockResolvedValue([
+        { loanId: 'loan-1', type: 'LOAN', outstanding: 300000 },
+      ]);
+
+      const result: any = await service.compute(TENANT, 'sep-1', {});
+
+      expect(result.netPayable.toFixed(2)).toBe('0.00');
+      expect(result.breakdown.loanRecovery).toMatchObject({
+        total: '290114.14',
+        unrecovered: '9885.86',
+        loans: [
+          expect.objectContaining({
+            recovered: '290114.14',
+            unrecovered: '9885.86',
+          }),
+        ],
+      });
+    });
+
+    it('carries no loan block figures when nothing is owed', async () => {
+      arrangeCompute();
+
+      const result: any = await service.compute(TENANT, 'sep-1', {});
+
+      expect(result.breakdown.loanRecovery).toMatchObject({
+        loans: [],
+        total: '0.00',
+        unrecovered: '0.00',
+      });
+      expect(result.breakdown.totals.loanRecovery).toBe('0.00');
+    });
+
+    it('re-clamps the loan recovery when an edit moves what the settlement can bear', async () => {
+      prisma.settlement.findFirst.mockResolvedValue({
+        id: 'stl-1',
+        tenantId: TENANT,
+        status: 'DRAFT',
+        proRataSalary: new Decimal('39677.42'),
+        leaveEncashment: new Decimal('24000.00'),
+        gratuity: new Decimal('242307.69'),
+        otherEarnings: new Decimal(0),
+        noticeRecovery: new Decimal('15870.97'),
+        otherRecoveries: new Decimal(0),
+        tds: new Decimal(0),
+        breakdown: {
+          loanRecovery: {
+            loans: [
+              {
+                loanId: 'loan-1',
+                type: 'LOAN',
+                label: 'Loan recovery',
+                outstanding: '50000.00',
+                recovered: '50000.00',
+                unrecovered: '0.00',
+              },
+            ],
+            total: '50000.00',
+            unrecovered: '0.00',
+            available: '290114.14',
+          },
+          totals: {},
+        },
+      });
+      prisma.settlement.update.mockImplementation(({ data }: any) => ({
+        id: 'stl-1',
+        ...data,
+      }));
+
+      const result: any = await service.update(TENANT, 'stl-1', {
+        otherRecoveries: 260000,
+      });
+
+      // 305,985.11 - 15,870.97 - 260,000.00 leaves 30,114.14 to recover from.
+      expect(result.netPayable.toFixed(2)).toBe('0.00');
+      // 15,870.97 + 260,000.00 + 30,114.14
+      expect(result.totalRecoveries.toFixed(2)).toBe('305985.11');
+      expect(result.breakdown.loanRecovery).toMatchObject({
+        total: '30114.14',
+        unrecovered: '19885.86',
+      });
+      // The balance recovered against is the one computed, not re-read.
+      expect(loans.getOutstandingForSettlement).not.toHaveBeenCalled();
+    });
+  });
+
   // ── update ────────────────────────────────────────────────
 
   describe('update', () => {
@@ -819,6 +973,160 @@ describe('SettlementService', () => {
       await expect(service.approve(TENANT, 'stl-1', 'user-9')).rejects.toThrow(
         ConflictException,
       );
+      expect(loans.recordSettlementRepayments).not.toHaveBeenCalled();
+    });
+
+    describe('with loans to recover', () => {
+      const draftWithLoan = {
+        id: 'stl-1',
+        status: 'DRAFT',
+        employeeId: 'emp-1',
+        lastWorkingDate: LAST_WORKING_DATE,
+        breakdown: {
+          loanRecovery: {
+            loans: [
+              {
+                loanId: 'loan-1',
+                type: 'LOAN',
+                label: 'Loan recovery',
+                outstanding: '50000.00',
+                recovered: '40000.00',
+                unrecovered: '10000.00',
+              },
+            ],
+          },
+        },
+      };
+
+      function trackTransaction() {
+        const state = { inTx: false };
+        const seen: Record<string, boolean[]> = { update: [], record: [], notify: [] };
+        prisma.$transaction.mockImplementation(async (cb: any) => {
+          state.inTx = true;
+          try {
+            return await cb(prisma);
+          } finally {
+            state.inTx = false;
+          }
+        });
+        prisma.settlement.update.mockImplementation(({ data }: any) => {
+          seen.update.push(state.inTx);
+          return { id: 'stl-1', ...data };
+        });
+        loans.recordSettlementRepayments.mockImplementation(async () => {
+          seen.record.push(state.inTx);
+          return {
+            recorded: [{ loanId: 'loan-1', amount: 40000 }],
+            closed: [{ id: 'loan-1', employeeId: 'emp-1', type: 'LOAN' }],
+          };
+        });
+        loans.notifyLoansClosed.mockImplementation(async () => {
+          seen.notify.push(state.inTx);
+        });
+        return seen;
+      }
+
+      it('records the recoveries in the same transaction as the approval', async () => {
+        prisma.settlement.findFirst.mockResolvedValue(draftWithLoan);
+        const seen = trackTransaction();
+
+        await service.approve(TENANT, 'stl-1', 'user-9');
+
+        expect(seen.update).toEqual([true]);
+        expect(seen.record).toEqual([true]);
+        expect(loans.recordSettlementRepayments).toHaveBeenCalledWith(prisma, {
+          tenantId: TENANT,
+          employeeId: 'emp-1',
+          settlementId: 'stl-1',
+          // The month of the last working day, read in UTC.
+          month: 3,
+          year: 2025,
+          lines: [{ loanId: 'loan-1', amount: 40000, outstandingAtCompute: 50000 }],
+        });
+      });
+
+      it('tells a borrower their loan closed only after the approval commits', async () => {
+        prisma.settlement.findFirst.mockResolvedValue(draftWithLoan);
+        const seen = trackTransaction();
+
+        await service.approve(TENANT, 'stl-1', 'user-9');
+
+        expect(seen.notify).toEqual([false]);
+        expect(loans.notifyLoansClosed).toHaveBeenCalledWith(TENANT, [
+          { id: 'loan-1', employeeId: 'emp-1', type: 'LOAN' },
+        ]);
+      });
+
+      it('does not approve when the loan balances no longer match', async () => {
+        prisma.settlement.findFirst.mockResolvedValue(draftWithLoan);
+        prisma.settlement.update.mockImplementation(({ data }: any) => ({
+          id: 'stl-1',
+          ...data,
+        }));
+        loans.recordSettlementRepayments.mockRejectedValue(
+          new ConflictException('Recompute it before approving.'),
+        );
+
+        await expect(service.approve(TENANT, 'stl-1', 'user-9')).rejects.toThrow(
+          /recompute/i,
+        );
+        // The rejection is thrown inside the approval's transaction, so the
+        // status change rolls back with it.
+        expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+        expect(loans.notifyLoansClosed).not.toHaveBeenCalled();
+      });
+
+      it('still checks the loans for a settlement computed before loan recovery', async () => {
+        // No block at all: an active loan the leaver owes must not be
+        // silently paid out in full, so the loans service is asked with no
+        // lines and refuses if anything is owed.
+        prisma.settlement.findFirst.mockResolvedValue({
+          ...draftWithLoan,
+          breakdown: { totals: {} },
+        });
+        prisma.settlement.update.mockImplementation(({ data }: any) => ({
+          id: 'stl-1',
+          ...data,
+        }));
+
+        await service.approve(TENANT, 'stl-1', 'user-9');
+
+        expect(loans.recordSettlementRepayments).toHaveBeenCalledWith(
+          prisma,
+          expect.objectContaining({ lines: [] }),
+        );
+      });
+
+      it('refuses a stored loan block that does not parse', async () => {
+        prisma.settlement.findFirst.mockResolvedValue({
+          ...draftWithLoan,
+          breakdown: {
+            loanRecovery: {
+              loans: [{ loanId: 'loan-1', outstanding: 'x', recovered: '1' }],
+            },
+          },
+        });
+
+        await expect(service.approve(TENANT, 'stl-1', 'user-9')).rejects.toThrow(
+          ConflictException,
+        );
+        expect(prisma.settlement.update).not.toHaveBeenCalled();
+      });
+
+      it('leaves the loans alone when a settlement is marked paid', async () => {
+        prisma.settlement.findFirst.mockResolvedValue({
+          ...draftWithLoan,
+          status: 'APPROVED',
+        });
+        prisma.settlement.update.mockImplementation(({ data }: any) => ({
+          id: 'stl-1',
+          ...data,
+        }));
+
+        await service.markPaid(TENANT, 'stl-1');
+
+        expect(loans.recordSettlementRepayments).not.toHaveBeenCalled();
+      });
     });
 
     it('turns a lost race into a ConflictException', async () => {

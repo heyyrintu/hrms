@@ -7,6 +7,11 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
+import {
+  isPrismaError,
+  PRISMA_UNIQUE_VIOLATION,
+} from '../../common/utils/prisma-errors';
 import {
   NotificationType,
   TicketPriority,
@@ -67,7 +72,20 @@ export class HelpdeskService {
   constructor(
     private prisma: PrismaService,
     private notificationsService: NotificationsService,
+    private webhookDispatcher: WebhookDispatcherService,
   ) {}
+
+  /**
+   * The find-first checks above give a readable 409 in the common case, but
+   * two concurrent requests can both pass them; the loser then hits the
+   * `(tenantId, code)` unique index. Report that the same way instead of 500.
+   */
+  private rethrowCodeClash(error: unknown, code: string | undefined): never {
+    if (code && isPrismaError(error, PRISMA_UNIQUE_VIOLATION)) {
+      throw new ConflictException(`A category with code ${code} already exists`);
+    }
+    throw error;
+  }
 
   private isHr(role: UserRole) {
     return role === UserRole.HR_ADMIN || role === UserRole.SUPER_ADMIN;
@@ -127,16 +145,20 @@ export class HelpdeskService {
       );
     }
 
-    return this.prisma.hrTicketCategory.create({
-      data: {
-        tenantId,
-        name: dto.name,
-        code: dto.code,
-        description: dto.description,
-        slaHours: dto.slaHours ?? 48,
-        isActive: dto.isActive ?? true,
-      },
-    });
+    try {
+      return await this.prisma.hrTicketCategory.create({
+        data: {
+          tenantId,
+          name: dto.name,
+          code: dto.code,
+          description: dto.description,
+          slaHours: dto.slaHours ?? 48,
+          isActive: dto.isActive ?? true,
+        },
+      });
+    } catch (error) {
+      this.rethrowCodeClash(error, dto.code);
+    }
   }
 
   async updateCategory(tenantId: string, id: string, dto: UpdateCategoryDto) {
@@ -174,7 +196,11 @@ export class HelpdeskService {
       if (dto[key] !== undefined) data[key] = dto[key];
     }
 
-    return this.prisma.hrTicketCategory.update({ where: { id }, data });
+    try {
+      return await this.prisma.hrTicketCategory.update({ where: { id }, data });
+    } catch (error) {
+      this.rethrowCodeClash(error, dto.code);
+    }
   }
 
   /**
@@ -196,9 +222,9 @@ export class HelpdeskService {
         employee: { select: { firstName: true, lastName: true } },
       },
       orderBy: { email: 'asc' },
-    } as any);
+    });
 
-    return (users as any[]).map((u) => ({
+    return users.map((u) => ({
       id: u.id,
       email: u.email,
       employeeId: u.employeeId,
@@ -243,6 +269,21 @@ export class HelpdeskService {
     };
 
     const ticket = await this.createNumbered(tenantId, data);
+
+    // The ticket has committed. Not awaited: dispatch never rejects, but it
+    // retries a failing endpoint with backoff, and the raiser must not wait.
+    // Subject and description are free text and may carry personal detail, so
+    // subscribers get ids and state and fetch the rest if they are entitled to.
+    void this.webhookDispatcher.dispatch(tenantId, 'ticket.created', {
+      ticketId: ticket.id,
+      ticketNumber: ticket.ticketNumber,
+      employeeId: ticket.employeeId,
+      categoryId: ticket.categoryId,
+      priority: ticket.priority,
+      status: ticket.status,
+      slaDeadline: ticket.slaDeadline ? ticket.slaDeadline.toISOString() : null,
+      createdAt: ticket.createdAt ? ticket.createdAt.toISOString() : null,
+    });
 
     await this.notificationsService.notifyByRole(
       tenantId,

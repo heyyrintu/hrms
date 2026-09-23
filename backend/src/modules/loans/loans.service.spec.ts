@@ -15,6 +15,7 @@ import {
 import { LoansService } from './loans.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import {
   createMockPrismaService,
   createMockNotificationsService,
@@ -27,6 +28,7 @@ describe('LoansService', () => {
   let service: LoansService;
   let prisma: any;
   let notifications: any;
+  let webhooks: { dispatch: jest.Mock };
 
   const tenantId = 'tenant-1';
   const employeeId = 'emp-1';
@@ -66,6 +68,7 @@ describe('LoansService', () => {
   });
 
   beforeEach(async () => {
+    webhooks = { dispatch: jest.fn().mockResolvedValue(undefined) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         LoansService,
@@ -74,6 +77,7 @@ describe('LoansService', () => {
           provide: NotificationsService,
           useValue: createMockNotificationsService(),
         },
+        { provide: WebhookDispatcherService, useValue: webhooks },
       ],
     }).compile();
 
@@ -268,6 +272,68 @@ describe('LoansService', () => {
         expect.any(String),
         '/loans',
       );
+    });
+
+    it('fires loan.approved once the approval has committed', async () => {
+      const approvedAt = new Date('2026-02-10T12:00:00Z');
+      prisma.employeeLoan.findFirst.mockResolvedValue(storedLoan());
+      prisma.employeeLoan.update.mockResolvedValue(
+        storedLoan({ status: LoanStatus.APPROVED, approvedAt }),
+      );
+
+      await service.approve(tenantId, loanId, 'user-hr');
+
+      expect(webhooks.dispatch).toHaveBeenCalledTimes(1);
+      expect(webhooks.dispatch).toHaveBeenCalledWith(tenantId, 'loan.approved', {
+        loanId,
+        employeeId,
+        type: LoanType.LOAN,
+        amount: 120000,
+        emi: 11000,
+        tenureMonths: 12,
+        approvedAt: approvedAt.toISOString(),
+      });
+      // Dispatched after the write, never before it.
+      expect(
+        prisma.employeeLoan.update.mock.invocationCallOrder[0],
+      ).toBeLessThan(webhooks.dispatch.mock.invocationCallOrder[0]);
+    });
+
+    it('carries no free text such as the purpose in the webhook payload', async () => {
+      prisma.employeeLoan.findFirst.mockResolvedValue(storedLoan());
+      prisma.employeeLoan.update.mockResolvedValue(
+        storedLoan({ status: LoanStatus.APPROVED, approvedAt: new Date() }),
+      );
+
+      await service.approve(tenantId, loanId, 'user-hr');
+
+      const payload = webhooks.dispatch.mock.calls[0][2];
+      expect(payload).not.toHaveProperty('purpose');
+      expect(payload).not.toHaveProperty('employee');
+      expect(JSON.stringify(payload)).not.toContain('Home repair');
+    });
+
+    it('still answers the approval when the webhook dispatch rejects', async () => {
+      prisma.employeeLoan.findFirst.mockResolvedValue(storedLoan());
+      prisma.employeeLoan.update.mockResolvedValue(
+        storedLoan({ status: LoanStatus.APPROVED, approvedAt: new Date() }),
+      );
+      webhooks.dispatch.mockRejectedValue(new Error('endpoint down'));
+
+      await expect(
+        service.approve(tenantId, loanId, 'user-hr'),
+      ).resolves.toMatchObject({ status: LoanStatus.APPROVED });
+    });
+
+    it('does not fire loan.approved when the transition is refused', async () => {
+      prisma.employeeLoan.findFirst.mockResolvedValue(
+        storedLoan({ status: LoanStatus.APPROVED }),
+      );
+
+      await expect(
+        service.approve(tenantId, loanId, 'user-hr'),
+      ).rejects.toThrow(BadRequestException);
+      expect(webhooks.dispatch).not.toHaveBeenCalled();
     });
 
     it('refuses to approve a loan that is already APPROVED', async () => {
@@ -478,6 +544,73 @@ describe('LoansService', () => {
       expect(result.repayments[0].amount).toBe(11000);
     });
 
+    describe('arrears', () => {
+      afterEach(() => jest.useRealTimers());
+
+      const payroll = (month: number, year: number, amount: number) => ({
+        id: `r-${year}-${month}`,
+        loanId,
+        month,
+        year,
+        amount,
+        source: RepaymentSource.PAYROLL,
+      });
+
+      it('explains a clamped EMI as an instalment after the tenure ends', async () => {
+        jest.useFakeTimers().setSystemTime(new Date('2026-03-15T12:00:00Z'));
+        // February's net pay only stretched to 5000 of the 11000 EMI.
+        prisma.employeeLoan.findFirst.mockResolvedValue({
+          ...storedLoan({ status: LoanStatus.ACTIVE, outstandingAmount: 116000 }),
+          repayments: [payroll(1, 2026, 11000), payroll(2, 2026, 5000)],
+        });
+
+        const result = await service.findById(
+          tenantId,
+          loanId,
+          employeeId,
+          UserRole.EMPLOYEE,
+        );
+
+        expect(result.arrears).toEqual({
+          amount: 6000,
+          instalments: [{ month: 1, year: 2027, amount: 6000 }],
+        });
+      });
+
+      it('reports none for a loan on schedule', async () => {
+        jest.useFakeTimers().setSystemTime(new Date('2026-03-15T12:00:00Z'));
+        prisma.employeeLoan.findFirst.mockResolvedValue({
+          ...storedLoan({ status: LoanStatus.ACTIVE, outstandingAmount: 110000 }),
+          repayments: [payroll(1, 2026, 11000), payroll(2, 2026, 11000)],
+        });
+
+        const result = await service.findById(
+          tenantId,
+          loanId,
+          employeeId,
+          UserRole.EMPLOYEE,
+        );
+
+        expect(result.arrears).toEqual({ amount: 0, instalments: [] });
+      });
+
+      it('is null for a loan payroll is not collecting', async () => {
+        prisma.employeeLoan.findFirst.mockResolvedValue({
+          ...storedLoan({ status: LoanStatus.REQUESTED }),
+          repayments: [],
+        });
+
+        const result = await service.findById(
+          tenantId,
+          loanId,
+          employeeId,
+          UserRole.EMPLOYEE,
+        );
+
+        expect(result.arrears).toBeNull();
+      });
+    });
+
     it('lets the borrower-s manager read it', async () => {
       prisma.employeeLoan.findFirst.mockResolvedValue({
         ...storedLoan(),
@@ -536,23 +669,39 @@ describe('LoansService', () => {
       });
     });
 
-    it('only considers ACTIVE loans', async () => {
+    it('considers ACTIVE loans, and CLOSED ones only when this month-s payroll closed them', async () => {
       prisma.employeeLoan.findMany.mockResolvedValue([]);
 
       await service.getPayrollDeductions(tenantId, employeeId, 3, 2026);
 
       expect(prisma.employeeLoan.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { tenantId, employeeId, status: LoanStatus.ACTIVE },
+          where: {
+            tenantId,
+            employeeId,
+            OR: [
+              { status: LoanStatus.ACTIVE },
+              {
+                status: LoanStatus.CLOSED,
+                repayments: {
+                  some: { month: 3, year: 2026, source: RepaymentSource.PAYROLL },
+                },
+              },
+            ],
+          },
         }),
       );
     });
 
-    it('skips a month payroll has already repaid', async () => {
+    // Every caller reverses this month's payroll rows inside the same
+    // transaction that re-records them, so the figure computed here has to be
+    // the one that holds once that reversal has happened — not "nothing,
+    // because a row exists" as it was when the reversal committed separately.
+    it('reads a month payroll already repaid as if that repayment were reversed', async () => {
       prisma.employeeLoan.findMany.mockResolvedValue([
         {
-          ...storedLoan({ status: LoanStatus.ACTIVE }),
-          repayments: [{ id: 'already-paid' }],
+          ...storedLoan({ status: LoanStatus.ACTIVE, outstandingAmount: 121000 }),
+          repayments: [{ id: 'already-paid', amount: 11000 }],
         },
       ]);
 
@@ -563,7 +712,48 @@ describe('LoansService', () => {
         2026,
       );
 
-      expect(result).toEqual({ total: 0, lines: [] });
+      expect(result).toEqual({
+        total: 11000,
+        lines: [{ loanId, type: LoanType.LOAN, amount: 11000 }],
+      });
+    });
+
+    it('reopens, for the calculation, a loan this month-s payroll closed', async () => {
+      prisma.employeeLoan.findMany.mockResolvedValue([
+        {
+          ...storedLoan({ status: LoanStatus.CLOSED, outstandingAmount: 0 }),
+          repayments: [{ id: 'closing-row', amount: 11000 }],
+        },
+      ]);
+
+      const result = await service.getPayrollDeductions(
+        tenantId,
+        employeeId,
+        12,
+        2026,
+      );
+
+      expect(result).toEqual({
+        total: 11000,
+        lines: [{ loanId, type: LoanType.LOAN, amount: 11000 }],
+      });
+    });
+
+    it('asks for the amount of this month-s payroll rows, not just their ids', async () => {
+      prisma.employeeLoan.findMany.mockResolvedValue([]);
+
+      await service.getPayrollDeductions(tenantId, employeeId, 3, 2026);
+
+      expect(prisma.employeeLoan.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: {
+            repayments: {
+              where: { month: 3, year: 2026, source: RepaymentSource.PAYROLL },
+              select: { id: true, amount: true },
+            },
+          },
+        }),
+      );
     });
 
     it('proposes nothing for a month before the loan starts', async () => {
@@ -654,14 +844,16 @@ describe('LoansService', () => {
       expect(result).toEqual({ total: 0, lines: [] });
     });
 
-    it('still respects idempotency in an arrears month', async () => {
+    it('re-derives an arrears month from the balance before its own payroll row', async () => {
+      // 4000 was left, this month's run took all of it; a recompute must
+      // propose the same 4000 again rather than nothing (or double it).
       prisma.employeeLoan.findMany.mockResolvedValue([
         {
           ...storedLoan({
-            status: LoanStatus.ACTIVE,
-            outstandingAmount: 4000,
+            status: LoanStatus.CLOSED,
+            outstandingAmount: 0,
           }),
-          repayments: [{ id: 'already-paid' }],
+          repayments: [{ id: 'already-paid', amount: 4000 }],
         },
       ]);
 
@@ -672,7 +864,10 @@ describe('LoansService', () => {
         2027,
       );
 
-      expect(result).toEqual({ total: 0, lines: [] });
+      expect(result).toEqual({
+        total: 4000,
+        lines: [{ loanId, type: LoanType.LOAN, amount: 4000 }],
+      });
     });
 
     // A scheduled month catches up a short prior month only as far as the
@@ -1003,6 +1198,120 @@ describe('LoansService', () => {
       });
     });
 
+    it('runs entirely on a caller-s transaction and leaves the telling to the caller', async () => {
+      const tx: any = createMockPrismaService();
+      tx.employeeLoan.updateMany.mockResolvedValue({ count: 1 });
+      tx.loanRepayment.findFirst.mockResolvedValue(null);
+      tx.employeeLoan.findMany.mockResolvedValue([
+        storedLoan({ status: LoanStatus.ACTIVE, outstandingAmount: 11000 }),
+      ]);
+
+      const closed = await service.recordPayrollRepayments(
+        tenantId,
+        employeeId,
+        12,
+        2026,
+        'payslip-12',
+        [{ loanId, amount: 11000 }],
+        tx,
+      );
+
+      // The loans are read inside the transaction, after its own reversal.
+      expect(tx.employeeLoan.findMany).toHaveBeenCalled();
+      expect(prisma.employeeLoan.findMany).not.toHaveBeenCalled();
+      expect(tx.loanRepayment.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ loanId, amount: 11000, payslipId: 'payslip-12' }),
+      });
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(tx.$transaction).not.toHaveBeenCalled();
+      // Nothing is announced from inside an uncommitted transaction.
+      expect(notifications.notifyEmployee).not.toHaveBeenCalled();
+      expect(closed).toEqual([expect.objectContaining({ id: loanId, employeeId })]);
+    });
+
+    // ------------------------------------------
+    // Inside payroll's transaction: the payslip already deducts the line, so
+    // the loan must be credited exactly that — or the run must roll back.
+    // ------------------------------------------
+
+    describe('on payroll-s transaction', () => {
+      let tx: any;
+      beforeEach(() => {
+        tx = createMockPrismaService();
+        tx.employeeLoan.updateMany.mockResolvedValue({ count: 1 });
+        tx.loanRepayment.findFirst.mockResolvedValue(null);
+      });
+
+      const record = (lines: { loanId: string; amount: number }[]) =>
+        service.recordPayrollRepayments(
+          tenantId,
+          employeeId,
+          3,
+          2026,
+          'payslip-3',
+          lines,
+          tx,
+        );
+
+      it('refuses (409) when the loan was closed while payroll was calculating, e.g. by a settlement', async () => {
+        // The read is scoped to ACTIVE loans, so a loan a settlement closed
+        // mid-calculation simply is not there any more.
+        tx.employeeLoan.findMany.mockResolvedValue([]);
+
+        const attempt = record([{ loanId, amount: 11000 }]);
+
+        await expect(attempt).rejects.toThrow(ConflictException);
+        await expect(attempt).rejects.toThrow(/re-run/i);
+        expect(tx.loanRepayment.create).not.toHaveBeenCalled();
+        expect(tx.employeeLoan.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('refuses (409) when the payslip deducts more than the loan still owes', async () => {
+        // Outstanding 1500, EMI 1000 computed; a manual 1000 landed during the
+        // calculation. Crediting 500 against a 1000 deduction is the bug.
+        tx.employeeLoan.findMany.mockResolvedValue([
+          storedLoan({ status: LoanStatus.ACTIVE, outstandingAmount: 500 }),
+        ]);
+
+        const attempt = record([{ loanId, amount: 1000 }]);
+
+        await expect(attempt).rejects.toThrow(ConflictException);
+        await expect(attempt).rejects.toThrow(/re-run/i);
+        expect(tx.loanRepayment.create).not.toHaveBeenCalled();
+        expect(tx.employeeLoan.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('credits exactly the deducted amount when it is the whole balance', async () => {
+        tx.employeeLoan.findMany.mockResolvedValue([
+          storedLoan({ status: LoanStatus.ACTIVE, outstandingAmount: 1000 }),
+        ]);
+
+        await record([{ loanId, amount: 1000 }]);
+
+        expect(tx.loanRepayment.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ loanId, amount: 1000 }),
+        });
+      });
+    });
+
+    it('returns the loans it closed when it owns the transaction too', async () => {
+      prisma.employeeLoan.findMany.mockResolvedValue([
+        storedLoan({ status: LoanStatus.ACTIVE, outstandingAmount: 11000 }),
+      ]);
+      prisma.loanRepayment.findFirst.mockResolvedValue(null);
+
+      const closed = await service.recordPayrollRepayments(
+        tenantId,
+        employeeId,
+        12,
+        2026,
+        'payslip-12',
+        [{ loanId, amount: 11000 }],
+      );
+
+      expect(closed).toEqual([expect.objectContaining({ id: loanId })]);
+    });
+
     it('rolls back rather than losing a decrement when the balance moved', async () => {
       prisma.employeeLoan.findMany.mockResolvedValue([
         storedLoan({ status: LoanStatus.ACTIVE }),
@@ -1237,6 +1546,208 @@ describe('LoansService', () => {
   });
 
   // ============================================
+  // Final settlement contract
+  // ============================================
+  describe('getOutstandingForSettlement', () => {
+    it('lists the leaver-s active balances oldest first, as plain numbers', async () => {
+      prisma.employeeLoan.findMany.mockResolvedValue([
+        storedLoan({ status: LoanStatus.ACTIVE, outstandingAmount: 66000 }),
+        storedLoan({
+          id: 'loan-2',
+          type: LoanType.SALARY_ADVANCE,
+          status: LoanStatus.ACTIVE,
+          outstandingAmount: 0,
+        }),
+      ]);
+
+      const result = await service.getOutstandingForSettlement(tenantId, employeeId);
+
+      expect(prisma.employeeLoan.findMany).toHaveBeenCalledWith({
+        where: { tenantId, employeeId, status: LoanStatus.ACTIVE },
+        orderBy: { createdAt: 'asc' },
+      });
+      // A zero balance is not a recovery.
+      expect(result).toEqual([
+        { loanId, type: LoanType.LOAN, outstanding: 66000 },
+      ]);
+    });
+  });
+
+  describe('recordSettlementRepayments', () => {
+    let tx: any;
+    const input = (overrides: Record<string, unknown> = {}) => ({
+      tenantId,
+      employeeId,
+      settlementId: 'stl-1',
+      month: 3,
+      year: 2026,
+      lines: [{ loanId, amount: 66000, outstandingAtCompute: 66000 }],
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      tx = createMockPrismaService();
+      tx.employeeLoan.updateMany.mockResolvedValue({ count: 1 });
+      tx.loanRepayment.findFirst.mockResolvedValue(null);
+      tx.employeeLoan.findMany.mockResolvedValue([
+        storedLoan({ status: LoanStatus.ACTIVE, outstandingAmount: 66000 }),
+      ]);
+    });
+
+    it('writes a SETTLEMENT repayment and closes the loan it clears, on the caller-s transaction', async () => {
+      const result = await service.recordSettlementRepayments(tx, input());
+
+      expect(tx.loanRepayment.create).toHaveBeenCalledWith({
+        data: {
+          tenantId,
+          loanId,
+          month: 3,
+          year: 2026,
+          amount: 66000,
+          source: RepaymentSource.SETTLEMENT,
+          note: 'Recovered from final settlement stl-1',
+        },
+      });
+      expect(tx.employeeLoan.updateMany).toHaveBeenCalledWith({
+        where: { id: loanId, tenantId, outstandingAmount: 66000 },
+        data: expect.objectContaining({
+          outstandingAmount: 0,
+          status: LoanStatus.CLOSED,
+        }),
+      });
+      expect(result.closed).toEqual([
+        { id: loanId, employeeId, type: LoanType.LOAN },
+      ]);
+      // Everything through the caller's transaction, nothing of its own.
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(prisma.loanRepayment.create).not.toHaveBeenCalled();
+      expect(notifications.notifyEmployee).not.toHaveBeenCalled();
+    });
+
+    it('leaves a partly recovered loan active with what is still owed', async () => {
+      await service.recordSettlementRepayments(
+        tx,
+        input({ lines: [{ loanId, amount: 40000, outstandingAtCompute: 66000 }] }),
+      );
+
+      expect(tx.employeeLoan.updateMany).toHaveBeenCalledWith({
+        where: { id: loanId, tenantId, outstandingAmount: 66000 },
+        data: { outstandingAmount: 26000 },
+      });
+    });
+
+    it('writes nothing for a line the settlement could not recover at all', async () => {
+      const result = await service.recordSettlementRepayments(
+        tx,
+        input({ lines: [{ loanId, amount: 0, outstandingAtCompute: 66000 }] }),
+      );
+
+      expect(tx.loanRepayment.create).not.toHaveBeenCalled();
+      expect(result.closed).toEqual([]);
+    });
+
+    it('is idempotent: a loan already recovered by this settlement is skipped', async () => {
+      tx.loanRepayment.findFirst.mockResolvedValue({ id: 'already' });
+      // Its balance has since moved to zero; that must not read as a conflict.
+      tx.employeeLoan.findMany.mockResolvedValue([]);
+
+      await service.recordSettlementRepayments(tx, input());
+
+      expect(tx.loanRepayment.findFirst).toHaveBeenCalledWith({
+        where: {
+          tenantId,
+          loanId,
+          month: 3,
+          year: 2026,
+          source: RepaymentSource.SETTLEMENT,
+        },
+        select: { id: true },
+      });
+      expect(tx.loanRepayment.create).not.toHaveBeenCalled();
+      expect(tx.employeeLoan.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('refuses when a balance moved since the settlement was computed', async () => {
+      // Payroll took an EMI after the settlement was worked out.
+      tx.employeeLoan.findMany.mockResolvedValue([
+        storedLoan({ status: LoanStatus.ACTIVE, outstandingAmount: 55000 }),
+      ]);
+
+      await expect(
+        service.recordSettlementRepayments(tx, input()),
+      ).rejects.toThrow(ConflictException);
+      expect(tx.loanRepayment.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses when a loan was disbursed after the settlement was computed', async () => {
+      tx.employeeLoan.findMany.mockResolvedValue([
+        storedLoan({ status: LoanStatus.ACTIVE, outstandingAmount: 66000 }),
+        storedLoan({ id: 'loan-new', status: LoanStatus.ACTIVE, outstandingAmount: 5000 }),
+      ]);
+
+      await expect(
+        service.recordSettlementRepayments(tx, input()),
+      ).rejects.toThrow(/recompute/i);
+    });
+
+    it('refuses when a loan the settlement recovers is no longer active', async () => {
+      tx.employeeLoan.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.recordSettlementRepayments(tx, input()),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('refuses a legacy settlement with no loan lines when the leaver owes a loan', async () => {
+      await expect(
+        service.recordSettlementRepayments(tx, input({ lines: [] })),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('rolls back rather than losing a decrement when the balance moved mid-write', async () => {
+      tx.employeeLoan.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.recordSettlementRepayments(tx, input()),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('scopes the loan read to the tenant and the leaver', async () => {
+      await service.recordSettlementRepayments(tx, input());
+
+      expect(tx.employeeLoan.findMany).toHaveBeenCalledWith({
+        where: { tenantId, employeeId, status: LoanStatus.ACTIVE },
+      });
+    });
+  });
+
+  describe('notifyLoansClosed', () => {
+    it('tells each borrower their loan or advance was fully repaid', async () => {
+      await service.notifyLoansClosed(tenantId, [
+        { id: loanId, employeeId, type: LoanType.LOAN },
+        { id: 'loan-2', employeeId: 'emp-2', type: LoanType.SALARY_ADVANCE },
+      ]);
+
+      expect(notifications.notifyEmployee).toHaveBeenCalledTimes(2);
+      expect(notifications.notifyEmployee).toHaveBeenCalledWith(
+        tenantId,
+        'emp-2',
+        NotificationType.GENERAL,
+        'Loan closed',
+        expect.stringContaining('salary advance'),
+        '/loans',
+      );
+    });
+
+    it('does nothing for an empty or missing list', async () => {
+      await service.notifyLoansClosed(tenantId, []);
+      await service.notifyLoansClosed(tenantId, undefined as any);
+
+      expect(notifications.notifyEmployee).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================
   // buildSchedule passthrough
   // ============================================
   describe('buildSchedule', () => {
@@ -1328,6 +1839,94 @@ describe('LoansService', () => {
           status: LoanStatus.ACTIVE,
           closedAt: null,
         },
+      });
+    });
+
+    it('runs entirely on a caller-s transaction when one is passed', async () => {
+      const tx: any = createMockPrismaService();
+      tx.employeeLoan.updateMany.mockResolvedValue({ count: 1 });
+      tx.loanRepayment.findMany.mockResolvedValue([
+        {
+          id: 'rep-1',
+          loanId,
+          amount: 11000,
+          loan: { id: loanId, outstandingAmount: 121000, status: LoanStatus.ACTIVE },
+        },
+      ]);
+
+      await service.clearPayrollRepayments(tenantId, 3, 2026, tx);
+
+      // Read inside the caller's transaction, so the balance it restores from
+      // is the one that transaction will commit against.
+      expect(tx.loanRepayment.findMany).toHaveBeenCalled();
+      expect(tx.loanRepayment.delete).toHaveBeenCalledWith({ where: { id: 'rep-1' } });
+      expect(tx.employeeLoan.updateMany).toHaveBeenCalledWith({
+        where: { id: loanId, tenantId, outstandingAmount: 121000 },
+        data: { outstandingAmount: 132000 },
+      });
+      // No second, nested transaction and nothing through the root client.
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(tx.$transaction).not.toHaveBeenCalled();
+      expect(prisma.loanRepayment.findMany).not.toHaveBeenCalled();
+      expect(prisma.employeeLoan.updateMany).not.toHaveBeenCalled();
+    });
+
+    describe('after a final settlement', () => {
+      const payrollRow = {
+        id: 'rep-9',
+        loanId,
+        amount: 11000,
+        loan: { id: loanId, outstandingAmount: 0, status: LoanStatus.CLOSED },
+      };
+
+      it('refuses (409) to reopen a loan a settlement at or after that month recovered', async () => {
+        prisma.loanRepayment.findMany.mockResolvedValue([payrollRow]);
+        prisma.loanRepayment.findFirst.mockResolvedValue({
+          id: 'settle-1',
+          loanId,
+          month: 9,
+          year: 2026,
+        });
+
+        const attempt = service.clearPayrollRepayments(tenantId, 9, 2026);
+
+        await expect(attempt).rejects.toThrow(ConflictException);
+        await expect(attempt).rejects.toThrow(/settlement/i);
+        expect(prisma.loanRepayment.delete).not.toHaveBeenCalled();
+        expect(prisma.employeeLoan.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('looks for settlement rows of those loans, in the tenant, from that month on', async () => {
+        prisma.loanRepayment.findMany.mockResolvedValue([payrollRow]);
+        prisma.loanRepayment.findFirst.mockResolvedValue(null);
+
+        await service.clearPayrollRepayments(tenantId, 9, 2026);
+
+        expect(prisma.loanRepayment.findFirst).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: {
+              tenantId,
+              loanId: { in: [loanId] },
+              source: RepaymentSource.SETTLEMENT,
+              OR: [{ year: { gt: 2026 } }, { year: 2026, month: { gte: 9 } }],
+            },
+          }),
+        );
+        // No settlement: the reversal goes ahead.
+        expect(prisma.loanRepayment.delete).toHaveBeenCalledWith({
+          where: { id: 'rep-9' },
+        });
+      });
+
+      it('checks through the caller-s transaction when one is passed', async () => {
+        const tx: any = createMockPrismaService();
+        tx.loanRepayment.findMany.mockResolvedValue([payrollRow]);
+        tx.loanRepayment.findFirst.mockResolvedValue({ id: 'settle-1', loanId });
+
+        await expect(
+          service.clearPayrollRepayments(tenantId, 9, 2026, tx),
+        ).rejects.toThrow(ConflictException);
+        expect(prisma.loanRepayment.findFirst).not.toHaveBeenCalled();
       });
     });
 

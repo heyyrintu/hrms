@@ -5,6 +5,16 @@ import * as handlebars from 'handlebars';
 import * as fs from 'fs';
 import * as path from 'path';
 
+export interface EmailAttachment {
+  filename: string;
+  contentType: string;
+  /**
+   * File content, base64-encoded. A string rather than a Buffer so that
+   * EmailOptions stays JSON-safe as BullMQ job data.
+   */
+  contentBase64: string;
+}
+
 export interface EmailOptions {
   to: string | string[];
   subject: string;
@@ -12,6 +22,7 @@ export interface EmailOptions {
   context?: Record<string, unknown>;
   html?: string;
   text?: string;
+  attachments?: EmailAttachment[];
 }
 
 type Transport = 'graph' | 'smtp' | 'console';
@@ -116,13 +127,31 @@ export class EmailService {
 
     switch (this.transport) {
       case 'graph':
-        await this.sendViaGraph(recipients, options.subject, html, options.text);
+        await this.sendViaGraph(
+          recipients,
+          options.subject,
+          html,
+          options.text,
+          options.attachments,
+        );
         break;
       case 'smtp':
-        await this.sendViaSmtp(recipients, options.subject, html, options.text);
+        await this.sendViaSmtp(
+          recipients,
+          options.subject,
+          html,
+          options.text,
+          options.attachments,
+        );
         break;
       default:
-        this.logEmail(recipients, options.subject, html, options.text);
+        this.logEmail(
+          recipients,
+          options.subject,
+          html,
+          options.text,
+          options.attachments,
+        );
     }
   }
 
@@ -131,13 +160,14 @@ export class EmailService {
     subject: string,
     html: string,
     text?: string,
+    attachments?: EmailAttachment[],
   ): Promise<void> {
     if (!this.graphClient) {
-      this.logEmail(recipients, subject, html, text);
+      this.logEmail(recipients, subject, html, text, attachments);
       return;
     }
 
-    const message = {
+    const message: Record<string, unknown> = {
       subject,
       body: {
         contentType: html ? 'HTML' : 'Text',
@@ -147,6 +177,15 @@ export class EmailService {
         emailAddress: { address: email },
       })),
     };
+    if (attachments?.length) {
+      // Inline fileAttachments are fine up to Graph's 3 MB sendMail limit.
+      message.attachments = attachments.map((a) => ({
+        '@odata.type': '#microsoft.graph.fileAttachment',
+        name: a.filename,
+        contentType: a.contentType,
+        contentBytes: a.contentBase64,
+      }));
+    }
 
     try {
       await this.graphClient
@@ -168,9 +207,10 @@ export class EmailService {
     subject: string,
     html: string,
     text?: string,
+    attachments?: EmailAttachment[],
   ): Promise<void> {
     if (!this.smtpTransporter) {
-      this.logEmail(recipients, subject, html, text);
+      this.logEmail(recipients, subject, html, text, attachments);
       return;
     }
 
@@ -181,6 +221,16 @@ export class EmailService {
         subject,
         html,
         text,
+        ...(attachments?.length
+          ? {
+              attachments: attachments.map((a) => ({
+                filename: a.filename,
+                contentType: a.contentType,
+                content: a.contentBase64,
+                encoding: 'base64',
+              })),
+            }
+          : {}),
       });
       this.logger.log(
         `Email sent via SMTP to ${recipients.join(', ')}: ${subject}`,
@@ -197,9 +247,13 @@ export class EmailService {
     subject: string,
     html: string,
     text?: string,
+    attachments?: EmailAttachment[],
   ): void {
+    const attached = attachments?.length
+      ? ` | Attachments: ${attachments.map((a) => a.filename).join(', ')}`
+      : '';
     this.logger.log(
-      `[Email Preview] To: ${recipients.join(', ')} | Subject: ${subject}`,
+      `[Email Preview] To: ${recipients.join(', ')} | Subject: ${subject}${attached}`,
     );
     this.logger.debug(`[Email Preview] Body: ${html || text}`);
   }

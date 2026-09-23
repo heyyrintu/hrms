@@ -16,13 +16,20 @@ import { ProofsService } from './proofs/proofs.service';
 import { SlabsController } from './slabs/slabs.controller';
 import { SlabsService } from './slabs/slabs.service';
 import { LoansModule } from '../loans/loans.module';
+import { WebhooksModule } from '../webhooks/webhooks.module';
+import { PayslipEmailService } from './payslip-email.service';
+import { PayslipEmailProcessor } from './payslip-email.processor';
 
 @Module({
   // Payroll recovers loan and salary-advance instalments through LoansService.
-  imports: [LoansModule],
+  imports: [LoansModule, WebhooksModule],
   controllers: [PayrollController, StatutoryController, ReturnsController, Form16Controller, ProofsController, SlabsController],
   providers: [PayrollService, SalaryService, PayrollCalculationService,
-    StatutoryService, PayrollPdfService, ReturnsService, Form16Service, Form16PdfService, ProofsService, SlabsService],
+    StatutoryService, PayrollPdfService, ReturnsService, Form16Service, Form16PdfService, ProofsService, SlabsService,
+    PayslipEmailService,
+    // The `payroll` queue only exists when QueueModule registered it; without
+    // Redis, PayslipEmailService sends directly and there is nothing to work.
+    ...(process.env.REDIS_ENABLED === 'true' ? [PayslipEmailProcessor] : [])],
   exports: [PayrollService, SalaryService],
 })
 export class PayrollModule {}

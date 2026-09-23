@@ -50,6 +50,15 @@ export class CreateShiftDto {
   @IsNumber()
   @Min(0)
   graceMinutes?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Derived from the times (endTime <= startTime crosses midnight). Optional; ' +
+      'when sent it must agree with the times or the request is rejected.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  isOvernight?: boolean;
 }
 
 export class UpdateShiftDto {
@@ -96,6 +105,15 @@ export class UpdateShiftDto {
   @IsNumber()
   @Min(0)
   graceMinutes?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Derived from the times (endTime <= startTime crosses midnight). Optional; ' +
+      'when sent it must agree with the resulting times or the request is rejected.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  isOvernight?: boolean;
 
   @ApiPropertyOptional()
   @IsOptional()

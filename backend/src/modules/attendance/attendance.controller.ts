@@ -145,7 +145,9 @@ export class AttendanceController {
   }
 
   /**
-   * Sweep a past day and record ABSENT for everyone who left no trace.
+   * Sweep a day and record ABSENT for everyone who left no trace. Today only
+   * closes day-shift employees (night shifts have not ended); a past day
+   * closes everyone; a future day is refused.
    * POST /api/attendance/mark-absent
    */
   @Post('mark-absent')
@@ -163,7 +165,7 @@ export class AttendanceController {
     if (Number.isNaN(date.getTime())) {
       throw new BadRequestException('date must be a valid calendar date');
     }
-    return this.autoAbsentService.markAbsentForDate(user.tenantId, date);
+    return this.autoAbsentService.markAbsentOnDemand(user.tenantId, date);
   }
 
   /**

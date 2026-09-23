@@ -279,6 +279,61 @@ describe('MyLoansPage', () => {
     expect(screen.getByText('Repayments so far')).toBeInTheDocument();
   });
 
+  it('explains an arrears instalment due after the tenure ends', async () => {
+    api.getById.mockResolvedValue({
+      data: {
+        ...activeLoan,
+        outstandingAmount: 116000,
+        schedule: [
+          {
+            month: 12,
+            year: 2026,
+            emi: 11000,
+            principalComponent: 10000,
+            interestComponent: 1000,
+            balanceAfter: 0,
+          },
+        ],
+        repayments: [],
+        arrears: {
+          amount: 6000,
+          instalments: [{ month: 1, year: 2027, amount: 6000 }],
+        },
+      },
+    } as any);
+
+    render(<MyLoansPage />);
+    fireEvent.click(await screen.findByText('Schedule'));
+
+    const note = await screen.findByTestId('arrears-note');
+    expect(note).toHaveTextContent('₹6,000');
+    expect(note).toHaveTextContent(/net pay/i);
+    expect(note).toHaveTextContent('Jan 2027');
+    // And the instalment is a row of the schedule, marked as arrears, so the
+    // extra deduction on the payslip has a line to match against.
+    const row = screen.getByTestId('arrears-row-2027-1');
+    expect(row).toHaveTextContent('Jan 2027');
+    expect(row).toHaveTextContent(/arrears/i);
+    expect(row).toHaveTextContent('₹6,000');
+  });
+
+  it('shows no arrears note for a loan on schedule', async () => {
+    api.getById.mockResolvedValue({
+      data: {
+        ...activeLoan,
+        schedule: [],
+        repayments: [],
+        arrears: { amount: 0, instalments: [] },
+      },
+    } as any);
+
+    render(<MyLoansPage />);
+    fireEvent.click(await screen.findByText('Schedule'));
+
+    await waitFor(() => expect(api.getById).toHaveBeenCalled());
+    expect(screen.queryByTestId('arrears-note')).not.toBeInTheDocument();
+  });
+
   it('offers to withdraw only a request that is still pending', async () => {
     api.getMy.mockResolvedValue({
       data: { data: [activeLoan, requestedLoan] },

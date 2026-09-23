@@ -220,6 +220,12 @@ export default function AttendancePolicyPage() {
               onChange={(e) => set('minFullDayMinutes', e.target.value)}
             />
           </div>
+          <p className="text-sm text-warm-500">
+            Applied at clock-out to the day&apos;s net worked minutes: at least the
+            full-day figure keeps the day present, at least the half-day figure makes
+            it a half day, and less than that marks it absent. Set a figure to 0 to
+            switch that rule off.
+          </p>
         </CardContent>
       </Card>
 

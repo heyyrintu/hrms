@@ -38,6 +38,50 @@ export function parseHhMm(value: string | null | undefined): number | null {
   return hours * 60 + minutes;
 }
 
+/**
+ * True when a shift ends on the calendar day after it starts (22:00-06:00).
+ * An end equal to the start is a 24-hour shift, which also crosses midnight.
+ * Unusable times are never overnight.
+ */
+export function isOvernightShift(
+  startTime: string | null | undefined,
+  endTime: string | null | undefined,
+): boolean {
+  const start = parseHhMm(startTime);
+  const end = parseHhMm(endTime);
+  if (start === null || end === null) return false;
+  return end <= start;
+}
+
+/**
+ * How early someone may arrive for a 24-hour shift and still be starting
+ * today's shift rather than finishing yesterday's. Such a shift has no
+ * off-duty gap to split, so the window is a fixed allowance instead.
+ */
+export const ZERO_GAP_EARLY_ARRIVAL_MINUTES = 120;
+
+/**
+ * Minutes since local midnight before which a punch belongs to the overnight
+ * shift that started the previous evening. It is the midpoint of the off-duty
+ * gap (off 06:00 -> 22:00 gives 14:00), so an early arrival for tonight and a
+ * late departure from last night both land on the right shift. Null for a
+ * same-day shift, where no punch ever belongs to yesterday.
+ *
+ * A 24-hour shift (start == end) has no gap: its cutoff sits
+ * `ZERO_GAP_EARLY_ARRIVAL_MINUTES` before the start, never before midnight,
+ * so arriving a little early is scored against today's start.
+ */
+export function overnightDayCutoffMinutes(
+  startTime: string | null | undefined,
+  endTime: string | null | undefined,
+): number | null {
+  const start = parseHhMm(startTime);
+  const end = parseHhMm(endTime);
+  if (start === null || end === null || end > start) return null;
+  if (end === start) return Math.max(0, start - ZERO_GAP_EARLY_ARRIVAL_MINUTES);
+  return end + Math.floor((start - end) / 2);
+}
+
 /** Minutes since midnight of the calendar day `at` falls on inside `tz`. */
 export function minutesSinceMidnightInZone(
   at: Date,
@@ -86,12 +130,18 @@ export function zonedDateOnlyUtc(
  * 09:15 is not late and 09:16 is late by one minute. `lateByMinutes` counts
  * from the end of grace, not from the shift start, so the number matches what
  * the employee is actually penalised for.
+ *
+ * Pass `shiftEnd` for a shift that may cross midnight. For an overnight shift
+ * the punch is scored against the start on the shift's START day: with a
+ * 22:00-06:00 shift, 00:30 is 2h30 after 22:00 of the previous evening, not
+ * 21h30 before tonight's start.
  */
 export function computeLateMark(
   clockIn: Date,
   shiftStart: string,
   graceMinutes: number,
   tz: string = DEFAULT_ATTENDANCE_TIME_ZONE,
+  shiftEnd?: string | null,
 ): LateMarkResult {
   const start = parseHhMm(shiftStart);
   if (start === null) return { isLate: false, lateByMinutes: 0 };
@@ -99,7 +149,12 @@ export function computeLateMark(
   const grace =
     Number.isFinite(graceMinutes) && graceMinutes > 0 ? Math.floor(graceMinutes) : 0;
 
-  const actual = minutesSinceMidnightInZone(clockIn, tz);
+  let actual = minutesSinceMidnightInZone(clockIn, tz);
+  // A punch before the overnight cutoff happened on the day after the shift
+  // started; move it onto that start day's clock so the subtraction is linear.
+  const cutoff = overnightDayCutoffMinutes(shiftStart, shiftEnd);
+  if (cutoff !== null && actual < cutoff) actual += 24 * 60;
+
   const lateBy = actual - (start + grace);
 
   return lateBy > 0

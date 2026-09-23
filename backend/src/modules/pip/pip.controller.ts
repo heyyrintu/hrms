@@ -34,20 +34,34 @@ export class PipController {
   constructor(private pipService: PipService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Create a performance improvement plan' })
+  @ApiOperation({
+    summary: 'Create a performance improvement plan',
+    description:
+      'A MANAGER owns the plans they raise, for direct reports only. HR/admin ' +
+      'may name the owner with `managerId`; otherwise the owner is their own ' +
+      "employee profile, then the employee's reporting manager.",
+  })
   @ApiResponse({ status: 201, description: 'Created' })
-  @ApiResponse({ status: 400, description: 'Invalid date range' })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Invalid date range; caller (MANAGER) has no employee profile; the named ' +
+      'owner is not an employee of the tenant or is the subject; or no owner ' +
+      'can be resolved and one must be picked',
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({
+    status: 403,
+    description: 'MANAGER targeting someone other than a direct report, or naming another owner',
+  })
   @ApiResponse({ status: 404, description: 'Employee not found' })
   @Roles(UserRole.MANAGER, UserRole.HR_ADMIN, UserRole.SUPER_ADMIN)
   async create(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateImprovementPlanDto,
   ) {
-    if (!user.employeeId) {
-      throw new BadRequestException('No employee profile linked to your account');
-    }
+    // No profile check here: an HR admin without one can still create a plan
+    // when an owner can be resolved, so the service decides per role.
     return this.pipService.create(user.tenantId, user.employeeId, user.role, dto);
   }
 

@@ -21,7 +21,15 @@ import {
   PayableHoursQueryDto,
   ManualAttendanceDto,
 } from './dto/attendance.dto';
-import { AttendanceStatus, AttendanceSource, UserRole, NotificationType } from '@prisma/client';
+import {
+  AttendancePolicy,
+  AttendanceStatus,
+  AttendanceSource,
+  RegularizationStatus,
+  Shift,
+  UserRole,
+  NotificationType,
+} from '@prisma/client';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AttendancePolicyService } from './policy/attendance-policy.service';
@@ -31,6 +39,51 @@ import {
   zonedDateOnlyUtc,
   DEFAULT_ATTENDANCE_TIME_ZONE,
 } from './rules/late-mark';
+import {
+  carriedSessionWindowMinutes,
+  clockInBelongsToPreviousShift,
+  previousDateOnly,
+} from './rules/overnight-shift';
+import { classifyWorkedDay } from './rules/day-classification';
+import {
+  coveringAssignmentWhere,
+  effectiveShift,
+  NEWEST_ASSIGNMENT_FIRST,
+} from './rules/shift-lookup';
+
+/** The working day a punch belongs to, and the shift that decided it. */
+interface ShiftDay {
+  date: Date;
+  shift: Shift | null;
+  /** True when the punch continues the overnight shift that began yesterday. */
+  continuesPreviousShift: boolean;
+}
+
+/** The dashboard's view of the current working day. */
+export interface TodayStatus {
+  status: AttendanceStatus | 'NOT_CLOCKED_IN';
+  clockedIn: boolean;
+  clockInTime: Date | null;
+  clockOutTime: Date | null;
+  workedMinutes: number;
+  otMinutesCalculated?: number;
+  currentSessionStart?: Date | null;
+  clockInLatitude?: number | null;
+  clockInLongitude?: number | null;
+  clockOutLatitude?: number | null;
+  clockOutLongitude?: number | null;
+}
+
+/**
+ * Statuses the worked-hours rule can have written, and so the only ones a new
+ * session may restore over. LEAVE and HOLIDAY are decided elsewhere.
+ */
+const RESTORABLE_STATUSES: ReadonlySet<AttendanceStatus> = new Set<AttendanceStatus>([
+  AttendanceStatus.PRESENT,
+  AttendanceStatus.WFH,
+  AttendanceStatus.HALF_DAY,
+  AttendanceStatus.ABSENT,
+]);
 
 @Injectable()
 export class AttendanceService {
@@ -46,12 +99,6 @@ export class AttendanceService {
    */
   async clockIn(tenantId: string, employeeId: string, dto: ClockInDto) {
     const now = new Date();
-    // `AttendanceRecord.date` is `@db.Date`, which Prisma writes from the UTC
-    // date part. Deriving the day from the server's own zone would store the
-    // wrong calendar day on any non-UTC box and the auto-absent sweep — which
-    // reads the column on an IST/UTC-midnight basis — would then mark a
-    // present employee ABSENT and cost them a day's pay under `absentIsLop`.
-    const today = zonedDateOnlyUtc(now, DEFAULT_ATTENDANCE_TIME_ZONE);
 
     // Check if employee exists
     const employee = await this.prisma.employee.findFirst({
@@ -91,10 +138,23 @@ export class AttendanceService {
       }
     }
 
-    // Score the punch against the shift before opening the transaction: these
-    // are two extra reads and a SERIALIZABLE transaction is the wrong place to
-    // hold them.
-    const lateMark = await this.resolveLateMark(tenantId, employeeId, today, now);
+    // `AttendanceRecord.date` is `@db.Date`, which Prisma writes from the UTC
+    // date part. Deriving the day from the server's own zone would store the
+    // wrong calendar day on any non-UTC box and the auto-absent sweep — which
+    // reads the column on an IST/UTC-midnight basis — would then mark a
+    // present employee ABSENT and cost them a day's pay under `absentIsLop`.
+    // A night-shift punch after midnight belongs to the day the shift started.
+    //
+    // Resolve the day and score the punch before opening the transaction:
+    // these are extra reads and a SERIALIZABLE transaction is the wrong place
+    // to hold them.
+    const {
+      date: today,
+      shift,
+      continuesPreviousShift,
+    } = await this.resolveShiftDay(tenantId, employeeId, now);
+    const lateMark = await this.resolveLateMark(tenantId, shift, now, continuesPreviousShift);
+    const shiftData = shift ? { shiftId: shift.id } : {};
 
     // The "is there an open session?" check and the session insert must be one
     // atomic unit, otherwise two near-simultaneous taps both see "no open session"
@@ -133,6 +193,26 @@ export class AttendanceService {
                   clockInLongitude: dto.longitude,
                   isLate: lateMark.isLate,
                   lateByMinutes: lateMark.isLate ? lateMark.lateByMinutes : null,
+                  // A row the absent sweep wrote (e.g. a night shift that
+                  // started after the 23:30 sweep) is a real day now.
+                  autoMarked: false,
+                  ...shiftData,
+                },
+              });
+            } else if (
+              attendance.preClassificationStatus &&
+              RESTORABLE_STATUSES.has(attendance.status)
+            ) {
+              // An earlier clock-out of this day (a lunch break, say) let the
+              // worked-hours rule downgrade it. The day is not over, so put
+              // back what the rule replaced; the next clock-out re-scores the
+              // whole day. Without this the day reads ABSENT while clocked in
+              // and stays so if the final clock-out is forgotten.
+              await tx.attendanceRecord.update({
+                where: { id: attendance.id },
+                data: {
+                  status: attendance.preClassificationStatus,
+                  preClassificationStatus: null,
                 },
               });
             }
@@ -152,6 +232,7 @@ export class AttendanceService {
               clockInLongitude: dto.longitude,
               isLate: lateMark.isLate,
               lateByMinutes: lateMark.isLate ? lateMark.lateByMinutes : null,
+              ...shiftData,
               standardWorkMinutes: 480, // 8 hours default
               sessions: { create: { tenantId, inTime: now } },
             },
@@ -182,36 +263,22 @@ export class AttendanceService {
    */
   async clockOut(tenantId: string, employeeId: string, dto: ClockOutDto) {
     const now = new Date();
-    // `AttendanceRecord.date` is `@db.Date`, which Prisma writes from the UTC
-    // date part. Deriving the day from the server's own zone would store the
-    // wrong calendar day on any non-UTC box and the auto-absent sweep — which
-    // reads the column on an IST/UTC-midnight basis — would then mark a
-    // present employee ABSENT and cost them a day's pay under `absentIsLop`.
-    const today = zonedDateOnlyUtc(now, DEFAULT_ATTENDANCE_TIME_ZONE);
+    // A clock-out closes whichever session is open, on the row its clock-in
+    // wrote. Re-deriving the day from the shift here would disagree with the
+    // clock-in whenever the shift changed between the two punches.
+    const found = await this.findOpenAttendance(tenantId, employeeId, now);
 
-    // Get today's attendance
-    const attendance = await this.prisma.attendanceRecord.findUnique({
-      where: {
-        tenantId_employeeId_date: {
-          tenantId,
-          employeeId,
-          date: today,
-        },
-      },
-      include: { sessions: true },
-    });
-
-    if (!attendance) {
+    if (!found.attendance) {
       throw new BadRequestException('No clock-in record found for today');
     }
 
-    // Find open session
-    const openSession = attendance.sessions.find((s) => !s.outTime);
+    const { attendance, openSession } = found;
     if (!openSession) {
       throw new BadRequestException('No open session found. Please clock in first.');
     }
 
-    // Calculate session minutes
+    // Instants, not wall-clock times, so a session that crosses midnight
+    // counts correctly.
     const sessionMinutes = Math.floor(
       (now.getTime() - openSession.inTime.getTime()) / (1000 * 60),
     );
@@ -258,13 +325,24 @@ export class AttendanceService {
       otRule,
     );
 
-    // The day's status is finalised here, so this is where the late-mark
-    // penalty lands.
-    const penaltyStatus = await this.resolveLateMarkPenalty(
+    // The day's status is finalised here: first what the hours earned, then
+    // the late-mark penalty on top of it.
+    const policy = await this.policyService.getOrCreate(tenantId);
+    const earnedStatus = await this.resolveWorkedDayStatus(
       tenantId,
       employeeId,
       attendance,
+      netWorkedMinutes,
+      policy,
     );
+    const baseStatus = earnedStatus ?? attendance.status;
+    const penaltyStatus = await this.resolveLateMarkPenalty(
+      tenantId,
+      employeeId,
+      { ...attendance, status: baseStatus },
+      policy,
+    );
+    const finalStatus = penaltyStatus ?? baseStatus;
 
     // Update attendance record
     await this.prisma.attendanceRecord.update({
@@ -277,11 +355,96 @@ export class AttendanceService {
         remarks: dto.remarks || attendance.remarks,
         clockOutLatitude: dto.latitude ?? null,
         clockOutLongitude: dto.longitude ?? null,
-        ...(penaltyStatus ? { status: penaltyStatus } : {}),
+        ...(finalStatus !== attendance.status ? { status: finalStatus } : {}),
+        // Remember what the worked-hours rule replaced, so a further session
+        // today can restore it (PRESENT, or WFH on a work-from-home day).
+        ...(earnedStatus !== null
+          ? { preClassificationStatus: attendance.preClassificationStatus ?? attendance.status }
+          : {}),
       },
     });
 
     return this.getAttendanceById(tenantId, attendance.id);
+  }
+
+  /**
+   * The working day a clock-in at `at` belongs to. Normally the IST calendar
+   * day; the overnight shift that started yesterday keeps a punch only while
+   * it is still plausibly that shift (see `clockInBelongsToPreviousShift`),
+   * so an expired night assignment cannot swallow the next morning's day
+   * shift.
+   */
+  private async resolveShiftDay(
+    tenantId: string,
+    employeeId: string,
+    at: Date,
+  ): Promise<ShiftDay> {
+    const calendarDay = zonedDateOnlyUtc(at, DEFAULT_ATTENDANCE_TIME_ZONE);
+    const yesterday = previousDateOnly(calendarDay);
+
+    const [yesterdayShift, todayShift] = await Promise.all([
+      this.findShiftOn(tenantId, employeeId, yesterday),
+      this.findShiftOn(tenantId, employeeId, calendarDay),
+    ]);
+
+    if (
+      clockInBelongsToPreviousShift(at, yesterdayShift, todayShift, DEFAULT_ATTENDANCE_TIME_ZONE)
+    ) {
+      return { date: yesterday, shift: yesterdayShift, continuesPreviousShift: true };
+    }
+
+    return { date: calendarDay, shift: todayShift, continuesPreviousShift: false };
+  }
+
+  /** The shift an employee is on for a given day, by the shared lookup rule. */
+  private async findShiftOn(
+    tenantId: string,
+    employeeId: string,
+    date: Date,
+  ): Promise<Shift | null> {
+    const assignment = await this.prisma.shiftAssignment.findFirst({
+      where: { ...coveringAssignmentWhere(tenantId, date), employeeId },
+      orderBy: NEWEST_ASSIGNMENT_FIRST,
+      include: { shift: true },
+    });
+
+    return effectiveShift(assignment);
+  }
+
+  /**
+   * The record holding the session to close: today's open session; failing
+   * that, yesterday's, when it is recent enough to be a shift still being
+   * finished (a night shift, or a day shift worked past midnight; see
+   * `carriedSessionWindowMinutes`).
+   *
+   * Yesterday is only considered when today has no clocked sessions. A today
+   * row with closed sessions means the clock-out is a duplicate, and closing
+   * a forgotten session from yesterday would book it as a 17-hour day. A
+   * today row with no sessions (a LEAVE row, say) does not block it.
+   */
+  private async findOpenAttendance(tenantId: string, employeeId: string, now: Date) {
+    const today = zonedDateOnlyUtc(now, DEFAULT_ATTENDANCE_TIME_ZONE);
+    const load = (day: Date) =>
+      this.prisma.attendanceRecord.findUnique({
+        where: { tenantId_employeeId_date: { tenantId, employeeId, date: day } },
+        include: { sessions: true, shift: true },
+      });
+
+    const attendance = await load(today);
+    const openSession = attendance?.sessions.find((s) => !s.outTime);
+    if (openSession) return { attendance, openSession };
+    if (attendance && attendance.sessions.length > 0) {
+      return { attendance, openSession: undefined };
+    }
+
+    const previous = await load(previousDateOnly(today));
+    const windowMs = carriedSessionWindowMinutes(previous?.shift) * 60 * 1000;
+    const carried = previous?.sessions.find(
+      (s) => !s.outTime && now.getTime() - s.inTime.getTime() <= windowMs,
+    );
+    if (previous && carried) return { attendance: previous, openSession: carried };
+
+    return { attendance, openSession: undefined };
   }
 
   /**
@@ -290,27 +453,20 @@ export class AttendanceService {
    */
   private async resolveLateMark(
     tenantId: string,
-    employeeId: string,
-    date: Date,
+    shift: Shift | null,
     clockInAt: Date,
+    continuesPreviousShift: boolean,
   ): Promise<LateMarkResult> {
-    const assignment = await this.prisma.shiftAssignment.findFirst({
-      where: {
-        tenantId,
-        employeeId,
-        isActive: true,
-        startDate: { lte: date },
-        OR: [{ endDate: null }, { endDate: { gte: date } }],
-      },
-      orderBy: { startDate: 'desc' },
-      include: { shift: true },
-    });
-
-    if (assignment?.shift?.isActive) {
+    if (shift) {
+      // The end time is what lets a punch be scored against yesterday's
+      // start. Pass it only when the punch was actually filed under
+      // yesterday; a punch filed under today is on its shift's start day.
       return computeLateMark(
         clockInAt,
-        assignment.shift.startTime,
-        assignment.shift.graceMinutes,
+        shift.startTime,
+        shift.graceMinutes,
+        DEFAULT_ATTENDANCE_TIME_ZONE,
+        continuesPreviousShift ? shift.endTime : null,
       );
     }
 
@@ -320,6 +476,34 @@ export class AttendanceService {
       policy.defaultShiftStart,
       policy.defaultGraceMinutes,
     );
+  }
+
+  /**
+   * What the day's net worked minutes earn under the tenant's half-day and
+   * full-day thresholds, or null to keep the current status. A day an
+   * approved regularization settled keeps whatever its approver decided.
+   */
+  private async resolveWorkedDayStatus(
+    tenantId: string,
+    employeeId: string,
+    attendance: { date: Date; status: AttendanceStatus },
+    netWorkedMinutes: number,
+    policy: AttendancePolicy,
+  ): Promise<AttendanceStatus | null> {
+    const earned = classifyWorkedDay(netWorkedMinutes, attendance.status, policy);
+    if (earned === null || earned === attendance.status) return null;
+
+    const regularized = await this.prisma.attendanceRegularization.findFirst({
+      where: {
+        tenantId,
+        employeeId,
+        date: attendance.date,
+        status: RegularizationStatus.APPROVED,
+      },
+      select: { id: true },
+    });
+
+    return regularized ? null : earned;
   }
 
   /**
@@ -335,14 +519,14 @@ export class AttendanceService {
     tenantId: string,
     employeeId: string,
     attendance: { date: Date; isLate: boolean; status: AttendanceStatus },
+    policy: AttendancePolicy,
   ): Promise<AttendanceStatus | null> {
     if (!attendance.isLate) return null;
 
-    const policy = await this.policyService.getOrCreate(tenantId);
     const threshold = policy.lateMarksPerHalfDay;
     if (!threshold || threshold < 1) return null;
 
-    // Already worse than a half day (ABSENT, LEAVE); do not soften it.
+    // Already a half day or worse (HALF_DAY, ABSENT, LEAVE); do not soften it.
     if (attendance.status !== AttendanceStatus.PRESENT &&
         attendance.status !== AttendanceStatus.WFH) {
       return null;
@@ -791,8 +975,19 @@ export class AttendanceService {
   /**
    * Get today's attendance status for dashboard
    */
-  async getTodayStatus(tenantId: string, employeeId: string) {
-    const dateOnly = zonedDateOnlyUtc(new Date(), DEFAULT_ATTENDANCE_TIME_ZONE);
+  async getTodayStatus(tenantId: string, employeeId: string): Promise<TodayStatus> {
+    const now = new Date();
+
+    // An open session is shown wherever it lives, exactly as clock-out would
+    // find it, so a night-shift employee still on shift at 02:00 (or in
+    // overtime at 08:30) sees the shift they are in.
+    const open = await this.findOpenAttendance(tenantId, employeeId, now);
+    if (open.attendance && open.openSession) {
+      return this.toTodayStatus(open.attendance, open.openSession);
+    }
+
+    // Otherwise "today" is the working day a clock-in now would open.
+    const { date: dateOnly } = await this.resolveShiftDay(tenantId, employeeId, now);
 
     const attendance = await this.prisma.attendanceRecord.findUnique({
       where: {
@@ -821,16 +1016,34 @@ export class AttendanceService {
     }
 
     const lastSession = attendance.sessions[0];
-    const isClockedIn = lastSession && !lastSession.outTime;
+    return this.toTodayStatus(
+      attendance,
+      lastSession && !lastSession.outTime ? lastSession : undefined,
+    );
+  }
 
+  private toTodayStatus(
+    attendance: {
+      status: AttendanceStatus;
+      clockInTime: Date | null;
+      clockOutTime: Date | null;
+      workedMinutes: number;
+      otMinutesCalculated: number;
+      clockInLatitude: number | null;
+      clockInLongitude: number | null;
+      clockOutLatitude: number | null;
+      clockOutLongitude: number | null;
+    },
+    openSession: { inTime: Date } | undefined,
+  ): TodayStatus {
     return {
       status: attendance.status,
-      clockedIn: isClockedIn,
+      clockedIn: !!openSession,
       clockInTime: attendance.clockInTime,
       clockOutTime: attendance.clockOutTime,
       workedMinutes: attendance.workedMinutes,
       otMinutesCalculated: attendance.otMinutesCalculated,
-      currentSessionStart: isClockedIn ? lastSession.inTime : null,
+      currentSessionStart: openSession ? openSession.inTime : null,
       clockInLatitude: attendance.clockInLatitude,
       clockInLongitude: attendance.clockInLongitude,
       clockOutLatitude: attendance.clockOutLatitude,

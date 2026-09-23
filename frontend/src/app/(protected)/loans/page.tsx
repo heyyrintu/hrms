@@ -15,6 +15,7 @@ import { buildSchedule, computeTotalPayable, formatPeriod } from '@/lib/loanSche
 import { formatCurrency } from '@/lib/salaryCalculations';
 import { cn } from '@/lib/utils';
 import {
+  AlertTriangle,
   Banknote,
   CalendarDays,
   Plus,
@@ -207,6 +208,11 @@ export default function MyLoansPage() {
           startYear: detail.startYear,
         })
       : []);
+
+  // The post-tenure instalment the server expects payroll to take, if an
+  // earlier EMI fell short. Shown so the extra deduction is not a surprise.
+  const arrears = detail?.arrears?.instalments ?? [];
+  const arrearsTotal = detail?.arrears?.amount ?? 0;
 
   return (
     <>
@@ -528,9 +534,43 @@ export default function MyLoansPage() {
                       <td className="px-3 py-2">{formatCurrency(row.balanceAfter)}</td>
                     </tr>
                   ))}
+                  {arrears.map((row) => (
+                    <tr
+                      key={`arrears-${row.year}-${row.month}`}
+                      data-testid={`arrears-row-${row.year}-${row.month}`}
+                      className="border-b border-amber-100 bg-amber-50"
+                    >
+                      <td className="px-3 py-2">{formatPeriod(row.month, row.year)}</td>
+                      <td className="px-3 py-2">{formatCurrency(row.amount)}</td>
+                      <td className="px-3 py-2 text-amber-800" colSpan={3}>
+                        Arrears — shortfall from earlier months
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
+            {arrearsTotal > 0 && (
+              <div
+                data-testid="arrears-note"
+                className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+              >
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <p>
+                  {formatCurrency(arrearsTotal)} of this{' '}
+                  {detail.type === 'SALARY_ADVANCE' ? 'advance' : 'loan'} was not
+                  recovered on schedule — in a month where your net pay was too low
+                  to cover the full EMI, payroll deducted less rather than leave you
+                  with negative pay (or no instalment was taken that month). The
+                  shortfall is recovered after your last scheduled instalment, at
+                  most one EMI a month:{' '}
+                  {arrears
+                    .map((r) => `${formatCurrency(r.amount)} in ${formatPeriod(r.month, r.year)}`)
+                    .join(', ')}
+                  .
+                </p>
+              </div>
+            )}
             {detail.repayments && detail.repayments.length > 0 && (
               <div>
                 <h4 className="mb-2 text-sm font-semibold text-warm-900">

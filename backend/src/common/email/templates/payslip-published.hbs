@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #1a56db; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+    .content { padding: 20px; background: #f9fafb; border: 1px solid #e5e7eb; }
+    .button { display: inline-block; background: #1a56db; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: bold; }
+    .link { word-break: break-all; font-size: 12px; color: #1a56db; }
+    .footer { padding: 15px; text-align: center; font-size: 12px; color: #6b7280; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Your payslip for {{periodLabel}}</h1>
+    </div>
+    <div class="content">
+      <p>Hi {{employeeName}},</p>
+      <p>Your payslip for <strong>{{periodLabel}}</strong> from {{companyName}} is now available.</p>
+      {{#if hasAttachment}}
+      <p>A PDF copy is attached to this email. You can also view and download it any time in HRMS.</p>
+      {{else}}
+      <p>You can view and download it in HRMS.</p>
+      {{/if}}
+      <p style="text-align: center; margin: 24px 0;">
+        <a class="button" href="{{payslipUrl}}">View my payslips</a>
+      </p>
+      <p>If the button does not work, copy this link into your browser:</p>
+      <p class="link">{{payslipUrl}}</p>
+      <p>If anything on your payslip looks wrong, please contact the HR team.</p>
+      <p>Best regards,<br>HR Team</p>
+    </div>
+    <div class="footer">
+      <p>This is an automated message from {{companyName}} HRMS. Please do not reply.</p>
+    </div>
+  </div>
+</body>
+</html>
