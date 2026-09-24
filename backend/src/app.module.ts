@@ -41,6 +41,7 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { PipModule } from './modules/pip/pip.module';
 import { LoansModule } from './modules/loans/loans.module';
 import { HelpdeskModule } from './modules/helpdesk/helpdesk.module';
+import { WorkflowModule } from './modules/workflow/workflow.module';
 
 @Module({
   imports: [
@@ -92,6 +93,7 @@ import { HelpdeskModule } from './modules/helpdesk/helpdesk.module';
     PipModule,
     LoansModule,
     HelpdeskModule,
+    WorkflowModule,
   ],
 })
 export class AppModule {}

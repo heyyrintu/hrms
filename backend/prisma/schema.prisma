@@ -124,6 +124,10 @@ model Tenant {
   hrTicketCategories      HrTicketCategory[]
   hrTickets               HrTicket[]
   hrTicketComments        HrTicketComment[]
+  // Keka wave B
+  workflowDefinitions     WorkflowDefinition[]
+  approvalInstances       ApprovalInstance[]
+  approvalDelegations     ApprovalDelegation[]
 
   @@map("tenants")
 }
@@ -959,6 +963,8 @@ enum NotificationType {
   LOAN_APPROVED
   LOAN_REJECTED
   LEAVE_CARRIED_FORWARD
+  APPROVAL_REQUIRED
+  APPROVAL_STEP_APPROVED
   GENERAL
 }
 
@@ -1083,6 +1089,10 @@ model PayrollRun {
   processedCount  Int              @default(0)
   remarks         String?
   processedAt     DateTime?
+  // User who last computed (processed or recomputed) the run. Maker-checker:
+  // this user may not approve it unless the tenant's PAYROLL_RUN workflow
+  // allows self-approval. Null for runs computed before Wave B.
+  processedById   String?
   approvedAt      DateTime?
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
@@ -2444,4 +2454,147 @@ model HrTicketComment {
 
   @@index([ticketId])
   @@map("hr_ticket_comments")
+}
+
+// ============================================================================
+// Keka wave B: workflow engine and multi-level approvals
+// ============================================================================
+
+enum WorkflowEntityType {
+  LEAVE
+  EXPENSE
+  LOAN
+  COMP_OFF
+  REGULARIZATION
+  PAYROLL_RUN
+}
+
+enum WorkflowApproverType {
+  REPORTING_MANAGER
+  MANAGERS_MANAGER
+  HR_ADMIN
+  SPECIFIC_USER
+  ROLE
+}
+
+enum ApprovalInstanceStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum ApprovalActionType {
+  APPROVED
+  REJECTED
+}
+
+/// A tenant's approval chain for one request type. No row = built-in default.
+model WorkflowDefinition {
+  id                String             @id @default(uuid())
+  tenantId          String
+  entityType        WorkflowEntityType
+  name              String             @db.VarChar(120)
+  /// HR_ADMIN and SUPER_ADMIN may act on any step.
+  adminOverride     Boolean            @default(true)
+  /// When false, the requester (or the payroll run's maker) may never approve.
+  allowSelfApproval Boolean            @default(true)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  tenant Tenant         @relation(fields: [tenantId], references: [id])
+  steps  WorkflowStep[]
+
+  @@unique([tenantId, entityType])
+  @@map("workflow_definitions")
+}
+
+model WorkflowStep {
+  id             String               @id @default(uuid())
+  definitionId   String
+  stepOrder      Int
+  name           String               @db.VarChar(120)
+  approverType   WorkflowApproverType
+  approverUserId String?
+  approverRole   UserRole?
+  /// Step applies only when the request amount is at least this.
+  minAmount      Decimal?             @db.Decimal(14, 2)
+  /// Step applies only when the request spans at least this many days.
+  minDays        Decimal?             @db.Decimal(6, 2)
+
+  definition WorkflowDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+
+  @@unique([definitionId, stepOrder])
+  @@map("workflow_steps")
+}
+
+/// One approval run for one request. `steps` is a snapshot of the resolved
+/// chain (ApprovalStepSnapshot[]) taken when the request entered approval.
+model ApprovalInstance {
+  id                  String                 @id @default(uuid())
+  tenantId            String
+  entityType          WorkflowEntityType
+  entityId            String
+  definitionId        String?
+  status              ApprovalInstanceStatus @default(PENDING)
+  currentStepOrder    Int                    @default(1)
+  round               Int                    @default(1)
+  steps               Json
+  adminOverride       Boolean                @default(true)
+  allowSelfApproval   Boolean                @default(true)
+  requesterEmployeeId String?
+  requesterUserId     String?
+  amount              Decimal?               @db.Decimal(14, 2)
+  days                Decimal?               @db.Decimal(6, 2)
+  completedAt         DateTime?
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  tenant  Tenant           @relation(fields: [tenantId], references: [id])
+  actions ApprovalAction[]
+
+  @@unique([entityType, entityId])
+  @@index([tenantId, status])
+  @@map("approval_instances")
+}
+
+model ApprovalAction {
+  id               String             @id @default(uuid())
+  instanceId       String
+  round            Int
+  stepOrder        Int
+  action           ApprovalActionType
+  actorUserId      String
+  onBehalfOfUserId String?
+  isOverride       Boolean            @default(false)
+  note             String?            @db.VarChar(1000)
+  createdAt        DateTime           @default(now())
+
+  instance ApprovalInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@index([instanceId])
+  @@map("approval_actions")
+}
+
+/// An approver hands their approvals to someone else for a date range.
+model ApprovalDelegation {
+  id              String              @id @default(uuid())
+  tenantId        String
+  delegatorUserId String
+  delegateUserId  String
+  /// Null = every request type.
+  entityType      WorkflowEntityType?
+  startDate       DateTime            @db.Date
+  endDate         DateTime            @db.Date
+  reason          String?             @db.VarChar(500)
+  isActive        Boolean             @default(true)
+  createdById     String
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, delegateUserId])
+  @@index([tenantId, delegatorUserId])
+  @@map("approval_delegations")
 }
