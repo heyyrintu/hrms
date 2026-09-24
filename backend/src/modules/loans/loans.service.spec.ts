@@ -369,6 +369,10 @@ describe('LoansService', () => {
       await service.cancel(tenantId, loanId, employeeId);
 
       expect(engine.cancel).toHaveBeenCalledWith(tenantId, 'LOAN', loanId, prisma);
+      // Same lock order as approve: the approval instance before the loan row.
+      expect(engine.cancel.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.employeeLoan.update.mock.invocationCallOrder[0],
+      );
     });
 
     it('gives the engine routing context only for a REQUESTED loan', async () => {

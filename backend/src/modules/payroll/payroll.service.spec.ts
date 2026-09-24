@@ -638,6 +638,13 @@ describe('PayrollService', () => {
       );
       expect(result.status).toBe(PayrollRunStatus.DRAFT);
       expect(engine.cancel).toHaveBeenCalledWith(tenantId, 'PAYROLL_RUN', runId, prisma);
+      // Same lock order as approve: the approval instance before the run and its payslips.
+      expect(engine.cancel.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.payslip.deleteMany.mock.invocationCallOrder[0],
+      );
+      expect(engine.cancel.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.payrollRun.update.mock.invocationCallOrder[0],
+      );
     });
 
     it('should refuse to reset a run that is not stuck', async () => {
@@ -899,6 +906,14 @@ describe('PayrollService', () => {
       expect(
         loansService.clearPayrollRepayments.mock.invocationCallOrder[0],
       ).toBeLessThan(prisma.payslip.deleteMany.mock.invocationCallOrder[0]);
+      // Same lock order as approve: the approval instance before the run.
+      expect(engine.cancel).toHaveBeenCalledWith(tenantId, 'PAYROLL_RUN', 'run-1', prisma);
+      expect(engine.cancel.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.payslip.deleteMany.mock.invocationCallOrder[0],
+      );
+      expect(engine.cancel.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.payrollRun.delete.mock.invocationCallOrder[0],
+      );
     });
 
     it('does not reverse anything when the run is refused', async () => {

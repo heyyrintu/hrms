@@ -9,6 +9,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
   Min,
   ValidateNested,
@@ -45,6 +46,7 @@ export class WorkflowStepDto {
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
+  @Max(999999999999.99) // DECIMAL(14,2)
   minAmount?: number | null;
 
   @ApiPropertyOptional({
@@ -53,6 +55,7 @@ export class WorkflowStepDto {
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
+  @Max(9999.99) // DECIMAL(6,2)
   minDays?: number | null;
 }
 
@@ -68,7 +71,11 @@ export class UpsertWorkflowDto {
   @IsBoolean()
   adminOverride?: boolean;
 
-  @ApiPropertyOptional({ default: true, description: 'When false the requester may never approve' })
+  @ApiPropertyOptional({
+    default: true,
+    description:
+      'Governs HR_ADMIN/SUPER_ADMIN requesters: when false they may not approve their own request. Other requesters never can.',
+  })
   @IsOptional()
   @IsBoolean()
   allowSelfApproval?: boolean;

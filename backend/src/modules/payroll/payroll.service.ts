@@ -549,6 +549,11 @@ export class PayrollService {
     }
 
     return this.prisma.$transaction(async (tx) => {
+      // An approval left pending by an earlier compute has nothing to sign
+      // off any more; the next process starts a new round. Cancelled first:
+      // approve locks the approval instance before the run, so this does too.
+      await this.workflow.cancel(tenantId, 'PAYROLL_RUN', id, tx);
+
       // Loan instalments the abandoned attempt managed to record are reversed
       // too, in the same transaction that discards their payslips. A
       // repayment with no payslip behind it is money taken off a loan that
@@ -563,9 +568,6 @@ export class PayrollService {
       // Any payslips from the abandoned attempt are discarded so the rerun
       // starts clean.
       await tx.payslip.deleteMany({ where: { payrollRunId: id } });
-      // An approval left pending by an earlier compute has nothing to sign
-      // off any more; the next process starts a new round.
-      await this.workflow.cancel(tenantId, 'PAYROLL_RUN', id, tx);
       return tx.payrollRun.update({
         where: { id },
         data: {
@@ -844,6 +846,8 @@ export class PayrollService {
     // transaction as the delete, so neither can happen without the other.
     // All writes together: a half-deleted run would leave orphaned payslips.
     await this.prisma.$transaction(async (tx) => {
+      // Approval instance first: approve locks it before the run.
+      await this.workflow.cancel(tenantId, 'PAYROLL_RUN', id, tx);
       await this.loansService.clearPayrollRepayments(
         tenantId,
         run.month,
@@ -851,7 +855,6 @@ export class PayrollService {
         tx,
       );
       await tx.payslip.deleteMany({ where: { payrollRunId: id } });
-      await this.workflow.cancel(tenantId, 'PAYROLL_RUN', id, tx);
       await tx.payrollRun.delete({ where: { id } });
     });
   }

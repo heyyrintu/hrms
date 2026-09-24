@@ -606,6 +606,10 @@ export class LeaveService {
     const daysByYear = await this.storedRequestDaysByYear(tenantId, request);
 
     return this.prisma.$transaction(async (tx) => {
+      // Withdraw it from every approver's queue first: approve locks the
+      // approval instance before the domain row, so cancel does too.
+      await this.workflow.cancel(tenantId, WorkflowEntityType.LEAVE, requestId, tx);
+
       let transitioned;
       try {
         transitioned = await tx.leaveRequest.update({
@@ -639,9 +643,6 @@ export class LeaveService {
           },
         });
       }
-
-      // Withdraw it from every approver's queue in the same unit.
-      await this.workflow.cancel(tenantId, WorkflowEntityType.LEAVE, requestId, tx);
 
       return transitioned;
     });

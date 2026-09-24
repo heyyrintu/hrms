@@ -1061,6 +1061,10 @@ describe('LeaveService', () => {
         data: { status: 'CANCELLED' },
       });
       expect(engine.cancel).toHaveBeenCalledWith(tenantId, 'LEAVE', 'req-1', prisma);
+      // Same lock order as approve: the approval instance before the request row.
+      expect(engine.cancel.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.leaveRequest.update.mock.invocationCallOrder[0],
+      );
       expect(prisma.leaveBalance.update).toHaveBeenCalledWith({
         where: { id: mockBalance.id },
         data: {

@@ -287,13 +287,14 @@ export class LoansService {
     this.assertTransition(loan.status, LoanStatus.CANCELLED);
 
     const updated = await this.prisma.$transaction(async (tx) => {
-      const result = await tx.employeeLoan.update({
+      // Withdraw it from every approver's queue first: approve locks the
+      // approval instance before the domain row, so cancel does too.
+      await this.workflow.cancel(tenantId, 'LOAN', id, tx);
+      return tx.employeeLoan.update({
         where: { id },
         data: { status: LoanStatus.CANCELLED },
         include: { employee: { select: borrowerSelect } },
       });
-      await this.workflow.cancel(tenantId, 'LOAN', id, tx);
-      return result;
     });
 
     return this.serialize(updated);
