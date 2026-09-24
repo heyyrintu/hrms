@@ -145,23 +145,22 @@ describe('LeaveController', () => {
   });
 
   describe('getPendingApprovals', () => {
-    it('should call leaveService.getPendingApprovals with tenantId and employeeId', async () => {
+    it('should call leaveService.getPendingApprovals with the acting user', async () => {
       const mockResult = [{ id: 'lr-1', status: 'PENDING' }];
       service.getPendingApprovals.mockResolvedValue(mockResult);
 
       const result = await controller.getPendingApprovals(managerUser);
 
-      expect(service.getPendingApprovals).toHaveBeenCalledWith(
-        'tenant-1',
-        'emp-mgr',
-      );
+      expect(service.getPendingApprovals).toHaveBeenCalledWith(managerUser);
       expect(result).toEqual(mockResult);
     });
 
-    it('should throw BadRequestException if user has no employeeId', async () => {
-      await expect(
-        controller.getPendingApprovals(userWithoutEmployee),
-      ).rejects.toThrow(BadRequestException);
+    it('lets a user without an employee record see their queue (delegates, HR)', async () => {
+      service.getPendingApprovals.mockResolvedValue([]);
+
+      await controller.getPendingApprovals(userWithoutEmployee);
+
+      expect(service.getPendingApprovals).toHaveBeenCalledWith(userWithoutEmployee);
     });
   });
 
@@ -184,6 +183,7 @@ describe('LeaveController', () => {
         'tenant-1',
         'emp-3',
         dto,
+        'user-3',
       );
       expect(result).toEqual(mockResult);
     });
@@ -218,7 +218,7 @@ describe('LeaveController', () => {
   });
 
   describe('approveRequest', () => {
-    it('should call leaveService.approveRequest with tenantId, id, employeeId, role, and dto', async () => {
+    it('should call leaveService.approveRequest with the acting user, id and dto', async () => {
       const dto = { comment: 'Approved' };
       const mockResult = { id: 'lr-1', status: 'APPROVED' };
       service.approveRequest.mockResolvedValue(mockResult);
@@ -229,25 +229,21 @@ describe('LeaveController', () => {
         dto as any,
       );
 
-      expect(service.approveRequest).toHaveBeenCalledWith(
-        'tenant-1',
-        'lr-1',
-        'emp-mgr',
-        UserRole.MANAGER,
-        dto,
-      );
+      expect(service.approveRequest).toHaveBeenCalledWith(managerUser, 'lr-1', dto);
       expect(result).toEqual(mockResult);
     });
 
-    it('should throw BadRequestException if user has no employeeId', async () => {
-      await expect(
-        controller.approveRequest(userWithoutEmployee, 'lr-1', {} as any),
-      ).rejects.toThrow(BadRequestException);
+    it('does not require an employee record (the engine authorizes)', async () => {
+      service.approveRequest.mockResolvedValue({ id: 'lr-1' });
+
+      await controller.approveRequest(userWithoutEmployee, 'lr-1', {} as any);
+
+      expect(service.approveRequest).toHaveBeenCalledWith(userWithoutEmployee, 'lr-1', {});
     });
   });
 
   describe('rejectRequest', () => {
-    it('should call leaveService.rejectRequest with tenantId, id, employeeId, role, and dto', async () => {
+    it('should call leaveService.rejectRequest with the acting user, id and dto', async () => {
       const dto = { reason: 'Staffing issues' };
       const mockResult = { id: 'lr-1', status: 'REJECTED' };
       service.rejectRequest.mockResolvedValue(mockResult);
@@ -258,20 +254,16 @@ describe('LeaveController', () => {
         dto as any,
       );
 
-      expect(service.rejectRequest).toHaveBeenCalledWith(
-        'tenant-1',
-        'lr-1',
-        'emp-mgr',
-        UserRole.MANAGER,
-        dto,
-      );
+      expect(service.rejectRequest).toHaveBeenCalledWith(managerUser, 'lr-1', dto);
       expect(result).toEqual(mockResult);
     });
 
-    it('should throw BadRequestException if user has no employeeId', async () => {
-      await expect(
-        controller.rejectRequest(userWithoutEmployee, 'lr-1', {} as any),
-      ).rejects.toThrow(BadRequestException);
+    it('does not require an employee record (the engine authorizes)', async () => {
+      service.rejectRequest.mockResolvedValue({ id: 'lr-1' });
+
+      await controller.rejectRequest(userWithoutEmployee, 'lr-1', {} as any);
+
+      expect(service.rejectRequest).toHaveBeenCalledWith(userWithoutEmployee, 'lr-1', {});
     });
   });
 

@@ -3,11 +3,12 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
-  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { NotificationType, Prisma } from '@prisma/client';
+import { NotificationType, Prisma, UserRole, WorkflowEntityType } from '@prisma/client';
+import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
+import { ApprovalEngineService } from '../workflow/approval-engine.service';
 import { isPrismaError, PRISMA_RECORD_NOT_FOUND } from '../../common/utils/prisma-errors';
 
 /** Either the root client or a transaction-scoped one, so helpers work in both. */
@@ -18,17 +19,47 @@ import {
   CompOffQueryDto,
 } from './dto/comp-off.dto';
 
+/** Relations the approve/reject endpoints have always returned. */
+const COMP_OFF_RELATIONS = {
+  employee: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      employeeCode: true,
+      department: { select: { name: true } },
+    },
+  },
+  approver: {
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+    },
+  },
+} satisfies Prisma.CompOffRequestInclude;
+
+type CompOffWithRelations = Prisma.CompOffRequestGetPayload<{
+  include: typeof COMP_OFF_RELATIONS;
+}>;
+
 @Injectable()
 export class CompOffService {
   constructor(
     private prisma: PrismaService,
     private notificationsService: NotificationsService,
+    private workflow: ApprovalEngineService,
   ) {}
 
   /**
    * Create a comp-off request
    */
-  async create(tenantId: string, employeeId: string, dto: CreateCompOffDto) {
+  async create(
+    tenantId: string,
+    employeeId: string,
+    dto: CreateCompOffDto,
+    requesterUserId?: string | null,
+  ) {
     const workedDate = new Date(dto.workedDate);
 
     // Validate that the worked date is not in the future
@@ -78,28 +109,54 @@ export class CompOffService {
     const expiryDate = new Date(workedDate);
     expiryDate.setDate(expiryDate.getDate() + 90);
 
-    const request = await this.prisma.compOffRequest.create({
-      data: {
-        tenantId,
-        employeeId,
-        workedDate,
-        reason: dto.reason,
-        earnedDays: dto.earnedDays || 1.0,
-        expiryDate,
-        status: 'PENDING',
-      },
-      include: {
-        employee: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            employeeCode: true,
-            department: { select: { name: true } },
+    const earnedDays = dto.earnedDays || 1.0;
+    const userId =
+      requesterUserId !== undefined
+        ? requesterUserId
+        : await this.resolveRequesterUserId(tenantId, employeeId);
+
+    // The request and its approval instance are created together, so a
+    // request can never sit PENDING with no chain to route it.
+    const request = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.compOffRequest.create({
+        data: {
+          tenantId,
+          employeeId,
+          workedDate,
+          reason: dto.reason,
+          earnedDays,
+          expiryDate,
+          status: 'PENDING',
+        },
+        include: {
+          employee: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              employeeCode: true,
+              department: { select: { name: true } },
+            },
           },
         },
-      },
+      });
+
+      await this.workflow.start({
+        tenantId,
+        entityType: WorkflowEntityType.COMP_OFF,
+        entityId: created.id,
+        context: {
+          requesterEmployeeId: employeeId,
+          requesterUserId: userId,
+          days: Number(earnedDays),
+        },
+        tx,
+      });
+
+      return created;
     });
+
+    void this.workflow.notifyPending(tenantId, WorkflowEntityType.COMP_OFF, request.id);
 
     return request;
   }
@@ -155,27 +212,23 @@ export class CompOffService {
   }
 
   /**
-   * Get pending approvals (direct reports only for managers)
+   * Comp-off requests awaiting the viewer's approval. HR_ADMIN and SUPER_ADMIN
+   * see every pending request; everyone else sees what the approval engine
+   * says they can act on now.
    */
-  async getPendingApprovals(tenantId: string, managerId: string) {
-    // Get direct reports
-    const directReports = await this.prisma.employee.findMany({
-      where: {
-        tenantId,
-        managerId,
-        status: 'ACTIVE',
-      },
-      select: { id: true },
-    });
+  async getPendingApprovals(actor: AuthenticatedUser) {
+    const where: Prisma.CompOffRequestWhereInput = {
+      tenantId: actor.tenantId,
+      status: 'PENDING',
+    };
 
-    const employeeIds = directReports.map((e) => e.id);
+    if (actor.role !== UserRole.HR_ADMIN && actor.role !== UserRole.SUPER_ADMIN) {
+      const ids = await this.workflow.listActionableEntityIds(actor, WorkflowEntityType.COMP_OFF);
+      where.id = { in: ids };
+    }
 
     return this.prisma.compOffRequest.findMany({
-      where: {
-        tenantId,
-        employeeId: { in: employeeIds },
-        status: 'PENDING',
-      },
+      where,
       orderBy: { createdAt: 'asc' },
       include: {
         employee: {
@@ -192,42 +245,22 @@ export class CompOffService {
   }
 
   /**
-   * Approve a comp-off request
+   * Approve a comp-off request. Authorization comes from the approval engine;
+   * on the last step the transition and the balance credit run inside its
+   * transaction. On an intermediate step the request stays PENDING.
    */
-  async approve(
-    tenantId: string,
-    id: string,
-    approverId: string,
-    approverRole: string,
-    dto: ApproveCompOffDto,
-  ) {
+  async approve(actor: AuthenticatedUser, id: string, dto: ApproveCompOffDto = {}) {
+    const tenantId = actor.tenantId;
+    const approverId = actor.employeeId ?? null;
+
     const request = await this.prisma.compOffRequest.findFirst({
       where: { id, tenantId, status: 'PENDING' },
-      include: {
-        employee: {
-          select: {
-            id: true,
-            managerId: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
-      },
     });
 
     if (!request) {
       throw new NotFoundException(
         'Comp-off request not found or already processed',
       );
-    }
-
-    // Authorization check: Managers can only approve their direct reports
-    if (approverRole === 'MANAGER') {
-      if (request.employee.managerId !== approverId) {
-        throw new ForbiddenException(
-          'You can only approve comp-off requests for your direct reports',
-        );
-      }
     }
 
     // Crediting a comp-off that has already lapsed hands the employee a day the
@@ -239,26 +272,37 @@ export class CompOffService {
       );
     }
 
-    // The status-guarded transition and the balance credit are one unit: if the
-    // credit fails after the row is already APPROVED, the employee loses the
-    // earned day and a retry is refused because the request is no longer PENDING.
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const transitioned = await this.transitionPending(tx, id, {
-        status: 'APPROVED',
-        approverId,
-        approverNote: dto.approverNote,
-        approvedAt: new Date(),
-      });
+    const final: { row?: CompOffWithRelations } = {};
+    const result = await this.workflow.act({
+      tenantId,
+      entityType: WorkflowEntityType.COMP_OFF,
+      entityId: id,
+      actor,
+      decision: 'APPROVE',
+      note: dto.approverNote ?? null,
+      // The status-guarded transition and the balance credit are one unit: if
+      // the credit fails after the row is already APPROVED, the employee loses
+      // the earned day and a retry is refused because it is no longer PENDING.
+      onFinal: async (tx) => {
+        final.row = await this.transitionPending(tx, id, {
+          status: 'APPROVED',
+          approverId,
+          approverNote: dto.approverNote,
+          approvedAt: new Date(),
+        });
 
-      await this.creditCompOffBalance(
-        tx,
-        tenantId,
-        request.employeeId,
-        Number(request.earnedDays),
-      );
-
-      return transitioned;
+        await this.creditCompOffBalance(
+          tx,
+          tenantId,
+          request.employeeId,
+          Number(request.earnedDays),
+        );
+      },
     });
+
+    if (result.outcome === 'ADVANCED' || !final.row) {
+      return this.findWithRelations(tenantId, id);
+    }
 
     // Notify the employee
     this.notificationsService
@@ -272,31 +316,18 @@ export class CompOffService {
       )
       .catch(() => {}); // Fire and forget
 
-    return updated;
+    return final.row;
   }
 
   /**
-   * Reject a comp-off request
+   * Reject a comp-off request. Authorization comes from the approval engine.
    */
-  async reject(
-    tenantId: string,
-    id: string,
-    approverId: string,
-    approverRole: string,
-    dto: ApproveCompOffDto,
-  ) {
+  async reject(actor: AuthenticatedUser, id: string, dto: ApproveCompOffDto = {}) {
+    const tenantId = actor.tenantId;
+    const approverId = actor.employeeId ?? null;
+
     const request = await this.prisma.compOffRequest.findFirst({
       where: { id, tenantId, status: 'PENDING' },
-      include: {
-        employee: {
-          select: {
-            id: true,
-            managerId: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
-      },
     });
 
     if (!request) {
@@ -305,20 +336,26 @@ export class CompOffService {
       );
     }
 
-    // Authorization check: Managers can only reject their direct reports
-    if (approverRole === 'MANAGER') {
-      if (request.employee.managerId !== approverId) {
-        throw new ForbiddenException(
-          'You can only reject comp-off requests for your direct reports',
-        );
-      }
-    }
-
-    const updated = await this.transitionPending(this.prisma, id, {
-      status: 'REJECTED',
-      approverId,
-      approverNote: dto.approverNote,
+    const final: { row?: CompOffWithRelations } = {};
+    const result = await this.workflow.act({
+      tenantId,
+      entityType: WorkflowEntityType.COMP_OFF,
+      entityId: id,
+      actor,
+      decision: 'REJECT',
+      note: dto.approverNote ?? null,
+      onFinal: async (tx) => {
+        final.row = await this.transitionPending(tx, id, {
+          status: 'REJECTED',
+          approverId,
+          approverNote: dto.approverNote,
+        });
+      },
     });
+
+    if (result.outcome === 'ADVANCED' || !final.row) {
+      return this.findWithRelations(tenantId, id);
+    }
 
     // Notify the employee
     this.notificationsService
@@ -332,7 +369,31 @@ export class CompOffService {
       )
       .catch(() => {}); // Fire and forget
 
-    return updated;
+    return final.row;
+  }
+
+  /**
+   * The user account linked to an employee, used as the requester for the
+   * self-approval rule. Null when the employee has no login.
+   */
+  async resolveRequesterUserId(tenantId: string, employeeId: string): Promise<string | null> {
+    const user = await this.prisma.user.findFirst({
+      where: { tenantId, employeeId },
+      select: { id: true },
+    });
+    return user?.id ?? null;
+  }
+
+  /** Reload a request in the shape the approve/reject endpoints return. */
+  private async findWithRelations(tenantId: string, id: string) {
+    const row = await this.prisma.compOffRequest.findFirst({
+      where: { id, tenantId },
+      include: COMP_OFF_RELATIONS,
+    });
+    if (!row) {
+      throw new NotFoundException('Comp-off request not found');
+    }
+    return row;
   }
 
   /**
@@ -398,33 +459,16 @@ export class CompOffService {
     id: string,
     data: {
       status: 'APPROVED' | 'REJECTED';
-      approverId: string;
+      approverId: string | null;
       approverNote?: string;
       approvedAt?: Date;
     },
-  ) {
+  ): Promise<CompOffWithRelations> {
     try {
       return await client.compOffRequest.update({
         where: { id, status: 'PENDING' },
         data,
-        include: {
-          employee: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              employeeCode: true,
-              department: { select: { name: true } },
-            },
-          },
-          approver: {
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-            },
-          },
-        },
+        include: COMP_OFF_RELATIONS,
       });
     } catch (err) {
       if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {

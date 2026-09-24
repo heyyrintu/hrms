@@ -46,7 +46,7 @@ export class CompOffController {
     if (!user.employeeId) {
       throw new BadRequestException('User is not linked to an employee');
     }
-    return this.compOffService.create(user.tenantId, user.employeeId, dto);
+    return this.compOffService.create(user.tenantId, user.employeeId, dto, user.userId);
   }
 
   /**
@@ -82,13 +82,7 @@ export class CompOffController {
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
   async getPendingApprovals(@CurrentUser() user: AuthenticatedUser) {
-    if (!user.employeeId) {
-      throw new BadRequestException('User is not linked to an employee');
-    }
-    return this.compOffService.getPendingApprovals(
-      user.tenantId,
-      user.employeeId,
-    );
+    return this.compOffService.getPendingApprovals(user);
   }
 
   /**
@@ -124,16 +118,7 @@ export class CompOffController {
     @Param('id') id: string,
     @Body() dto: ApproveCompOffDto,
   ) {
-    if (!user.employeeId) {
-      throw new BadRequestException('User is not linked to an employee');
-    }
-    return this.compOffService.approve(
-      user.tenantId,
-      id,
-      user.employeeId,
-      user.role,
-      dto,
-    );
+    return this.compOffService.approve(user, id, dto);
   }
 
   /**
@@ -152,15 +137,6 @@ export class CompOffController {
     @Param('id') id: string,
     @Body() dto: ApproveCompOffDto,
   ) {
-    if (!user.employeeId) {
-      throw new BadRequestException('User is not linked to an employee');
-    }
-    return this.compOffService.reject(
-      user.tenantId,
-      id,
-      user.employeeId,
-      user.role,
-      dto,
-    );
+    return this.compOffService.reject(user, id, dto);
   }
 }

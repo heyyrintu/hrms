@@ -9,9 +9,11 @@ import { AttendancePolicyService } from './policy/attendance-policy.service';
 import { AutoAbsentService } from './rules/auto-absent.service';
 import { AutoAbsentCronService } from './rules/auto-absent-cron.service';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { WorkflowModule } from '../workflow/workflow.module';
+import { RegularizationWorkflowHandler } from './regularization-workflow.handler';
 
 @Module({
-  imports: [NotificationsModule],
+  imports: [NotificationsModule, WorkflowModule],
   controllers: [
     AttendanceController,
     RegularizationController,
@@ -24,6 +26,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     AttendancePolicyService,
     AutoAbsentService,
     AutoAbsentCronService,
+    RegularizationWorkflowHandler,
   ],
   exports: [
     AttendanceService,
