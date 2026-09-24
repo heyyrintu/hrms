@@ -16,6 +16,7 @@ import { LoansService } from './loans.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
+import { ApprovalEngineService } from '../workflow/approval-engine.service';
 import {
   createMockPrismaService,
   createMockNotificationsService,
@@ -29,10 +30,23 @@ describe('LoansService', () => {
   let prisma: any;
   let notifications: any;
   let webhooks: { dispatch: jest.Mock };
+  let engine: {
+    start: jest.Mock;
+    notifyPending: jest.Mock;
+    act: jest.Mock;
+    cancel: jest.Mock;
+  };
 
   const tenantId = 'tenant-1';
   const employeeId = 'emp-1';
   const loanId = 'loan-1';
+  const hrActor = {
+    userId: 'user-hr',
+    tenantId,
+    email: 'hr@test.com',
+    role: UserRole.HR_ADMIN,
+    employeeId: 'emp-hr',
+  } as any;
 
   /** A stored loan as Prisma would hand it back, Decimals and all. */
   const storedLoan = (overrides: Record<string, unknown> = {}) => ({
@@ -69,6 +83,21 @@ describe('LoansService', () => {
 
   beforeEach(async () => {
     webhooks = { dispatch: jest.fn().mockResolvedValue(undefined) };
+    engine = {
+      start: jest.fn().mockResolvedValue({ id: 'inst-1' }),
+      notifyPending: jest.fn().mockResolvedValue(undefined),
+      // Default: a single-step chain, so the decision is final and onFinal
+      // runs with the (mock) transaction client.
+      act: jest.fn().mockImplementation(async (input: any) => {
+        await input.onFinal?.(prisma);
+        return {
+          outcome: input.decision === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+          instanceId: 'inst-1',
+          nextStepOrder: null,
+        };
+      }),
+      cancel: jest.fn().mockResolvedValue(undefined),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         LoansService,
@@ -78,6 +107,7 @@ describe('LoansService', () => {
           useValue: createMockNotificationsService(),
         },
         { provide: WebhookDispatcherService, useValue: webhooks },
+        { provide: ApprovalEngineService, useValue: engine },
       ],
     }).compile();
 
@@ -222,7 +252,9 @@ describe('LoansService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('tells HR a request is waiting', async () => {
+    it('starts the LOAN approval in the same transaction, keyed on the principal', async () => {
+      prisma.user.findFirst.mockResolvedValue({ id: 'user-emp-1' });
+
       await service.create(tenantId, employeeId, {
         type: LoanType.LOAN,
         principal: 120000,
@@ -231,20 +263,134 @@ describe('LoansService', () => {
         startYear: 2026,
       });
 
-      expect(notifications.notifyByRole).toHaveBeenCalledWith(
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(engine.start).toHaveBeenCalledWith({
         tenantId,
-        [UserRole.HR_ADMIN, UserRole.SUPER_ADMIN],
-        NotificationType.GENERAL,
-        'Loan request submitted',
-        expect.stringContaining('Asha Rao'),
-        '/approvals/loans',
-      );
+        entityType: 'LOAN',
+        entityId: loanId,
+        context: {
+          requesterEmployeeId: employeeId,
+          requesterUserId: 'user-emp-1',
+          amount: 120000,
+        },
+        tx: prisma,
+      });
+      // The engine notifies the step's approvers once the row is committed,
+      // instead of a blanket HR broadcast.
+      expect(engine.notifyPending).toHaveBeenCalledWith(tenantId, 'LOAN', loanId);
+      expect(notifications.notifyByRole).not.toHaveBeenCalled();
     });
   });
 
   // ============================================
   // Status transitions
   // ============================================
+  describe('approval engine integration', () => {
+    it('approves through the engine with the LOAN entity type', async () => {
+      prisma.employeeLoan.findFirst.mockResolvedValue(storedLoan());
+      prisma.employeeLoan.update.mockResolvedValue(
+        storedLoan({ status: LoanStatus.APPROVED, approvedAt: new Date('2026-01-06T12:00:00Z') }),
+      );
+
+      await service.approve(hrActor, loanId, 'looks fine');
+
+      expect(engine.act).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId,
+          entityType: 'LOAN',
+          entityId: loanId,
+          actor: hrActor,
+          decision: 'APPROVE',
+          note: 'looks fine',
+        }),
+      );
+      expect(prisma.employeeLoan.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: LoanStatus.APPROVED,
+            approvedById: 'user-hr',
+          }),
+        }),
+      );
+      expect(webhooks.dispatch).toHaveBeenCalledWith(
+        tenantId,
+        'loan.approved',
+        expect.objectContaining({ loanId }),
+      );
+    });
+
+    it('leaves the loan REQUESTED with no notification or webhook when the engine advances', async () => {
+      prisma.employeeLoan.findFirst.mockResolvedValue(storedLoan());
+      engine.act.mockResolvedValue({ outcome: 'ADVANCED', instanceId: 'inst-1', nextStepOrder: 2 });
+
+      const result = await service.approve(hrActor, loanId);
+
+      expect(prisma.employeeLoan.update).not.toHaveBeenCalled();
+      expect(notifications.notifyEmployee).not.toHaveBeenCalled();
+      expect(webhooks.dispatch).not.toHaveBeenCalled();
+      expect(result.status).toBe(LoanStatus.REQUESTED);
+    });
+
+    it('propagates the engine 403 and changes nothing', async () => {
+      prisma.employeeLoan.findFirst.mockResolvedValue(storedLoan());
+      engine.act.mockRejectedValue(
+        new ForbiddenException('You are not an approver for the current step of this request'),
+      );
+
+      await expect(service.approve({ ...hrActor, role: UserRole.MANAGER }, loanId)).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(prisma.employeeLoan.update).not.toHaveBeenCalled();
+      expect(webhooks.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('rejects through the engine and stores the reason', async () => {
+      prisma.employeeLoan.findFirst.mockResolvedValue(storedLoan());
+      prisma.employeeLoan.update.mockResolvedValue(storedLoan({ status: LoanStatus.REJECTED }));
+
+      await service.reject(hrActor, loanId, { reason: 'Existing loan open' });
+
+      expect(engine.act).toHaveBeenCalledWith(
+        expect.objectContaining({ entityType: 'LOAN', decision: 'REJECT', note: 'Existing loan open' }),
+      );
+    });
+
+    it('refuses a rejection without a reason (the unified approvals route has an optional note)', async () => {
+      await expect(service.reject(hrActor, loanId, { reason: '  ' })).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(engine.act).not.toHaveBeenCalled();
+    });
+
+    it('cancels the approval instance together with the loan', async () => {
+      prisma.employeeLoan.findFirst.mockResolvedValue(storedLoan());
+      prisma.employeeLoan.update.mockResolvedValue(storedLoan({ status: LoanStatus.CANCELLED }));
+
+      await service.cancel(tenantId, loanId, employeeId);
+
+      expect(engine.cancel).toHaveBeenCalledWith(tenantId, 'LOAN', loanId, prisma);
+    });
+
+    it('gives the engine routing context only for a REQUESTED loan', async () => {
+      prisma.employeeLoan.findFirst.mockResolvedValueOnce({ employeeId, principal: '5000.00' });
+      prisma.user.findFirst.mockResolvedValue({ id: 'user-emp-1' });
+
+      await expect(service.getWorkflowContext(tenantId, loanId)).resolves.toEqual({
+        requesterEmployeeId: employeeId,
+        requesterUserId: 'user-emp-1',
+        amount: 5000,
+      });
+      expect(prisma.employeeLoan.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: loanId, tenantId, status: LoanStatus.REQUESTED },
+        }),
+      );
+
+      prisma.employeeLoan.findFirst.mockResolvedValueOnce(null);
+      await expect(service.getWorkflowContext(tenantId, loanId)).resolves.toBeNull();
+    });
+  });
+
   describe('status transitions', () => {
     it('approves a REQUESTED loan and stamps the approver', async () => {
       prisma.employeeLoan.findFirst.mockResolvedValue(storedLoan());
@@ -252,7 +398,7 @@ describe('LoansService', () => {
         storedLoan({ status: LoanStatus.APPROVED }),
       );
 
-      await service.approve(tenantId, loanId, 'user-hr');
+      await service.approve(hrActor, loanId);
 
       expect(prisma.employeeLoan.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -281,7 +427,7 @@ describe('LoansService', () => {
         storedLoan({ status: LoanStatus.APPROVED, approvedAt }),
       );
 
-      await service.approve(tenantId, loanId, 'user-hr');
+      await service.approve(hrActor, loanId);
 
       expect(webhooks.dispatch).toHaveBeenCalledTimes(1);
       expect(webhooks.dispatch).toHaveBeenCalledWith(tenantId, 'loan.approved', {
@@ -305,7 +451,7 @@ describe('LoansService', () => {
         storedLoan({ status: LoanStatus.APPROVED, approvedAt: new Date() }),
       );
 
-      await service.approve(tenantId, loanId, 'user-hr');
+      await service.approve(hrActor, loanId);
 
       const payload = webhooks.dispatch.mock.calls[0][2];
       expect(payload).not.toHaveProperty('purpose');
@@ -321,7 +467,7 @@ describe('LoansService', () => {
       webhooks.dispatch.mockRejectedValue(new Error('endpoint down'));
 
       await expect(
-        service.approve(tenantId, loanId, 'user-hr'),
+        service.approve(hrActor, loanId),
       ).resolves.toMatchObject({ status: LoanStatus.APPROVED });
     });
 
@@ -331,7 +477,7 @@ describe('LoansService', () => {
       );
 
       await expect(
-        service.approve(tenantId, loanId, 'user-hr'),
+        service.approve(hrActor, loanId),
       ).rejects.toThrow(BadRequestException);
       expect(webhooks.dispatch).not.toHaveBeenCalled();
     });
@@ -341,7 +487,7 @@ describe('LoansService', () => {
         storedLoan({ status: LoanStatus.APPROVED }),
       );
 
-      await expect(service.approve(tenantId, loanId, 'user-hr')).rejects.toThrow(
+      await expect(service.approve(hrActor, loanId)).rejects.toThrow(
         BadRequestException,
       );
       expect(prisma.employeeLoan.update).not.toHaveBeenCalled();
@@ -353,7 +499,7 @@ describe('LoansService', () => {
         storedLoan({ status: LoanStatus.REJECTED }),
       );
 
-      await service.reject(tenantId, loanId, { reason: 'Existing loan open' });
+      await service.reject(hrActor, loanId, { reason: 'Existing loan open' });
 
       expect(prisma.employeeLoan.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -437,7 +583,7 @@ describe('LoansService', () => {
     it('404s on a loan belonging to another tenant', async () => {
       prisma.employeeLoan.findFirst.mockResolvedValue(null);
 
-      await expect(service.approve(tenantId, loanId, 'u')).rejects.toThrow(
+      await expect(service.approve({ ...hrActor, userId: 'u' }, loanId)).rejects.toThrow(
         NotFoundException,
       );
     });

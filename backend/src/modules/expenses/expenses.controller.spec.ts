@@ -271,18 +271,15 @@ describe('ExpensesController', () => {
       const result = await controller.getPendingApprovals(managerUser, query);
 
       expect(result).toEqual(expected);
-      expect(service.getPendingApprovals).toHaveBeenCalledWith(
-        managerUser.tenantId,
-        managerUser.employeeId,
-        managerUser.role,
-        query,
-      );
+      expect(service.getPendingApprovals).toHaveBeenCalledWith(managerUser, query);
     });
 
-    it('should throw BadRequestException when no employeeId', async () => {
-      await expect(
-        controller.getPendingApprovals(userNoEmployee, {}),
-      ).rejects.toThrow(BadRequestException);
+    it('should not require an employee record (the engine scopes the list)', async () => {
+      service.getPendingApprovals.mockResolvedValue({ data: [] });
+
+      await controller.getPendingApprovals(userNoEmployee, {});
+
+      expect(service.getPendingApprovals).toHaveBeenCalledWith(userNoEmployee, {});
     });
   });
 
@@ -312,19 +309,15 @@ describe('ExpensesController', () => {
       const result = await controller.approveClaim(managerUser, 'claim-1', dto);
 
       expect(result).toEqual(expected);
-      expect(service.approveClaim).toHaveBeenCalledWith(
-        managerUser.tenantId,
-        'claim-1',
-        managerUser.employeeId,
-        managerUser.role,
-        dto,
-      );
+      expect(service.approveClaim).toHaveBeenCalledWith(managerUser, 'claim-1', dto);
     });
 
-    it('should throw BadRequestException when no employeeId', async () => {
-      await expect(
-        controller.approveClaim(userNoEmployee, 'claim-1', dto),
-      ).rejects.toThrow(BadRequestException);
+    it('should pass the whole user through (the engine authorizes)', async () => {
+      service.approveClaim.mockResolvedValue({});
+
+      await controller.approveClaim(userNoEmployee, 'claim-1', dto);
+
+      expect(service.approveClaim).toHaveBeenCalledWith(userNoEmployee, 'claim-1', dto);
     });
   });
 
@@ -338,19 +331,15 @@ describe('ExpensesController', () => {
       const result = await controller.rejectClaim(managerUser, 'claim-1', dto);
 
       expect(result).toEqual(expected);
-      expect(service.rejectClaim).toHaveBeenCalledWith(
-        managerUser.tenantId,
-        'claim-1',
-        managerUser.employeeId,
-        managerUser.role,
-        dto,
-      );
+      expect(service.rejectClaim).toHaveBeenCalledWith(managerUser, 'claim-1', dto);
     });
 
-    it('should throw BadRequestException when no employeeId', async () => {
-      await expect(
-        controller.rejectClaim(userNoEmployee, 'claim-1', dto),
-      ).rejects.toThrow(BadRequestException);
+    it('should pass the whole user through (the engine authorizes)', async () => {
+      service.rejectClaim.mockResolvedValue({});
+
+      await controller.rejectClaim(userNoEmployee, 'claim-1', dto);
+
+      expect(service.rejectClaim).toHaveBeenCalledWith(userNoEmployee, 'claim-1', dto);
     });
   });
 

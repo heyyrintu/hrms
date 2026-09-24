@@ -1,5 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import {
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PayrollService } from './payroll.service';
 import { PayrollCalculationService } from './payroll-calculation.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -7,6 +12,7 @@ import { createMockPrismaService } from '../../test/helpers';
 import { LoansService } from '../loans/loans.service';
 import { PayslipEmailService } from './payslip-email.service';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
+import { ApprovalEngineService } from '../workflow/approval-engine.service';
 import { PayrollRunStatus, Prisma, UserRole } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 
@@ -15,8 +21,24 @@ describe('PayrollService', () => {
   let prisma: any;
   let calculationService: any;
   let loansService: any;
+  let engine: {
+    start: jest.Mock;
+    notifyPending: jest.Mock;
+    act: jest.Mock;
+    cancel: jest.Mock;
+  };
 
   const tenantId = 'tenant-1';
+  /** Computes the run (maker). */
+  const makerId = 'user-maker';
+  /** Approves the run (checker). */
+  const checker = {
+    userId: 'user-checker',
+    tenantId,
+    email: 'checker@test.com',
+    role: UserRole.HR_ADMIN,
+    employeeId: 'emp-checker',
+  } as any;
 
   beforeEach(async () => {
     const mockCalculationService = {
@@ -28,6 +50,15 @@ describe('PayrollService', () => {
       notifyLoansClosed: jest.fn().mockResolvedValue(undefined),
     };
 
+    engine = {
+      start: jest.fn().mockResolvedValue({ id: 'inst-1' }),
+      notifyPending: jest.fn().mockResolvedValue(undefined),
+      // Default: single-step chain, so the approval is final and onFinal runs
+      // inside the (mock) engine transaction.
+      act: jest.fn(),
+      cancel: jest.fn().mockResolvedValue(undefined),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PayrollService,
@@ -37,6 +68,7 @@ describe('PayrollService', () => {
         // approveRun's email/webhook side effects are covered in payroll-approve.spec.ts.
         { provide: PayslipEmailService, useValue: { notifyRunApproved: jest.fn().mockResolvedValue(undefined) } },
         { provide: WebhookDispatcherService, useValue: { dispatch: jest.fn().mockResolvedValue(undefined) } },
+        { provide: ApprovalEngineService, useValue: engine },
       ],
     }).compile();
 
@@ -44,6 +76,10 @@ describe('PayrollService', () => {
     prisma = module.get(PrismaService);
     calculationService = module.get(PayrollCalculationService);
     loansService = module.get(LoansService);
+    engine.act.mockImplementation(async (input: any) => {
+      await input.onFinal?.(prisma);
+      return { outcome: 'APPROVED', instanceId: 'inst-1', nextStepOrder: null };
+    });
   });
 
   it('should be defined', () => {
@@ -255,7 +291,7 @@ describe('PayrollService', () => {
         .mockResolvedValueOnce({}) // PROCESSING update
         .mockResolvedValueOnce(updatedRun); // COMPUTED update
 
-      const result = await service.processRun(tenantId, runId);
+      const result = await service.processRun(tenantId, runId, makerId);
 
       expect(prisma.payrollRun.update).toHaveBeenCalledWith({
         where: { id: runId, status: PayrollRunStatus.DRAFT },
@@ -269,12 +305,46 @@ describe('PayrollService', () => {
       // One row: the second employee has no salary and is skipped.
       expect(prisma.payslip.createMany.mock.calls[0][0].data).toHaveLength(1);
       expect(result).toEqual(updatedRun);
+
+      // Maker-checker: the computing user is recorded and the PAYROLL_RUN
+      // approval starts inside the write transaction with them as requester.
+      expect(prisma.payrollRun.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            status: PayrollRunStatus.COMPUTED,
+            processedById: makerId,
+          }),
+        }),
+      );
+      expect(engine.start).toHaveBeenCalledWith({
+        tenantId,
+        entityType: 'PAYROLL_RUN',
+        entityId: runId,
+        context: {
+          requesterEmployeeId: null,
+          requesterUserId: makerId,
+          amount: calcResult.netPay,
+        },
+        tx: prisma,
+      });
+      expect(engine.notifyPending).toHaveBeenCalledWith(tenantId, 'PAYROLL_RUN', runId);
+    });
+
+    it('does not start an approval when processing fails', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(draftRun);
+      prisma.payrollRun.update.mockResolvedValue({});
+      prisma.employee.findMany.mockRejectedValue(new Error('DB error'));
+
+      await expect(service.processRun(tenantId, runId, makerId)).rejects.toThrow('DB error');
+
+      expect(engine.start).not.toHaveBeenCalled();
+      expect(engine.notifyPending).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException when run not found', async () => {
       prisma.payrollRun.findFirst.mockResolvedValue(null);
 
-      await expect(service.processRun(tenantId, 'nonexistent')).rejects.toThrow(
+      await expect(service.processRun(tenantId, 'nonexistent', makerId)).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -285,7 +355,7 @@ describe('PayrollService', () => {
         status: PayrollRunStatus.COMPUTED,
       });
 
-      await expect(service.processRun(tenantId, runId)).rejects.toThrow(
+      await expect(service.processRun(tenantId, runId, makerId)).rejects.toThrow(
         BadRequestException,
       );
     });
@@ -299,7 +369,7 @@ describe('PayrollService', () => {
         }),
       );
 
-      await expect(service.processRun(tenantId, runId)).rejects.toThrow(ConflictException);
+      await expect(service.processRun(tenantId, runId, makerId)).rejects.toThrow(ConflictException);
 
       expect(prisma.payslip.deleteMany).not.toHaveBeenCalled();
       expect(prisma.payslip.createMany).not.toHaveBeenCalled();
@@ -311,7 +381,7 @@ describe('PayrollService', () => {
       prisma.payrollRun.update.mockResolvedValue({});
       prisma.employee.findMany.mockRejectedValue(new Error('DB error'));
 
-      await expect(service.processRun(tenantId, runId)).rejects.toThrow('DB error');
+      await expect(service.processRun(tenantId, runId, makerId)).rejects.toThrow('DB error');
 
       // First call = PROCESSING, second call = revert to DRAFT
       expect(prisma.payrollRun.update).toHaveBeenCalledTimes(2);
@@ -386,7 +456,7 @@ describe('PayrollService', () => {
         .mockResolvedValueOnce({}) // claim: COMPUTED -> PROCESSING
         .mockResolvedValueOnce(recomputedRun); // publish: PROCESSING -> COMPUTED
 
-      const result = await service.recomputeRun(tenantId, runId);
+      const result = await service.recomputeRun(tenantId, runId, makerId);
 
       // Claims the run atomically off COMPUTED, not DRAFT.
       expect(prisma.payrollRun.update).toHaveBeenNthCalledWith(1, {
@@ -405,12 +475,29 @@ describe('PayrollService', () => {
       expect(result.previousTotals.totalGross.toString()).toBe('60000');
       expect(result.changed).toBeDefined();
       expect(result.changed.totalGross.toString()).toBe('2000');
+
+      // New figures need a fresh sign-off, with whoever recomputed as maker.
+      expect(prisma.payrollRun.update).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          where: { id: runId, status: PayrollRunStatus.PROCESSING },
+          data: expect.objectContaining({ processedById: makerId }),
+        }),
+      );
+      expect(engine.start).toHaveBeenCalledWith({
+        tenantId,
+        entityType: 'PAYROLL_RUN',
+        entityId: runId,
+        context: { requesterEmployeeId: null, requesterUserId: makerId, amount: 56500 },
+        tx: prisma,
+      });
+      expect(engine.notifyPending).toHaveBeenCalledWith(tenantId, 'PAYROLL_RUN', runId);
     });
 
     it('should throw NotFoundException when run not found', async () => {
       prisma.payrollRun.findFirst.mockResolvedValue(null);
 
-      await expect(service.recomputeRun(tenantId, 'nonexistent')).rejects.toThrow(
+      await expect(service.recomputeRun(tenantId, 'nonexistent', makerId)).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -421,10 +508,10 @@ describe('PayrollService', () => {
         status: PayrollRunStatus.APPROVED,
       });
 
-      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow(
+      await expect(service.recomputeRun(tenantId, runId, makerId)).rejects.toThrow(
         BadRequestException,
       );
-      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow(
+      await expect(service.recomputeRun(tenantId, runId, makerId)).rejects.toThrow(
         /approv|sign|adjustment/i,
       );
       expect(prisma.payslip.deleteMany).not.toHaveBeenCalled();
@@ -437,10 +524,10 @@ describe('PayrollService', () => {
         status: PayrollRunStatus.PAID,
       });
 
-      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow(
+      await expect(service.recomputeRun(tenantId, runId, makerId)).rejects.toThrow(
         BadRequestException,
       );
-      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow(
+      await expect(service.recomputeRun(tenantId, runId, makerId)).rejects.toThrow(
         /paid|adjustment/i,
       );
       expect(prisma.payslip.deleteMany).not.toHaveBeenCalled();
@@ -453,7 +540,7 @@ describe('PayrollService', () => {
         status: PayrollRunStatus.DRAFT,
       });
 
-      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow(
+      await expect(service.recomputeRun(tenantId, runId, makerId)).rejects.toThrow(
         BadRequestException,
       );
       expect(prisma.payslip.deleteMany).not.toHaveBeenCalled();
@@ -469,7 +556,7 @@ describe('PayrollService', () => {
         }),
       );
 
-      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow(
+      await expect(service.recomputeRun(tenantId, runId, makerId)).rejects.toThrow(
         ConflictException,
       );
 
@@ -484,7 +571,7 @@ describe('PayrollService', () => {
       // Recompute reads the run's own cohort, so that is the read to fail.
       prisma.payslip.findMany.mockRejectedValue(new Error('DB error'));
 
-      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow('DB error');
+      await expect(service.recomputeRun(tenantId, runId, makerId)).rejects.toThrow('DB error');
 
       // The claim is the only plain update; the revert is guarded on the
       // claim this recompute still holds, so a run somebody reset meanwhile is
@@ -513,7 +600,7 @@ describe('PayrollService', () => {
         processedCount: 1,
       });
 
-      await service.recomputeRun(tenantId, runId);
+      await service.recomputeRun(tenantId, runId, makerId);
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     });
@@ -550,6 +637,7 @@ describe('PayrollService', () => {
         }),
       );
       expect(result.status).toBe(PayrollRunStatus.DRAFT);
+      expect(engine.cancel).toHaveBeenCalledWith(tenantId, 'PAYROLL_RUN', runId, prisma);
     });
 
     it('should refuse to reset a run that is not stuck', async () => {
@@ -581,7 +669,7 @@ describe('PayrollService', () => {
       const approved = { ...run, status: PayrollRunStatus.APPROVED };
       prisma.payrollRun.update.mockResolvedValue(approved);
 
-      const result = await service.approveRun(tenantId, 'run-1');
+      const result = await service.approveRun(tenantId, 'run-1', checker);
 
       // Conditional on the status it checked, so of two concurrent approvals
       // only one can win.
@@ -593,6 +681,32 @@ describe('PayrollService', () => {
         },
       });
       expect(result).toEqual(approved);
+      expect(engine.act).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId,
+          entityType: 'PAYROLL_RUN',
+          entityId: 'run-1',
+          actor: checker,
+          decision: 'APPROVE',
+        }),
+      );
+    });
+
+    it('propagates the engine 403 when the maker approves their own run', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        id: 'run-1',
+        tenantId,
+        status: PayrollRunStatus.COMPUTED,
+        processedById: makerId,
+      });
+      engine.act.mockRejectedValue(
+        new ForbiddenException('The person who computed a payroll run cannot approve it'),
+      );
+
+      await expect(
+        service.approveRun(tenantId, 'run-1', { ...checker, userId: makerId }),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prisma.payrollRun.update).not.toHaveBeenCalled();
     });
 
     it('answers 409 when a concurrent approval moved the run first', async () => {
@@ -608,7 +722,7 @@ describe('PayrollService', () => {
         }),
       );
 
-      await expect(service.approveRun(tenantId, 'run-1')).rejects.toThrow(
+      await expect(service.approveRun(tenantId, 'run-1', checker)).rejects.toThrow(
         'Payroll run is already being approved',
       );
     });
@@ -616,7 +730,7 @@ describe('PayrollService', () => {
     it('should throw NotFoundException when run not found', async () => {
       prisma.payrollRun.findFirst.mockResolvedValue(null);
 
-      await expect(service.approveRun(tenantId, 'nonexistent')).rejects.toThrow(
+      await expect(service.approveRun(tenantId, 'nonexistent', checker)).rejects.toThrow(
         NotFoundException,
       );
     });
@@ -628,9 +742,47 @@ describe('PayrollService', () => {
         status: PayrollRunStatus.DRAFT,
       });
 
-      await expect(service.approveRun(tenantId, 'run-1')).rejects.toThrow(
+      await expect(service.approveRun(tenantId, 'run-1', checker)).rejects.toThrow(
         BadRequestException,
       );
+    });
+  });
+
+  // ============================================
+  // getWorkflowContext (PAYROLL_RUN handler)
+  // ============================================
+
+  describe('getWorkflowContext', () => {
+    it('routes a COMPUTED run with its maker as requester and totalNet as amount', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        processedById: makerId,
+        totalNet: new Decimal('1000000.25'),
+      });
+
+      await expect(service.getWorkflowContext(tenantId, 'run-1')).resolves.toEqual({
+        requesterEmployeeId: null,
+        requesterUserId: makerId,
+        amount: 1000000.25,
+      });
+      expect(prisma.payrollRun.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'run-1', tenantId, status: PayrollRunStatus.COMPUTED },
+        }),
+      );
+    });
+
+    it('leaves a legacy run (no processedById) unrestricted', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({ processedById: null, totalNet: 10 });
+
+      await expect(service.getWorkflowContext(tenantId, 'run-1')).resolves.toMatchObject({
+        requesterUserId: null,
+      });
+    });
+
+    it('returns null when the run is not awaiting approval', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(null);
+
+      await expect(service.getWorkflowContext(tenantId, 'run-1')).resolves.toBeNull();
     });
   });
 
@@ -943,7 +1095,7 @@ describe('PayrollService', () => {
     ]);
     prisma.employee.findMany.mockResolvedValue([{ id: 'emp-still-here' }]);
 
-    await service.recomputeRun(tenantId, 'run-1').catch(() => undefined);
+    await service.recomputeRun(tenantId, 'run-1', makerId).catch(() => undefined);
 
     const asked = calculationService.calculateForEmployee.mock.calls.map(
       (call: unknown[]) => call[1],
@@ -970,7 +1122,7 @@ describe('PayrollService', () => {
     prisma.payrollRun.update.mockResolvedValue({});
     prisma.payslip.findMany.mockResolvedValue([{ employeeId: 'emp-1' }]);
 
-    await service.recomputeRun(tenantId, 'run-1').catch(() => undefined);
+    await service.recomputeRun(tenantId, 'run-1', makerId).catch(() => undefined);
 
     const publishes = prisma.payrollRun.update.mock.calls.filter(
       (call: { where?: { status?: unknown } }[]) =>
@@ -1041,7 +1193,7 @@ describe('PayrollService', () => {
     it('records the instalments once, against the payslip that deducted them', async () => {
       draftRunProducing([{ loanId: 'loan-1', amount: 5000 }]);
 
-      await service.processRun(tenantId, runId);
+      await service.processRun(tenantId, runId, makerId);
 
       expect(loansService.recordPayrollRepayments).toHaveBeenCalledTimes(1);
       expect(loansService.recordPayrollRepayments).toHaveBeenCalledWith(
@@ -1058,7 +1210,7 @@ describe('PayrollService', () => {
     it('does not call the loans service at all when nobody had an instalment', async () => {
       draftRunProducing([]);
 
-      await service.processRun(tenantId, runId);
+      await service.processRun(tenantId, runId, makerId);
 
       expect(loansService.recordPayrollRepayments).not.toHaveBeenCalled();
       // The payslip ids are not even looked up when there is nothing to record.
@@ -1074,7 +1226,7 @@ describe('PayrollService', () => {
         new ConflictException('balance moved'),
       );
 
-      await expect(service.processRun(tenantId, runId)).rejects.toThrow(
+      await expect(service.processRun(tenantId, runId, makerId)).rejects.toThrow(
         ConflictException,
       );
       expect(loansService.recordPayrollRepayments).toHaveBeenCalledTimes(1);
@@ -1130,7 +1282,7 @@ describe('PayrollService', () => {
       draftRunProducing([{ loanId: 'loan-1', amount: 5000 }]);
       const seen = trackTransaction();
 
-      await service.processRun(tenantId, runId);
+      await service.processRun(tenantId, runId, makerId);
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       expect(seen.clear).toEqual([true]);
@@ -1159,7 +1311,7 @@ describe('PayrollService', () => {
     it('opens the write transaction with a timeout sized for the loan writes', async () => {
       draftRunProducing([{ loanId: 'loan-1', amount: 5000 }]);
 
-      await service.processRun(tenantId, runId);
+      await service.processRun(tenantId, runId, makerId);
 
       expect(prisma.$transaction).toHaveBeenCalledWith(
         expect.any(Function),
@@ -1173,7 +1325,7 @@ describe('PayrollService', () => {
       draftRunProducing([{ loanId: 'loan-1', amount: 5000 }]);
       const seen = trackTransaction();
 
-      await service.processRun(tenantId, runId);
+      await service.processRun(tenantId, runId, makerId);
 
       expect(seen.notify).toEqual([false]);
       expect(loansService.notifyLoansClosed).toHaveBeenCalledWith(tenantId, [
@@ -1207,7 +1359,7 @@ describe('PayrollService', () => {
       computedRunProducing([{ loanId: 'loan-1', amount: 5000 }]);
       const seen = trackTransaction();
 
-      await service.recomputeRun(tenantId, runId);
+      await service.recomputeRun(tenantId, runId, makerId);
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       expect(prisma.$transaction).toHaveBeenCalledWith(
@@ -1231,7 +1383,7 @@ describe('PayrollService', () => {
       prisma.payslip.createMany.mockRejectedValue(new Error('write failed'));
       const seen = trackTransaction();
 
-      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow(
+      await expect(service.recomputeRun(tenantId, runId, makerId)).rejects.toThrow(
         'write failed',
       );
 
@@ -1282,7 +1434,7 @@ describe('PayrollService', () => {
         slipFor('emp-1', [{ loanId: 'loan-1', amount: 5000 }]),
       );
 
-      await service.recomputeRun(tenantId, runId);
+      await service.recomputeRun(tenantId, runId, makerId);
 
       expect(loansService.clearPayrollRepayments).toHaveBeenCalledWith(
         tenantId, 3, 2026, expect.anything(),
@@ -1304,7 +1456,7 @@ describe('PayrollService', () => {
         new ConflictException('Loan loan-1 was closed ... re-run payroll'),
       );
 
-      await expect(service.recomputeRun(tenantId, runId)).rejects.toThrow(
+      await expect(service.recomputeRun(tenantId, runId, makerId)).rejects.toThrow(
         ConflictException,
       );
       expect(prisma.payrollRun.updateMany).toHaveBeenCalledWith({

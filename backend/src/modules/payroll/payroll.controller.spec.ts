@@ -239,7 +239,7 @@ describe('PayrollController', () => {
   });
 
   describe('processRun', () => {
-    it('should call payrollService.processRun with tenantId and id', async () => {
+    it('should call payrollService.processRun with tenantId, id and the acting user id (maker)', async () => {
       const mockResult = { id: 'pr-1', status: 'PROCESSED' };
       payrollService.processRun.mockResolvedValue(mockResult);
 
@@ -248,13 +248,14 @@ describe('PayrollController', () => {
       expect(payrollService.processRun).toHaveBeenCalledWith(
         'tenant-1',
         'pr-1',
+        adminUser.userId,
       );
       expect(result).toEqual(mockResult);
     });
   });
 
   describe('recomputeRun', () => {
-    it('should call payrollService.recomputeRun with tenantId and id', async () => {
+    it('should call payrollService.recomputeRun with tenantId, id and the acting user id (maker)', async () => {
       const mockResult = { id: 'pr-1', status: 'COMPUTED' };
       payrollService.recomputeRun.mockResolvedValue(mockResult);
 
@@ -263,13 +264,14 @@ describe('PayrollController', () => {
       expect(payrollService.recomputeRun).toHaveBeenCalledWith(
         'tenant-1',
         'pr-1',
+        adminUser.userId,
       );
       expect(result).toEqual(mockResult);
     });
   });
 
   describe('approveRun', () => {
-    it('should call payrollService.approveRun with tenantId and id', async () => {
+    it('should call payrollService.approveRun with tenantId, id and the acting user (checker)', async () => {
       const mockResult = { id: 'pr-1', status: 'APPROVED' };
       payrollService.approveRun.mockResolvedValue(mockResult);
 
@@ -278,6 +280,7 @@ describe('PayrollController', () => {
       expect(payrollService.approveRun).toHaveBeenCalledWith(
         'tenant-1',
         'pr-1',
+        adminUser,
       );
       expect(result).toEqual(mockResult);
     });

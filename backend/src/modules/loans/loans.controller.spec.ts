@@ -171,24 +171,20 @@ describe('LoansController', () => {
   });
 
   describe('approve / reject / disburse', () => {
-    it('stamps the approving user id, not their employee id', async () => {
+    it('passes the acting user through so the engine can authorize them', async () => {
       service.approve.mockResolvedValue({ id: 'loan-1' });
 
       await controller.approve(hrUser, 'loan-1');
 
-      expect(service.approve).toHaveBeenCalledWith(
-        'tenant-1',
-        'loan-1',
-        'user-3',
-      );
+      expect(service.approve).toHaveBeenCalledWith(hrUser, 'loan-1');
     });
 
-    it('forwards the rejection reason', async () => {
+    it('forwards the acting user and the rejection reason', async () => {
       service.reject.mockResolvedValue({ id: 'loan-1' });
 
       await controller.reject(hrUser, 'loan-1', { reason: 'Too soon' });
 
-      expect(service.reject).toHaveBeenCalledWith('tenant-1', 'loan-1', {
+      expect(service.reject).toHaveBeenCalledWith(hrUser, 'loan-1', {
         reason: 'Too soon',
       });
     });
