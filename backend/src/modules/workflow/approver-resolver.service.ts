@@ -36,7 +36,10 @@ export interface StepResolution {
 
 export interface ActorAccess {
   canAct: boolean;
-  /** True when self-approval is disallowed and the actor raised the request. */
+  /**
+   * True when the actor raised the request and may not act on it: always
+   * for a non-admin, and for an admin when self-approval is disallowed.
+   */
   selfBlocked: boolean;
   onBehalfOfUserId: string | null;
   /** True when the actor can act only through the admin override. */
@@ -294,7 +297,14 @@ export class ApproverResolverService {
       isOverride: false,
     };
 
-    if (!instance.allowSelfApproval && isRequester(actor, instance)) {
+    // A requester who is not HR/SUPER may never act on their own request,
+    // whatever route (delegation, leave cover, ROLE, SPECIFIC_USER) makes
+    // them eligible. allowSelfApproval only governs admins (payroll
+    // maker-checker turns it off).
+    if (
+      isRequester(actor, instance) &&
+      (!isAdminRole(actor.role) || !instance.allowSelfApproval)
+    ) {
       return { ...denied, selfBlocked: true };
     }
     if (resolution.approvers.has(actor.userId)) {

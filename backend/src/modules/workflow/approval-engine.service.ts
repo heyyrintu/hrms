@@ -47,8 +47,8 @@ export const PAYROLL_SELF_APPROVAL =
 export const NO_APPROVAL = 'No approval found for this request';
 export const TRAIL_FORBIDDEN = 'You cannot view the approval trail of this request';
 
-/** Cap on PENDING instances read for the inbox / actionable lists. */
-const PENDING_SCAN_LIMIT = 500;
+/** Page size when scanning PENDING instances for the inbox / actionable lists. */
+const PENDING_SCAN_BATCH = 500;
 
 /** Room for heavy onFinal bodies (payroll approval writes every payslip). */
 const ACT_TX_OPTIONS = { maxWait: 10_000, timeout: 60_000 };
@@ -145,8 +145,15 @@ export class ApprovalEngineService {
         ...resolution.approvers,
         ...resolution.onBehalf.keys(),
       ]);
-      if (!instance.allowSelfApproval && instance.requesterUserId) {
-        recipients.delete(instance.requesterUserId);
+      // Never ask the requester to approve their own request.
+      for (const userId of [...recipients]) {
+        const user = dir.usersById.get(userId);
+        if (
+          userId === instance.requesterUserId ||
+          (!!instance.requesterEmployeeId && user?.employeeId === instance.requesterEmployeeId)
+        ) {
+          recipients.delete(userId);
+        }
       }
       if (recipients.size === 0) return;
 
@@ -512,15 +519,7 @@ export class ApprovalEngineService {
       onBehalfOf: UserRef | null;
     }>
   > {
-    const instances = await this.prisma.approvalInstance.findMany({
-      where: {
-        tenantId: actor.tenantId,
-        status: 'PENDING',
-        ...(entityType ? { entityType } : {}),
-      },
-      orderBy: { createdAt: 'desc' },
-      take: PENDING_SCAN_LIMIT,
-    });
+    const instances = await this.pendingInstances(actor.tenantId, entityType);
     if (instances.length === 0) return [];
 
     const dir: ApproverDirectory = await this.resolver.loadDirectory(
@@ -557,6 +556,35 @@ export class ApprovalEngineService {
       });
     }
     return result;
+  }
+
+  /**
+   * Every PENDING instance of the tenant (of one type, or all), newest
+   * first, read in cursor-paginated batches so none is silently dropped.
+   */
+  private async pendingInstances(
+    tenantId: string,
+    entityType?: WorkflowEntityType,
+  ): Promise<ApprovalInstance[]> {
+    const where: Prisma.ApprovalInstanceWhereInput = {
+      tenantId,
+      status: 'PENDING',
+      ...(entityType ? { entityType } : {}),
+    };
+    const all: ApprovalInstance[] = [];
+    let cursor: string | null = null;
+    for (;;) {
+      const page: ApprovalInstance[] = await this.prisma.approvalInstance.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: PENDING_SCAN_BATCH,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      });
+      all.push(...(page ?? []));
+      if (!page || page.length < PENDING_SCAN_BATCH) break;
+      cursor = page[page.length - 1].id;
+    }
+    return all;
   }
 
   private async notifyAdvanced(

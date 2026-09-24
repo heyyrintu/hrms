@@ -595,6 +595,140 @@ describe('ApprovalEngineService', () => {
     });
   });
 
+  describe('a non-admin requester never acts on their own request', () => {
+    const act = (actorId: string, entityType: WorkflowEntityType = 'LEAVE', entityId = 'leave-1') =>
+      engine.act({ tenantId: TENANT, entityType, entityId, actor: actor(actorId), decision: 'APPROVE' });
+
+    it('blocks a delegate who is the requester, and keeps it out of their inbox and trail', async () => {
+      // The manager delegates to their own report, who raised the request.
+      directory({ delegations: [{ delegatorUserId: 'u-mgr', delegateUserId: 'u-req', entityType: null }] });
+      registry.register(handler());
+      db.approvalInstance.findUnique.mockResolvedValue(instance());
+      db.approvalInstance.findMany.mockResolvedValue([instance()]);
+
+      await expect(act('u-req')).rejects.toThrow(new ForbiddenException(SELF_APPROVAL));
+      expect(db.$transaction).not.toHaveBeenCalled();
+      await expect(engine.listActionableEntityIds(actor('u-req'), 'LEAVE')).resolves.toEqual([]);
+      await expect(engine.getInbox(actor('u-req'))).resolves.toEqual([]);
+      await expect(engine.getTrail(actor('u-req'), 'LEAVE', 'leave-1')).resolves.toEqual(
+        expect.objectContaining({ canAct: false }),
+      );
+    });
+
+    it('blocks a leave-cover manager who is the requester', async () => {
+      // The specific approver (u-mgr) is on leave; their manager (u-dir) raised the request.
+      directory({ onLeave: ['e-mgr'] });
+      db.approvalInstance.findUnique.mockResolvedValue(
+        instance({
+          requesterEmployeeId: 'e-dir',
+          requesterUserId: 'u-dir',
+          steps: [step(1, { approverType: 'SPECIFIC_USER', approverUserId: 'u-mgr' })],
+        }),
+      );
+
+      await expect(act('u-dir')).rejects.toThrow(new ForbiddenException(SELF_APPROVAL));
+    });
+
+    it('blocks a ROLE-step requester even with self-approval on; other role holders still act', async () => {
+      db.approvalInstance.findUnique.mockResolvedValue(
+        instance({
+          entityType: 'EXPENSE',
+          entityId: 'exp-1',
+          requesterEmployeeId: 'e-mgr',
+          requesterUserId: 'u-mgr',
+          allowSelfApproval: true,
+          steps: [step(1, { approverType: 'ROLE', approverRole: UserRole.MANAGER })],
+        }),
+      );
+
+      await expect(act('u-mgr', 'EXPENSE', 'exp-1')).rejects.toThrow(new ForbiddenException(SELF_APPROVAL));
+      await expect(act('u-dir', 'EXPENSE', 'exp-1')).resolves.toEqual(
+        expect.objectContaining({ outcome: 'APPROVED' }),
+      );
+    });
+
+    it('blocks a SPECIFIC_USER-step requester even with self-approval on', async () => {
+      db.approvalInstance.findUnique.mockResolvedValue(
+        instance({
+          entityType: 'EXPENSE',
+          entityId: 'exp-1',
+          allowSelfApproval: true,
+          steps: [step(1, { approverType: 'SPECIFIC_USER', approverUserId: 'u-req' })],
+        }),
+      );
+
+      await expect(act('u-req', 'EXPENSE', 'exp-1')).rejects.toThrow(new ForbiddenException(SELF_APPROVAL));
+    });
+
+    it('lets an HR admin requester act when self-approval is on', async () => {
+      db.approvalInstance.findUnique.mockResolvedValue(
+        instance({ requesterEmployeeId: 'e-hr', requesterUserId: 'u-hr', allowSelfApproval: true }),
+      );
+
+      await expect(act('u-hr')).resolves.toEqual(expect.objectContaining({ outcome: 'APPROVED' }));
+    });
+
+    it('blocks an HR admin requester when self-approval is off', async () => {
+      db.approvalInstance.findUnique.mockResolvedValue(
+        instance({
+          requesterEmployeeId: 'e-hr',
+          requesterUserId: 'u-hr',
+          allowSelfApproval: false,
+          steps: [step(1, { approverType: 'HR_ADMIN' })],
+        }),
+      );
+
+      await expect(act('u-hr')).rejects.toThrow(new ForbiddenException(SELF_APPROVAL));
+    });
+
+    it('never notifies the requester, even when they are an eligible approver', async () => {
+      db.approvalInstance.findUnique.mockResolvedValue(
+        instance({
+          requesterEmployeeId: 'e-mgr',
+          requesterUserId: 'u-mgr',
+          allowSelfApproval: true,
+          steps: [step(1, { approverType: 'ROLE', approverRole: UserRole.MANAGER })],
+        }),
+      );
+
+      await engine.notifyPending(TENANT, 'LEAVE', 'leave-1');
+
+      expect(notifications.createMany).toHaveBeenCalledWith([
+        expect.objectContaining({ userId: 'u-dir', type: 'APPROVAL_REQUIRED' }),
+      ]);
+    });
+
+    it('never notifies an admin requester matched only by employee id', async () => {
+      db.approvalInstance.findUnique.mockResolvedValue(
+        instance({
+          requesterEmployeeId: 'e-hr',
+          requesterUserId: null,
+          allowSelfApproval: true,
+          steps: [step(1, { approverType: 'HR_ADMIN' })],
+        }),
+      );
+
+      await engine.notifyPending(TENANT, 'LEAVE', 'leave-1');
+
+      expect(notifications.createMany).not.toHaveBeenCalled();
+    });
+
+    it('does not notify the requester on the ADVANCED path either', async () => {
+      const chain = [step(1), step(2, { approverType: 'SPECIFIC_USER', approverUserId: 'u-req', name: 'Self' })];
+      registry.register(handler());
+      directory({ delegations: [] });
+      db.approvalInstance.findUnique
+        .mockResolvedValueOnce(instance({ steps: chain }))
+        .mockResolvedValue(instance({ steps: chain, currentStepOrder: 2 }));
+
+      await act('u-mgr');
+      await flush();
+      await flush();
+
+      expect(notifications.createMany).not.toHaveBeenCalled();
+    });
+  });
+
   describe('cancel', () => {
     it('marks the PENDING instance cancelled, inside the given transaction', async () => {
       const tx = createMockPrismaService() as any;
@@ -628,6 +762,53 @@ describe('ApprovalEngineService', () => {
           where: { tenantId: TENANT, status: 'PENDING', entityType: 'LEAVE' },
           take: 500,
         }),
+      );
+    });
+
+    it('scans every PENDING instance in pages of 500, so older requests are not dropped', async () => {
+      // 500 newer requests the manager cannot act on, then theirs on page two.
+      const firstPage = Array.from({ length: 500 }, (_, n) =>
+        instance({ id: `x-${n}`, entityId: `leave-x-${n}`, requesterEmployeeId: 'e-other', requesterUserId: 'u-other' }),
+      );
+      const secondPage = [instance({ id: 'i-old', entityId: 'leave-old' })];
+      db.approvalInstance.findMany.mockReset();
+      db.approvalInstance.findMany
+        .mockResolvedValueOnce(firstPage)
+        .mockResolvedValueOnce(secondPage);
+
+      await expect(engine.listActionableEntityIds(actor('u-mgr'), 'LEAVE')).resolves.toEqual(['leave-old']);
+
+      expect(db.approvalInstance.findMany).toHaveBeenCalledTimes(2);
+      const [first, second] = db.approvalInstance.findMany.mock.calls.map((c: any[]) => c[0]);
+      expect(first).toEqual({
+        where: { tenantId: TENANT, status: 'PENDING', entityType: 'LEAVE' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 500,
+      });
+      expect(second).toEqual({
+        where: { tenantId: TENANT, status: 'PENDING', entityType: 'LEAVE' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 500,
+        cursor: { id: 'x-499' },
+        skip: 1,
+      });
+    });
+
+    it('pages the cross-type inbox scan too', async () => {
+      registry.register(handler());
+      const firstPage = Array.from({ length: 500 }, (_, n) =>
+        instance({ id: `x-${n}`, entityId: `leave-x-${n}`, requesterEmployeeId: 'e-other', requesterUserId: 'u-other' }),
+      );
+      db.approvalInstance.findMany.mockReset();
+      db.approvalInstance.findMany
+        .mockResolvedValueOnce(firstPage)
+        .mockResolvedValueOnce([instance({ id: 'i-old', entityId: 'leave-old' })]);
+
+      const inbox = await engine.getInbox(actor('u-mgr'));
+
+      expect(inbox.map((i) => i.entityId)).toEqual(['leave-old']);
+      expect(db.approvalInstance.findMany.mock.calls[1][0]).toEqual(
+        expect.objectContaining({ where: { tenantId: TENANT, status: 'PENDING' }, cursor: { id: 'x-499' } }),
       );
     });
 

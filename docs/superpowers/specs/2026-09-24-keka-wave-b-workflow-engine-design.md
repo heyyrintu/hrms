@@ -78,6 +78,9 @@ fresh snapshot, status PENDING. Old actions stay, tagged with their round.
    may never act, not even through override or delegation. → 403
    `"You cannot approve a request you raised"` (payroll: `"The person who computed
    a payroll run cannot approve it"`).
+   A requester who is not HR_ADMIN/SUPER_ADMIN may never act on their own
+   request (whatever makes them eligible: delegation, leave cover, ROLE or
+   SPECIFIC_USER); `allowSelfApproval` governs admins only.
 2. *Eligible approvers* for the step:
    - REPORTING_MANAGER: the user linked to the requester employee's `managerId`.
    - MANAGERS_MANAGER: the user linked to the manager's `managerId`; if there
