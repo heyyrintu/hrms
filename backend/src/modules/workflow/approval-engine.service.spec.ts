@@ -7,7 +7,9 @@ import {
   ALREADY_ACTIONED,
   NOT_AN_APPROVER,
   NOT_AWAITING,
+  NO_APPROVAL,
   PAYROLL_SELF_APPROVAL,
+  TRAIL_FORBIDDEN,
   SELF_APPROVAL,
   resolveSteps,
 } from './approval-engine.service';
@@ -534,12 +536,57 @@ describe('ApprovalEngineService', () => {
       await expect(act('u-mgr')).rejects.toThrow(new NotFoundException(NOT_AWAITING));
     });
 
-    it('returns 409 for a finished instance whose entity is no longer awaiting approval', async () => {
-      registry.register(handler());
-      db.approvalInstance.findUnique.mockResolvedValue(instance({ status: 'APPROVED' }));
+    it.each(['APPROVED', 'REJECTED', 'CANCELLED'])(
+      'returns 409 (not 404) for a %s instance whose entity is no longer awaiting approval',
+      async (status) => {
+        registry.register(handler());
+        db.approvalInstance.findUnique.mockResolvedValue(instance({ status }));
 
-      await expect(act('u-mgr')).rejects.toThrow(ALREADY_ACTIONED);
-    });
+        await expect(act('u-mgr')).rejects.toThrow(new ConflictException(ALREADY_ACTIONED));
+        expect(db.approvalInstance.upsert).not.toHaveBeenCalled();
+        expect(db.$transaction).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(['REJECTED', 'CANCELLED'])(
+      'restarts a stale %s instance (round + 1) when the domain still awaits approval, then acts on step 1',
+      async (status) => {
+        const h = handler({
+          getContext: jest.fn().mockResolvedValue({ requesterEmployeeId: 'e-req', requesterUserId: 'u-req', days: 2 }),
+        });
+        registry.register(h);
+        db.approvalInstance.findUnique.mockResolvedValue(
+          instance({ status, round: 1, currentStepOrder: 2, steps: [step(1), step(2, { approverType: 'HR_ADMIN' })] }),
+        );
+        db.workflowDefinition.findUnique.mockResolvedValue(null);
+        db.approvalInstance.upsert.mockResolvedValue(instance({ round: 2, currentStepOrder: 1 }));
+        const onFinal = jest.fn().mockResolvedValue(undefined);
+
+        const result = await act('u-mgr', 'APPROVE', onFinal);
+
+        expect(h.getContext).toHaveBeenCalledWith(TENANT, 'leave-1');
+        expect(db.approvalInstance.upsert).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { entityType_entityId: { entityType: 'LEAVE', entityId: 'leave-1' } },
+            update: expect.objectContaining({
+              round: { increment: 1 },
+              currentStepOrder: 1,
+              status: 'PENDING',
+              completedAt: null,
+            }),
+          }),
+        );
+        expect(db.approvalInstance.updateMany).toHaveBeenCalledWith({
+          where: { id: 'inst-1', status: 'PENDING', currentStepOrder: 1, round: 2 },
+          data: { status: 'APPROVED', completedAt: expect.any(Date) },
+        });
+        expect(db.approvalAction.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ round: 2, stepOrder: 1, actorUserId: 'u-mgr' }),
+        });
+        expect(onFinal).toHaveBeenCalledWith(prisma);
+        expect(result).toEqual({ outcome: 'APPROVED', instanceId: 'inst-1', nextStepOrder: null });
+      },
+    );
 
     it('ignores an instance that belongs to another tenant', async () => {
       db.approvalInstance.findUnique.mockResolvedValue(instance({ tenantId: 'other-tenant' }));
@@ -677,7 +724,9 @@ describe('ApprovalEngineService', () => {
 
     it('is forbidden to an unrelated employee', async () => {
       db.approvalInstance.findUnique.mockResolvedValue(instance());
-      await expect(engine.getTrail(actor('u-other'), 'LEAVE', 'leave-1')).rejects.toThrow(ForbiddenException);
+      await expect(engine.getTrail(actor('u-other'), 'LEAVE', 'leave-1')).rejects.toThrow(
+        new ForbiddenException(TRAIL_FORBIDDEN),
+      );
     });
 
     it('is visible to HR', async () => {
@@ -689,7 +738,9 @@ describe('ApprovalEngineService', () => {
 
     it('returns 404 when the entity has no instance', async () => {
       db.approvalInstance.findUnique.mockResolvedValue(null);
-      await expect(engine.getTrail(actor('u-hr'), 'LEAVE', 'leave-1')).rejects.toThrow(NotFoundException);
+      await expect(engine.getTrail(actor('u-hr'), 'LEAVE', 'leave-1')).rejects.toThrow(
+        new NotFoundException(NO_APPROVAL),
+      );
     });
   });
 });

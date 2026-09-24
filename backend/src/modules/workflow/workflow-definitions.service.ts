@@ -3,6 +3,7 @@ import { UserRole, WorkflowEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WORKFLOW_DEFAULTS, WORKFLOW_ENTITY_TYPES } from './workflow.defaults';
 import { WorkflowDefinitionView, WorkflowStepConfig } from './workflow.types';
+import { toNumber } from './workflow.utils';
 import { MAX_WORKFLOW_STEPS, UpsertWorkflowDto } from './dto/upsert-workflow.dto';
 
 type DefinitionWithSteps = {
@@ -21,12 +22,6 @@ type DefinitionWithSteps = {
     minDays: unknown;
   }>;
 };
-
-function toNumber(value: unknown): number | null {
-  if (value === null || value === undefined) return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
-}
 
 /**
  * Tenant approval chains (admin builder). A type with no row runs the

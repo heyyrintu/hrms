@@ -16,6 +16,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { WorkflowRegistry } from './workflow-registry.service';
 import { WORKFLOW_DEFAULTS } from './workflow.defaults';
+import { toNumber } from './workflow.utils';
 import {
   ApproverDirectory,
   ApproverResolverService,
@@ -43,6 +44,8 @@ export const NOT_AN_APPROVER =
 export const SELF_APPROVAL = 'You cannot approve a request you raised';
 export const PAYROLL_SELF_APPROVAL =
   'The person who computed a payroll run cannot approve it';
+export const NO_APPROVAL = 'No approval found for this request';
+export const TRAIL_FORBIDDEN = 'You cannot view the approval trail of this request';
 
 /** Cap on PENDING instances read for the inbox / actionable lists. */
 const PENDING_SCAN_LIMIT = 500;
@@ -90,12 +93,6 @@ function conditionHolds(
   if (min === null || min === undefined) return true;
   if (value === null || value === undefined) return false;
   return value >= min;
-}
-
-function toNumber(value: unknown): number | null {
-  if (value === null || value === undefined) return null;
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
 }
 
 export function parseSteps(json: Prisma.JsonValue): ApprovalStepSnapshot[] {
@@ -336,7 +333,7 @@ export class ApprovalEngineService {
   ): Promise<ApprovalTrailView> {
     const instance = await this.findInstance(actor.tenantId, entityType, entityId);
     if (!instance) {
-      throw new NotFoundException('No approval found for this request');
+      throw new NotFoundException(NO_APPROVAL);
     }
 
     const steps = parseSteps(instance.steps);
@@ -364,7 +361,7 @@ export class ApprovalEngineService {
       (a) => a.actorUserId === actor.userId || a.onBehalfOfUserId === actor.userId,
     );
     if (!canAct && !hasActed && !isAdminRole(actor.role) && !isRequester(actor, instance)) {
-      throw new ForbiddenException('You cannot view the approval trail of this request');
+      throw new ForbiddenException(TRAIL_FORBIDDEN);
     }
 
     const roundActions = actions.filter((a) => a.round === instance.round);
@@ -425,6 +422,13 @@ export class ApprovalEngineService {
    * No PENDING instance: ask the domain whether the entity is awaiting
    * approval and, if so, (re)start the instance lazily (rows the backfill
    * missed). Otherwise the request was already actioned or does not exist.
+   *
+   * A terminal (REJECTED / CANCELLED / APPROVED) instance is restarted too,
+   * round + 1, when the domain still reports the entity as awaiting
+   * approval: the domain row is the source of truth, and a stale instance
+   * (e.g. a resubmit path that did not call start()) must not block it.
+   * A genuine double-action cannot reach this: the domain row has left its
+   * awaiting status, so getContext returns null and we answer 409.
    */
   private async recoverInstance(
     tenantId: string,
