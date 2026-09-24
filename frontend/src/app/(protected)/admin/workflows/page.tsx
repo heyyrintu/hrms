@@ -340,8 +340,11 @@ export default function WorkflowBuilderPage() {
                     updateDraft((d) => ({ ...d, allowSelfApproval: e.target.checked }))
                   }
                 />
-                <span>Allow the requester to approve their own request</span>
+                <span>Allow HR and Super Admins to approve requests they raised themselves</span>
               </label>
+              <p className="ml-6 text-xs text-warm-500">
+                Employees can never approve their own requests.
+              </p>
             </CardContent>
           </Card>
 

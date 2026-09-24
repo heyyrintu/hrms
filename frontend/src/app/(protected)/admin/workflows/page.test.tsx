@@ -145,7 +145,10 @@ describe('WorkflowBuilderPage', () => {
     fireEvent.change(screen.getByLabelText('Step 2 only when days are at least'), {
       target: { value: '5' },
     });
-    fireEvent.click(screen.getByLabelText('Allow the requester to approve their own request'));
+    expect(screen.getByText('Employees can never approve their own requests.')).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByLabelText('Allow HR and Super Admins to approve requests they raised themselves'),
+    );
     fireEvent.click(screen.getByRole('button', { name: /Save workflow/ }));
 
     await waitFor(() =>
