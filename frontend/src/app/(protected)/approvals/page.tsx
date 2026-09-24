@@ -198,15 +198,18 @@ export default function MyApprovalsPage() {
                         Open
                         <ExternalLink className="h-3.5 w-3.5" />
                       </Link>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => setPending({ item, decision: 'reject' })}
-                        aria-label={`Reject ${item.title}`}
-                      >
-                        <XCircle className="h-4 w-4 mr-1" />
-                        Reject
-                      </Button>
+                      {/* Payroll runs are reset, never rejected. */}
+                      {item.entityType !== 'PAYROLL_RUN' && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => setPending({ item, decision: 'reject' })}
+                          aria-label={`Reject ${item.title}`}
+                        >
+                          <XCircle className="h-4 w-4 mr-1" />
+                          Reject
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         onClick={() => setPending({ item, decision: 'approve' })}
@@ -245,6 +248,8 @@ export default function MyApprovalsPage() {
         decision={pending?.decision ?? 'approve'}
         subject={pending?.item.title}
         submitting={submitting}
+        // A loan cannot be rejected without a reason.
+        requireNote={pending?.decision === 'reject' && pending.item.entityType === 'LOAN'}
         onCancel={() => setPending(null)}
         onConfirm={handleConfirm}
       />

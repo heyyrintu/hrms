@@ -61,6 +61,36 @@ const expenseItem = {
   onBehalfOf: { userId: 'u-boss', name: 'Meera Iyer' },
 };
 
+const payrollItem = {
+  instanceId: 'inst-3',
+  entityType: 'PAYROLL_RUN',
+  entityId: 'run-1',
+  title: 'March 2026 payroll',
+  subtitle: '42 employees',
+  requesterName: null,
+  link: '/payroll',
+  submittedAt: '2026-10-03T12:00:00Z',
+  currentStepOrder: 1,
+  totalSteps: 1,
+  currentStepName: 'HR approval',
+  onBehalfOf: null,
+};
+
+const loanItem = {
+  instanceId: 'inst-4',
+  entityType: 'LOAN',
+  entityId: 'loan-1',
+  title: 'Personal loan · ₹50,000',
+  subtitle: null,
+  requesterName: 'Asha Rao',
+  link: '/approvals/loans',
+  submittedAt: '2026-10-04T12:00:00Z',
+  currentStepOrder: 1,
+  totalSteps: 1,
+  currentStepName: 'HR approval',
+  onBehalfOf: null,
+};
+
 const trail = {
   instanceId: 'inst-1',
   status: 'PENDING',
@@ -169,6 +199,56 @@ describe('MyApprovalsPage', () => {
       expect(workflowApi.reject).toHaveBeenCalledWith('EXPENSE', 'exp-1', ''),
     );
     expect(workflowApi.approve).not.toHaveBeenCalled();
+  });
+
+  it('offers no Reject for a payroll run (runs are reset, not rejected)', async () => {
+    workflowApi.getInbox.mockResolvedValue({ data: { items: [payrollItem, leaveItem] } });
+    render(<MyApprovalsPage />);
+    await screen.findByText('March 2026 payroll');
+
+    expect(
+      screen.getByRole('button', { name: 'Approve March 2026 payroll' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Reject March 2026 payroll' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Reject Casual Leave · 3 days' }),
+    ).toBeInTheDocument();
+  });
+
+  it('requires a reason to reject a loan', async () => {
+    workflowApi.getInbox.mockResolvedValue({ data: { items: [loanItem] } });
+    render(<MyApprovalsPage />);
+    await screen.findByText('Personal loan · ₹50,000');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reject Personal loan · ₹50,000' }));
+    const confirm = screen.getByRole('button', { name: 'Confirm reject' });
+    expect(screen.getByLabelText('Reason (required)')).toBeInTheDocument();
+    expect(confirm).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText('Reason (required)'), { target: { value: '   ' } });
+    expect(confirm).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText('Reason (required)'), {
+      target: { value: 'Existing loan still open' },
+    });
+    expect(confirm).toBeEnabled();
+    fireEvent.click(confirm);
+
+    await waitFor(() =>
+      expect(workflowApi.reject).toHaveBeenCalledWith('LOAN', 'loan-1', 'Existing loan still open'),
+    );
+  });
+
+  it('keeps the loan approve note optional', async () => {
+    workflowApi.getInbox.mockResolvedValue({ data: { items: [loanItem] } });
+    render(<MyApprovalsPage />);
+    await screen.findByText('Personal loan · ₹50,000');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve Personal loan · ₹50,000' }));
+    expect(screen.getByLabelText('Note (optional)')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Confirm approve' })).toBeEnabled();
   });
 
   it('shows the API error and keeps the dialog open when approval fails', async () => {
