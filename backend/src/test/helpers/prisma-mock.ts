@@ -85,6 +85,12 @@ const prismaModels = [
   'hrTicketCategory',
   'hrTicket',
   'hrTicketComment',
+  // Keka wave B
+  'workflowDefinition',
+  'workflowStep',
+  'approvalInstance',
+  'approvalAction',
+  'approvalDelegation',
 ];
 
 function createModelMock() {

@@ -14,9 +14,19 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { AuditModule } from '../audit/audit.module';
 import { HolidaysModule } from '../holidays/holidays.module';
 import { WebhooksModule } from '../webhooks/webhooks.module';
+import { WorkflowModule } from '../workflow/workflow.module';
+import { LeaveWorkflowHandler } from './leave-workflow.handler';
+import { CompOffWorkflowHandler } from './comp-off-workflow.handler';
 
 @Module({
-  imports: [ScheduleModule.forRoot(), NotificationsModule, AuditModule, HolidaysModule, WebhooksModule],
+  imports: [
+    ScheduleModule.forRoot(),
+    NotificationsModule,
+    AuditModule,
+    HolidaysModule,
+    WebhooksModule,
+    WorkflowModule,
+  ],
   controllers: [
     LeaveController,
     LeaveAccrualController,
@@ -30,6 +40,8 @@ import { WebhooksModule } from '../webhooks/webhooks.module';
     CompOffService,
     LeaveCarryForwardService,
     LeaveCarryForwardCronService,
+    LeaveWorkflowHandler,
+    CompOffWorkflowHandler,
   ],
   exports: [LeaveService, LeaveAccrualService, CompOffService, LeaveCarryForwardService],
 })

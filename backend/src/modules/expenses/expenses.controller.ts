@@ -187,15 +187,7 @@ export class ExpensesController {
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: ExpenseClaimQueryDto,
   ) {
-    if (!user.employeeId) {
-      throw new BadRequestException('No employee profile linked to this user');
-    }
-    return this.expensesService.getPendingApprovals(
-      user.tenantId,
-      user.employeeId,
-      user.role,
-      query,
-    );
+    return this.expensesService.getPendingApprovals(user, query);
   }
 
   @Get('all-claims')
@@ -223,16 +215,7 @@ export class ExpensesController {
     @Param('id') id: string,
     @Body() dto: ReviewExpenseClaimDto,
   ) {
-    if (!user.employeeId) {
-      throw new BadRequestException('User is not linked to an employee');
-    }
-    return this.expensesService.approveClaim(
-      user.tenantId,
-      id,
-      user.employeeId,
-      user.role,
-      dto,
-    );
+    return this.expensesService.approveClaim(user, id, dto);
   }
 
   @Post('claims/:id/reject')
@@ -247,16 +230,7 @@ export class ExpensesController {
     @Param('id') id: string,
     @Body() dto: ReviewExpenseClaimDto,
   ) {
-    if (!user.employeeId) {
-      throw new BadRequestException('User is not linked to an employee');
-    }
-    return this.expensesService.rejectClaim(
-      user.tenantId,
-      id,
-      user.employeeId,
-      user.role,
-      dto,
-    );
+    return this.expensesService.rejectClaim(user, id, dto);
   }
 
   @Post('claims/:id/reimburse')

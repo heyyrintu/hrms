@@ -15,13 +15,25 @@ import {
   ReviewExpenseClaimDto,
   ExpenseClaimQueryDto,
 } from './dto/expense.dto';
-import { ExpenseClaimStatus, NotificationType } from '@prisma/client';
+import { ExpenseClaimStatus, NotificationType, UserRole } from '@prisma/client';
+import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
+import { ApprovalEngineService } from '../workflow/approval-engine.service';
+import { findUserIdForEmployee } from '../workflow/workflow.utils';
+import { WorkflowEntityContext } from '../workflow/workflow.types';
+
+/** Route of the per-flow approvals page for expense claims. */
+export const EXPENSE_APPROVALS_LINK = '/approvals/expenses';
+
+function isAdmin(role: UserRole | string): boolean {
+  return role === UserRole.SUPER_ADMIN || role === UserRole.HR_ADMIN;
+}
 
 @Injectable()
 export class ExpensesService {
   constructor(
     private prisma: PrismaService,
     private notificationsService: NotificationsService,
+    private workflow: ApprovalEngineService,
   ) {}
 
   // ============================================
@@ -208,25 +220,33 @@ export class ExpensesService {
       throw new BadRequestException('Only DRAFT claims can be submitted');
     }
 
-    const updated = await this.prisma.expenseClaim.update({
-      where: { id: claimId },
-      data: { status: ExpenseClaimStatus.SUBMITTED },
-      include: {
-        category: { select: { id: true, name: true, code: true } },
-      },
+    const requesterUserId = await findUserIdForEmployee(this.prisma, tenantId, employeeId);
+
+    // The status change and the approval instance commit together; step-1
+    // approvers are notified by the engine once the transaction is done.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const result = await tx.expenseClaim.update({
+        where: { id: claimId },
+        data: { status: ExpenseClaimStatus.SUBMITTED },
+        include: {
+          category: { select: { id: true, name: true, code: true } },
+        },
+      });
+      await this.workflow.start({
+        tenantId,
+        entityType: 'EXPENSE',
+        entityId: claimId,
+        context: {
+          requesterEmployeeId: employeeId,
+          requesterUserId,
+          amount: Number(claim.amount),
+        },
+        tx,
+      });
+      return result;
     });
 
-    // Notify HR about new expense claim
-    this.notificationsService
-      .notifyByRole(
-        tenantId,
-        ['HR_ADMIN'],
-        NotificationType.EXPENSE_APPROVED,
-        'New Expense Claim Submitted',
-        `An expense claim of ${claim.amount} has been submitted for review.`,
-        '/approvals/expenses',
-      )
-      .catch(() => {});
+    void this.workflow.notifyPending(tenantId, 'EXPENSE', claimId);
 
     return updated;
   }
@@ -250,20 +270,20 @@ export class ExpensesService {
   // Approvals (HR / Manager)
   // ============================================
 
-  async getPendingApprovals(
-    tenantId: string,
-    approverEmployeeId: string,
-    approverRole: string,
-    query: ExpenseClaimQueryDto,
-  ) {
+  /**
+   * HR_ADMIN / SUPER_ADMIN see every submitted claim; everyone else sees the
+   * claims whose current approval step they can act on (reporting manager,
+   * later-step approver, delegate, leave cover).
+   */
+  async getPendingApprovals(actor: AuthenticatedUser, query: ExpenseClaimQueryDto) {
     const page = parseInt(query.page || '1');
     const limit = parseInt(query.limit || '20');
 
-    const where: any = { tenantId, status: ExpenseClaimStatus.SUBMITTED };
+    const where: any = { tenantId: actor.tenantId, status: ExpenseClaimStatus.SUBMITTED };
 
-    // Managers can only see direct reports' claims
-    if (approverRole === 'MANAGER') {
-      where.employee = { managerId: approverEmployeeId };
+    if (!isAdmin(actor.role)) {
+      const ids = await this.workflow.listActionableEntityIds(actor, 'EXPENSE');
+      where.id = { in: ids };
     }
 
     const [data, total] = await Promise.all([
@@ -330,40 +350,39 @@ export class ExpensesService {
     };
   }
 
-  async approveClaim(
-    tenantId: string,
-    claimId: string,
-    approverId: string,
-    approverRole: string,
-    dto: ReviewExpenseClaimDto,
-  ) {
-    const claim = await this.prisma.expenseClaim.findFirst({
-      where: { id: claimId, tenantId, status: ExpenseClaimStatus.SUBMITTED },
-      include: {
-        employee: { select: { id: true, managerId: true } },
+  /**
+   * Approve through the approval engine, which authorizes the actor. On an
+   * intermediate step the claim stays SUBMITTED and is returned unchanged; on
+   * the last step it becomes APPROVED inside the engine's transaction.
+   */
+  async approveClaim(actor: AuthenticatedUser, claimId: string, dto: ReviewExpenseClaimDto) {
+    const { tenantId } = actor;
+    const claim = await this.findSubmittedClaim(tenantId, claimId);
+
+    let updated: unknown = null;
+    const result = await this.workflow.act({
+      tenantId,
+      entityType: 'EXPENSE',
+      entityId: claimId,
+      actor,
+      decision: 'APPROVE',
+      note: dto.approverNote,
+      onFinal: async (tx) => {
+        updated = await tx.expenseClaim.update({
+          where: { id: claimId },
+          data: {
+            status: ExpenseClaimStatus.APPROVED,
+            approverId: actor.employeeId ?? null,
+            approverNote: dto.approverNote,
+            approvedAt: new Date(),
+          },
+        });
       },
     });
-    if (!claim) {
-      throw new NotFoundException('Expense claim not found or already processed');
-    }
 
-    if (approverRole === 'MANAGER') {
-      if (claim.employee.managerId !== approverId) {
-        throw new ForbiddenException(
-          'You can only approve expense claims for your direct reports',
-        );
-      }
+    if (result.outcome === 'ADVANCED') {
+      return claim;
     }
-
-    const updated = await this.prisma.expenseClaim.update({
-      where: { id: claimId },
-      data: {
-        status: ExpenseClaimStatus.APPROVED,
-        approverId,
-        approverNote: dto.approverNote,
-        approvedAt: new Date(),
-      },
-    });
 
     this.notificationsService
       .notifyEmployee(
@@ -379,37 +398,28 @@ export class ExpensesService {
     return updated;
   }
 
-  async rejectClaim(
-    tenantId: string,
-    claimId: string,
-    approverId: string,
-    approverRole: string,
-    dto: ReviewExpenseClaimDto,
-  ) {
-    const claim = await this.prisma.expenseClaim.findFirst({
-      where: { id: claimId, tenantId, status: ExpenseClaimStatus.SUBMITTED },
-      include: {
-        employee: { select: { id: true, managerId: true } },
-      },
-    });
-    if (!claim) {
-      throw new NotFoundException('Expense claim not found or already processed');
-    }
+  /** Reject through the approval engine; a rejection on any step ends the request. */
+  async rejectClaim(actor: AuthenticatedUser, claimId: string, dto: ReviewExpenseClaimDto) {
+    const { tenantId } = actor;
+    const claim = await this.findSubmittedClaim(tenantId, claimId);
 
-    if (approverRole === 'MANAGER') {
-      if (claim.employee.managerId !== approverId) {
-        throw new ForbiddenException(
-          'You can only reject expense claims for your direct reports',
-        );
-      }
-    }
-
-    const updated = await this.prisma.expenseClaim.update({
-      where: { id: claimId },
-      data: {
-        status: ExpenseClaimStatus.REJECTED,
-        approverId,
-        approverNote: dto.approverNote,
+    let updated: unknown = null;
+    await this.workflow.act({
+      tenantId,
+      entityType: 'EXPENSE',
+      entityId: claimId,
+      actor,
+      decision: 'REJECT',
+      note: dto.approverNote,
+      onFinal: async (tx) => {
+        updated = await tx.expenseClaim.update({
+          where: { id: claimId },
+          data: {
+            status: ExpenseClaimStatus.REJECTED,
+            approverId: actor.employeeId ?? null,
+            approverNote: dto.approverNote,
+          },
+        });
       },
     });
 
@@ -456,4 +466,36 @@ export class ExpensesService {
 
     return updated;
   }
+
+  // ============================================
+  // Approval workflow support
+  // ============================================
+
+  /** Engine routing context of a SUBMITTED claim; null otherwise. */
+  async getWorkflowContext(
+    tenantId: string,
+    claimId: string,
+  ): Promise<WorkflowEntityContext | null> {
+    const claim = await this.prisma.expenseClaim.findFirst({
+      where: { id: claimId, tenantId, status: ExpenseClaimStatus.SUBMITTED },
+      select: { employeeId: true, amount: true },
+    });
+    if (!claim) return null;
+    return {
+      requesterEmployeeId: claim.employeeId,
+      requesterUserId: await findUserIdForEmployee(this.prisma, tenantId, claim.employeeId),
+      amount: Number(claim.amount),
+    };
+  }
+
+  private async findSubmittedClaim(tenantId: string, claimId: string) {
+    const claim = await this.prisma.expenseClaim.findFirst({
+      where: { id: claimId, tenantId, status: ExpenseClaimStatus.SUBMITTED },
+    });
+    if (!claim) {
+      throw new NotFoundException('Expense claim not found or already processed');
+    }
+    return claim;
+  }
+
 }

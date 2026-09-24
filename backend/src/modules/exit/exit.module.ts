@@ -12,8 +12,8 @@ import { SettlementService } from './settlement/settlement.service';
  * `LoansModule` is imported so a settlement can recover a leaver's
  * outstanding loans and advances through `LoansService` — reading balances on
  * compute and writing SETTLEMENT repayments on approval — rather than touching
- * loan rows from exit code. No cycle: LoansModule imports only notifications
- * and webhooks.
+ * loan rows from exit code. No cycle: LoansModule imports only notifications,
+ * webhooks and workflow, and WorkflowModule imports no domain module.
  */
 @Module({
   imports: [PrismaModule, LoansModule],

@@ -5,7 +5,9 @@ import {
   ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, UserRole } from '@prisma/client';
+import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
+import { ApprovalEngineService } from '../workflow/approval-engine.service';
 import { LeaveService } from './leave.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../../common/email/email.service';
@@ -24,10 +26,33 @@ describe('LeaveService', () => {
   let notifications: any;
   let holidays: { getHolidaysBetween: jest.Mock };
   let webhooks: { dispatch: jest.Mock };
+  let engine: {
+    start: jest.Mock;
+    notifyPending: jest.Mock;
+    act: jest.Mock;
+    cancel: jest.Mock;
+    listActionableEntityIds: jest.Mock;
+  };
 
   const tenantId = 'test-tenant';
   const employeeId = 'emp-1';
   const approverId = 'emp-manager';
+
+  const managerActor: AuthenticatedUser = {
+    userId: 'user-manager',
+    email: 'manager@test.com',
+    tenantId,
+    role: UserRole.MANAGER,
+    employeeId: approverId,
+  };
+
+  const adminActor: AuthenticatedUser = {
+    userId: 'user-admin',
+    email: 'admin@test.com',
+    tenantId,
+    role: UserRole.SUPER_ADMIN,
+    employeeId: 'super-admin-emp',
+  };
 
   const mockLeaveType = {
     id: 'lt-1',
@@ -73,9 +98,28 @@ describe('LeaveService', () => {
   };
 
   beforeEach(async () => {
+    engine = {
+      start: jest.fn().mockResolvedValue({ id: 'inst-1' }),
+      notifyPending: jest.fn().mockResolvedValue(undefined),
+      act: jest.fn(),
+      cancel: jest.fn().mockResolvedValue(undefined),
+      listActionableEntityIds: jest.fn().mockResolvedValue([]),
+    };
+    // Default: a single-step chain, so every decision is terminal and the
+    // domain's onFinal runs inside a transaction, as the real engine does.
+    engine.act.mockImplementation(async (input: any) => {
+      await prisma.$transaction((tx: any) => input.onFinal?.(tx));
+      return {
+        outcome: input.decision === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+        instanceId: 'inst-1',
+        nextStepOrder: null,
+      };
+    });
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         LeaveService,
+        { provide: ApprovalEngineService, useValue: engine },
         { provide: PrismaService, useValue: createMockPrismaService() },
         { provide: EmailService, useValue: createMockEmailService() },
         { provide: NotificationsService, useValue: createMockNotificationsService() },
@@ -162,6 +206,42 @@ describe('LeaveService', () => {
       endDate: '2025-03-12',
       reason: 'Personal work',
     };
+
+    it('starts the approval with the employee\'s linked user when no creator is given', async () => {
+      prisma.leaveType.findFirst.mockResolvedValue(mockLeaveType);
+      prisma.leaveRequest.findFirst.mockResolvedValue(null);
+      prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
+      prisma.leaveRequest.create.mockResolvedValue({
+        id: 'req-new',
+        totalDays: 3,
+        leaveType: mockLeaveType,
+        employee: { id: employeeId },
+      });
+      prisma.user.findFirst.mockResolvedValue({ id: 'linked-user' });
+
+      await service.createRequest(tenantId, employeeId, createDto);
+
+      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+        where: { tenantId, employeeId },
+        select: { id: true },
+      });
+      expect(engine.start).toHaveBeenCalledWith(
+        expect.objectContaining({
+          context: { requesterEmployeeId: employeeId, requesterUserId: 'linked-user', days: 3 },
+        }),
+      );
+    });
+
+    it('does not start an approval when validation fails', async () => {
+      prisma.leaveType.findFirst.mockResolvedValue(null);
+
+      await expect(service.createRequest(tenantId, employeeId, createDto)).rejects.toThrow(
+        NotFoundException,
+      );
+
+      expect(engine.start).not.toHaveBeenCalled();
+      expect(engine.notifyPending).not.toHaveBeenCalled();
+    });
 
     it('should throw BadRequestException when start date is after end date', async () => {
       await expect(
@@ -328,9 +408,21 @@ describe('LeaveService', () => {
       prisma.leaveRequest.create.mockResolvedValue(createdRequest);
       prisma.leaveBalance.update.mockResolvedValue({});
 
-      const result = await service.createRequest(tenantId, employeeId, createDto);
+      const result = await service.createRequest(tenantId, employeeId, createDto, 'user-1');
 
       expect(prisma.leaveRequest.create).toHaveBeenCalled();
+      expect(engine.start).toHaveBeenCalledWith({
+        tenantId,
+        entityType: 'LEAVE',
+        entityId: 'req-new',
+        context: {
+          requesterEmployeeId: employeeId,
+          requesterUserId: 'user-1',
+          days: expect.any(Number),
+        },
+        tx: prisma,
+      });
+      expect(engine.notifyPending).toHaveBeenCalledWith(tenantId, 'LEAVE', 'req-new');
       expect(prisma.leaveBalance.update).toHaveBeenCalledWith({
         where: { id: mockBalance.id },
         data: {
@@ -425,47 +517,44 @@ describe('LeaveService', () => {
   // getPendingApprovals
   // -----------------------------------------------------------
   describe('getPendingApprovals', () => {
-    it('should return pending requests for the manager direct reports', async () => {
-      prisma.employee.findMany.mockResolvedValue([
-        { id: 'emp-1' },
-        { id: 'emp-2' },
-      ]);
+    it('shows a non-admin only what the engine says they can act on', async () => {
+      engine.listActionableEntityIds.mockResolvedValue(['req-1', 'req-2']);
       prisma.leaveRequest.findMany.mockResolvedValue([]);
 
-      await service.getPendingApprovals(tenantId, approverId);
+      await service.getPendingApprovals(managerActor);
 
-      expect(prisma.employee.findMany).toHaveBeenCalledWith({
-        where: {
-          tenantId,
-          managerId: approverId,
-          status: 'ACTIVE',
-        },
-        select: { id: true },
-      });
+      expect(engine.listActionableEntityIds).toHaveBeenCalledWith(managerActor, 'LEAVE');
       expect(prisma.leaveRequest.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({
-            employeeId: { in: ['emp-1', 'emp-2'] },
-            status: 'PENDING',
-          }),
+          where: { tenantId, status: 'PENDING', id: { in: ['req-1', 'req-2'] } },
         }),
       );
     });
 
-    it('should return empty when manager has no direct reports', async () => {
-      prisma.employee.findMany.mockResolvedValue([]);
+    it('returns empty when nothing is actionable', async () => {
+      engine.listActionableEntityIds.mockResolvedValue([]);
       prisma.leaveRequest.findMany.mockResolvedValue([]);
 
-      const result = await service.getPendingApprovals(tenantId, approverId);
+      const result = await service.getPendingApprovals(managerActor);
 
       expect(prisma.leaveRequest.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({
-            employeeId: { in: [] },
-          }),
+          where: expect.objectContaining({ id: { in: [] } }),
         }),
       );
       expect(result).toEqual([]);
+    });
+
+    it('shows HR_ADMIN / SUPER_ADMIN every pending request in the tenant', async () => {
+      prisma.leaveRequest.findMany.mockResolvedValue([]);
+
+      await service.getPendingApprovals(adminActor);
+      await service.getPendingApprovals({ ...adminActor, role: UserRole.HR_ADMIN });
+
+      expect(engine.listActionableEntityIds).not.toHaveBeenCalled();
+      expect(prisma.leaveRequest.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { tenantId, status: 'PENDING' } }),
+      );
     });
   });
 
@@ -477,19 +566,120 @@ describe('LeaveService', () => {
       prisma.leaveRequest.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.approveRequest(tenantId, 'req-404', approverId, 'SUPER_ADMIN', {}),
+        service.approveRequest(adminActor, 'req-404', {}),
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('should throw ForbiddenException when MANAGER approves non-direct report', async () => {
-      prisma.leaveRequest.findFirst.mockResolvedValue({
-        ...mockLeaveRequest,
-        employee: { id: employeeId, managerId: 'some-other-manager' },
-      });
+    it('propagates the engine\'s 403 and writes nothing when the actor is not an approver', async () => {
+      prisma.leaveRequest.findFirst.mockResolvedValue(mockLeaveRequest);
+      engine.act.mockRejectedValue(
+        new ForbiddenException('You are not an approver for the current step of this request'),
+      );
 
       await expect(
-        service.approveRequest(tenantId, 'req-1', approverId, 'MANAGER', {}),
+        service.approveRequest(managerActor, 'req-1', {}),
       ).rejects.toThrow(ForbiddenException);
+
+      expect(prisma.leaveRequest.update).not.toHaveBeenCalled();
+      expect(prisma.leaveBalance.update).not.toHaveBeenCalled();
+      expect(notifications.notifyEmployee).not.toHaveBeenCalled();
+    });
+
+    it('asks the engine to act on LEAVE with the actor and note', async () => {
+      prisma.leaveRequest.findFirst.mockResolvedValue(mockLeaveRequest);
+      prisma.leaveRequest.update.mockResolvedValue({
+        ...mockLeaveRequest,
+        status: 'APPROVED',
+        leaveType: mockLeaveType,
+      });
+      prisma.leaveBalance.findMany.mockResolvedValue([]);
+
+      await service.approveRequest(managerActor, 'req-1', { approverNote: 'ok' });
+
+      expect(engine.act).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId,
+          entityType: 'LEAVE',
+          entityId: 'req-1',
+          actor: managerActor,
+          decision: 'APPROVE',
+          note: 'ok',
+          onFinal: expect.any(Function),
+        }),
+      );
+    });
+
+    it('leaves the request PENDING and sends no approved notification when the chain ADVANCES', async () => {
+      prisma.leaveRequest.findFirst
+        .mockResolvedValueOnce(mockLeaveRequest)
+        .mockResolvedValueOnce({ ...mockLeaveRequest, leaveType: mockLeaveType });
+      engine.act.mockResolvedValue({ outcome: 'ADVANCED', instanceId: 'inst-1', nextStepOrder: 2 });
+
+      const result = await service.approveRequest(managerActor, 'req-1', {});
+
+      expect(result.status).toBe('PENDING');
+      expect(prisma.leaveRequest.update).not.toHaveBeenCalled();
+      expect(prisma.leaveBalance.update).not.toHaveBeenCalled();
+      expect(prisma.attendanceRecord.upsert).not.toHaveBeenCalled();
+      expect(notifications.notifyEmployee).not.toHaveBeenCalled();
+      expect(webhooks.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('runs the balance and attendance writes inside onFinal on the final approval', async () => {
+      prisma.leaveRequest.findFirst.mockResolvedValue(mockLeaveRequest);
+      const tx = createMockPrismaService() as any;
+      tx.leaveRequest.update.mockResolvedValue({
+        ...mockLeaveRequest,
+        status: 'APPROVED',
+        leaveType: mockLeaveType,
+      });
+      tx.leaveBalance.findMany.mockResolvedValue([mockBalance]);
+      tx.leaveBalance.update.mockResolvedValue({});
+      tx.attendanceRecord.upsert.mockResolvedValue({});
+      engine.act.mockImplementation(async (input: any) => {
+        // Nothing may be written before the engine hands over its transaction.
+        expect(prisma.leaveBalance.update).not.toHaveBeenCalled();
+        await input.onFinal(tx);
+        return { outcome: 'APPROVED', instanceId: 'inst-1', nextStepOrder: null };
+      });
+
+      const result = await service.approveRequest(managerActor, 'req-1', {});
+
+      expect(result.status).toBe('APPROVED');
+      expect(tx.leaveRequest.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'req-1', status: 'PENDING' } }),
+      );
+      expect(tx.leaveBalance.update).toHaveBeenCalledWith({
+        where: { id: mockBalance.id },
+        data: { usedDays: { increment: 3 }, pendingDays: { decrement: 3 } },
+      });
+      expect(tx.attendanceRecord.upsert).toHaveBeenCalledTimes(3);
+      expect(prisma.leaveBalance.update).not.toHaveBeenCalled();
+      expect(prisma.attendanceRecord.upsert).not.toHaveBeenCalled();
+      expect(notifications.notifyEmployee).toHaveBeenCalledWith(
+        tenantId,
+        employeeId,
+        'LEAVE_APPROVED',
+        'Leave Request Approved',
+        expect.any(String),
+        '/leave',
+      );
+    });
+
+    it('records a null approverId when the approver has no employee record', async () => {
+      prisma.leaveRequest.findFirst.mockResolvedValue(mockLeaveRequest);
+      prisma.leaveRequest.update.mockResolvedValue({
+        ...mockLeaveRequest,
+        status: 'APPROVED',
+        leaveType: mockLeaveType,
+      });
+      prisma.leaveBalance.findMany.mockResolvedValue([]);
+
+      await service.approveRequest({ ...adminActor, employeeId: undefined }, 'req-1', {});
+
+      expect(prisma.leaveRequest.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ approverId: null }) }),
+      );
     });
 
     it('should allow SUPER_ADMIN to approve any request', async () => {
@@ -504,12 +694,7 @@ describe('LeaveService', () => {
       prisma.leaveBalance.update.mockResolvedValue({});
       prisma.attendanceRecord.upsert.mockResolvedValue({});
 
-      const result = await service.approveRequest(
-        tenantId,
-        'req-1',
-        'super-admin-emp',
-        'SUPER_ADMIN',
-        { approverNote: 'Approved' },
+      const result = await service.approveRequest(adminActor, 'req-1', { approverNote: 'Approved' },
       );
 
       expect(result.status).toBe('APPROVED');
@@ -536,7 +721,7 @@ describe('LeaveService', () => {
       prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
 
       await expect(
-        service.approveRequest(tenantId, 'req-1', approverId, 'SUPER_ADMIN', {}),
+        service.approveRequest(adminActor, 'req-1', {}),
       ).rejects.toThrow(ConflictException);
 
       expect(prisma.leaveBalance.update).not.toHaveBeenCalled();
@@ -572,7 +757,7 @@ describe('LeaveService', () => {
           expect(committed).toBe(true);
         });
 
-        await service.approveRequest(tenantId, 'req-1', approverId, 'MANAGER', {});
+        await service.approveRequest(managerActor, 'req-1', {});
 
         expect(webhooks.dispatch).toHaveBeenCalledTimes(1);
         expect(webhooks.dispatch).toHaveBeenCalledWith(tenantId, 'leave.approved', {
@@ -595,7 +780,7 @@ describe('LeaveService', () => {
       it('does not wait for webhook delivery before returning', async () => {
         webhooks.dispatch.mockReturnValue(new Promise(() => {}));
 
-        const result = await service.approveRequest(tenantId, 'req-1', approverId, 'MANAGER', {});
+        const result = await service.approveRequest(managerActor, 'req-1', {});
 
         expect(result.status).toBe('APPROVED');
         expect(webhooks.dispatch).toHaveBeenCalled();
@@ -610,7 +795,7 @@ describe('LeaveService', () => {
         );
 
         await expect(
-          service.approveRequest(tenantId, 'req-1', approverId, 'MANAGER', {}),
+          service.approveRequest(managerActor, 'req-1', {}),
         ).rejects.toThrow(ConflictException);
         expect(webhooks.dispatch).not.toHaveBeenCalled();
       });
@@ -628,7 +813,7 @@ describe('LeaveService', () => {
       prisma.leaveBalance.update.mockResolvedValue({});
       prisma.attendanceRecord.upsert.mockResolvedValue({});
 
-      await service.approveRequest(tenantId, 'req-1', approverId, 'MANAGER', {});
+      await service.approveRequest(managerActor, 'req-1', {});
 
       expect(prisma.leaveBalance.update).toHaveBeenCalledWith({
         where: { id: mockBalance.id },
@@ -651,7 +836,7 @@ describe('LeaveService', () => {
       prisma.leaveBalance.update.mockResolvedValue({});
       prisma.attendanceRecord.upsert.mockResolvedValue({});
 
-      await service.approveRequest(tenantId, 'req-1', approverId, 'MANAGER', {});
+      await service.approveRequest(managerActor, 'req-1', {});
 
       // 2025-03-10 (Mon), 2025-03-11 (Tue), 2025-03-12 (Wed) - all weekdays
       expect(prisma.attendanceRecord.upsert).toHaveBeenCalledTimes(3);
@@ -676,7 +861,7 @@ describe('LeaveService', () => {
         prisma.leaveBalance.update.mockResolvedValue({});
         prisma.attendanceRecord.upsert.mockResolvedValue({});
 
-        await service.approveRequest(tenantId, 'req-1', approverId, 'MANAGER', {});
+        await service.approveRequest(managerActor, 'req-1', {});
 
         const days = prisma.attendanceRecord.upsert.mock.calls.map(
           (c: any) => c[0].where.tenantId_employeeId_date.date,
@@ -707,7 +892,7 @@ describe('LeaveService', () => {
       prisma.leaveBalance.update.mockResolvedValue({});
       prisma.attendanceRecord.upsert.mockResolvedValue({});
 
-      await service.approveRequest(tenantId, 'req-1', approverId, 'MANAGER', {});
+      await service.approveRequest(managerActor, 'req-1', {});
 
       expect(notifications.notifyEmployee).toHaveBeenCalledWith(
         tenantId,
@@ -728,21 +913,43 @@ describe('LeaveService', () => {
       prisma.leaveRequest.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.rejectRequest(tenantId, 'req-404', approverId, 'MANAGER', {
+        service.rejectRequest(managerActor, 'req-404', {
           approverNote: 'rejected',
         }),
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('should throw ForbiddenException when MANAGER rejects non-direct report', async () => {
-      prisma.leaveRequest.findFirst.mockResolvedValue({
-        ...mockLeaveRequest,
-        employee: { id: employeeId, managerId: 'another-mgr' },
-      });
+    it('propagates the engine\'s 403 and releases nothing', async () => {
+      prisma.leaveRequest.findFirst.mockResolvedValue(mockLeaveRequest);
+      engine.act.mockRejectedValue(new ForbiddenException('not an approver'));
 
       await expect(
-        service.rejectRequest(tenantId, 'req-1', approverId, 'MANAGER', {}),
+        service.rejectRequest(managerActor, 'req-1', {}),
       ).rejects.toThrow(ForbiddenException);
+
+      expect(prisma.leaveBalance.update).not.toHaveBeenCalled();
+      expect(notifications.notifyEmployee).not.toHaveBeenCalled();
+    });
+
+    it('asks the engine to act with REJECT', async () => {
+      prisma.leaveRequest.findFirst.mockResolvedValue(mockLeaveRequest);
+      prisma.leaveRequest.update.mockResolvedValue({
+        ...mockLeaveRequest,
+        status: 'REJECTED',
+        leaveType: mockLeaveType,
+      });
+      prisma.leaveBalance.findMany.mockResolvedValue([]);
+
+      await service.rejectRequest(managerActor, 'req-1', { approverNote: 'no' });
+
+      expect(engine.act).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entityType: 'LEAVE',
+          entityId: 'req-1',
+          decision: 'REJECT',
+          note: 'no',
+        }),
+      );
     });
 
     it('should reject request and decrement pending days', async () => {
@@ -756,12 +963,7 @@ describe('LeaveService', () => {
       prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
       prisma.leaveBalance.update.mockResolvedValue({});
 
-      const result = await service.rejectRequest(
-        tenantId,
-        'req-1',
-        approverId,
-        'MANAGER',
-        { approverNote: 'Not enough coverage' },
+      const result = await service.rejectRequest(managerActor, 'req-1', { approverNote: 'Not enough coverage' },
       );
 
       expect(prisma.leaveRequest.update).toHaveBeenCalledWith({
@@ -792,7 +994,7 @@ describe('LeaveService', () => {
       prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
 
       await expect(
-        service.rejectRequest(tenantId, 'req-1', approverId, 'MANAGER', {}),
+        service.rejectRequest(managerActor, 'req-1', {}),
       ).rejects.toThrow(ConflictException);
 
       expect(prisma.leaveBalance.update).not.toHaveBeenCalled();
@@ -808,7 +1010,7 @@ describe('LeaveService', () => {
       });
       prisma.leaveBalance.findMany.mockResolvedValue([]);
 
-      await service.rejectRequest(tenantId, 'req-1', approverId, 'SUPER_ADMIN', {
+      await service.rejectRequest(adminActor, 'req-1', {
         approverNote: 'Denied',
       });
 
@@ -858,6 +1060,11 @@ describe('LeaveService', () => {
         where: { id: 'req-1', status: 'PENDING' },
         data: { status: 'CANCELLED' },
       });
+      expect(engine.cancel).toHaveBeenCalledWith(tenantId, 'LEAVE', 'req-1', prisma);
+      // Same lock order as approve: the approval instance before the request row.
+      expect(engine.cancel.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.leaveRequest.update.mock.invocationCallOrder[0],
+      );
       expect(prisma.leaveBalance.update).toHaveBeenCalledWith({
         where: { id: mockBalance.id },
         data: {

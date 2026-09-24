@@ -33,6 +33,13 @@ import {
 import { RejectLoanDto } from './dto/reject-loan.dto';
 import { RecordRepaymentDto } from './dto/record-repayment.dto';
 import { ListLoansDto } from './dto/list-loans.dto';
+import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
+import { ApprovalEngineService } from '../workflow/approval-engine.service';
+import { findUserIdForEmployee } from '../workflow/workflow.utils';
+import { WorkflowEntityContext } from '../workflow/workflow.types';
+
+/** Route of the per-flow approvals page for loans. */
+export const LOAN_APPROVALS_LINK = '/approvals/loans';
 
 /** Enough of an employee to name them in a queue without exposing the record. */
 const borrowerSelect = {
@@ -113,6 +120,7 @@ export class LoansService {
     private prisma: PrismaService,
     private notificationsService: NotificationsService,
     private webhookDispatcher: WebhookDispatcherService,
+    private workflow: ApprovalEngineService,
   ) {}
 
   private isAdmin(role: UserRole) {
@@ -220,37 +228,45 @@ export class LoansService {
     );
     const emiAmount = computeEmi(totalPayable, dto.tenureMonths);
 
-    const loan = await this.prisma.employeeLoan.create({
-      data: {
+    const requesterUserId = await findUserIdForEmployee(this.prisma, tenantId, employeeId);
+
+    const loan = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.employeeLoan.create({
+        data: {
+          tenantId,
+          employeeId,
+          type: dto.type,
+          principal: dto.principal,
+          interestRate,
+          tenureMonths: dto.tenureMonths,
+          emiAmount,
+          totalPayable,
+          // Nothing is owed until the money is disbursed, but the figure is
+          // fixed at request time so the approver sees what they are signing.
+          outstandingAmount: totalPayable,
+          startMonth: dto.startMonth,
+          startYear: dto.startYear,
+          purpose: dto.purpose,
+          status: LoanStatus.REQUESTED,
+        },
+        include: { employee: { select: borrowerSelect } },
+      });
+      await this.workflow.start({
         tenantId,
-        employeeId,
-        type: dto.type,
-        principal: dto.principal,
-        interestRate,
-        tenureMonths: dto.tenureMonths,
-        emiAmount,
-        totalPayable,
-        // Nothing is owed until the money is disbursed, but the figure is
-        // fixed at request time so the approver sees what they are signing.
-        outstandingAmount: totalPayable,
-        startMonth: dto.startMonth,
-        startYear: dto.startYear,
-        purpose: dto.purpose,
-        status: LoanStatus.REQUESTED,
-      },
-      include: { employee: { select: borrowerSelect } },
+        entityType: 'LOAN',
+        entityId: created.id,
+        context: {
+          requesterEmployeeId: employeeId,
+          requesterUserId,
+          amount: Number(dto.principal),
+        },
+        tx,
+      });
+      return created;
     });
 
-    await this.notificationsService.notifyByRole(
-      tenantId,
-      [UserRole.HR_ADMIN, UserRole.SUPER_ADMIN],
-      NotificationType.GENERAL,
-      'Loan request submitted',
-      `${loan.employee.firstName} ${loan.employee.lastName} requested ${
-        dto.type === LoanType.SALARY_ADVANCE ? 'a salary advance' : 'a loan'
-      }`,
-      '/approvals/loans',
-    );
+    // The approval engine tells the current step's approvers (HR by default).
+    void this.workflow.notifyPending(tenantId, 'LOAN', loan.id);
 
     return this.serialize(loan);
   }
@@ -270,10 +286,15 @@ export class LoansService {
     }
     this.assertTransition(loan.status, LoanStatus.CANCELLED);
 
-    const updated = await this.prisma.employeeLoan.update({
-      where: { id },
-      data: { status: LoanStatus.CANCELLED },
-      include: { employee: { select: borrowerSelect } },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      // Withdraw it from every approver's queue first: approve locks the
+      // approval instance before the domain row, so cancel does too.
+      await this.workflow.cancel(tenantId, 'LOAN', id, tx);
+      return tx.employeeLoan.update({
+        where: { id },
+        data: { status: LoanStatus.CANCELLED },
+        include: { employee: { select: borrowerSelect } },
+      });
     });
 
     return this.serialize(updated);
@@ -364,20 +385,46 @@ export class LoansService {
     });
   }
 
-  async approve(tenantId: string, id: string, approvedById: string) {
+  /**
+   * Approve through the approval engine, which decides who may act (HR by
+   * default, or the tenant's configured chain). An intermediate step leaves
+   * the loan REQUESTED; the last step makes it APPROVED inside the engine's
+   * transaction, and only then do the notification and webhook go out.
+   */
+  async approve(actor: AuthenticatedUser, id: string, note?: string | null) {
+    const { tenantId } = actor;
     const loan = await this.findOwnedOrFail(tenantId, id);
     this.assertTransition(loan.status, LoanStatus.APPROVED);
 
-    const updated = await this.prisma.employeeLoan.update({
-      where: { id },
-      data: {
-        status: LoanStatus.APPROVED,
-        approvedById,
-        approvedAt: new Date(),
-        rejectionReason: null,
+    let updated: any = null;
+    const result = await this.workflow.act({
+      tenantId,
+      entityType: 'LOAN',
+      entityId: id,
+      actor,
+      decision: 'APPROVE',
+      note,
+      onFinal: async (tx) => {
+        updated = await tx.employeeLoan.update({
+          where: { id },
+          data: {
+            status: LoanStatus.APPROVED,
+            approvedById: actor.userId,
+            approvedAt: new Date(),
+            rejectionReason: null,
+          },
+          include: { employee: { select: borrowerSelect } },
+        });
       },
-      include: { employee: { select: borrowerSelect } },
     });
+
+    if (result.outcome === 'ADVANCED') {
+      const pending = await this.prisma.employeeLoan.findFirst({
+        where: { id, tenantId },
+        include: { employee: { select: borrowerSelect } },
+      });
+      return this.serialize(pending ?? loan);
+    }
 
     await this.notificationsService.notifyEmployee(
       tenantId,
@@ -410,14 +457,36 @@ export class LoansService {
     return this.serialize(updated);
   }
 
-  async reject(tenantId: string, id: string, dto: RejectLoanDto) {
+  /**
+   * Reject through the approval engine. The reason is shown to the employee
+   * verbatim, so it is required on every route (the unified approvals
+   * endpoint passes it as the optional note, hence the check here).
+   */
+  async reject(actor: AuthenticatedUser, id: string, dto: RejectLoanDto) {
+    const { tenantId } = actor;
+    const reason = dto.reason?.trim();
+    if (!reason) {
+      throw new BadRequestException('A reason is required to reject a loan request');
+    }
+
     const loan = await this.findOwnedOrFail(tenantId, id);
     this.assertTransition(loan.status, LoanStatus.REJECTED);
 
-    const updated = await this.prisma.employeeLoan.update({
-      where: { id },
-      data: { status: LoanStatus.REJECTED, rejectionReason: dto.reason },
-      include: { employee: { select: borrowerSelect } },
+    let updated: any = null;
+    await this.workflow.act({
+      tenantId,
+      entityType: 'LOAN',
+      entityId: id,
+      actor,
+      decision: 'REJECT',
+      note: reason,
+      onFinal: async (tx) => {
+        updated = await tx.employeeLoan.update({
+          where: { id },
+          data: { status: LoanStatus.REJECTED, rejectionReason: reason },
+          include: { employee: { select: borrowerSelect } },
+        });
+      },
     });
 
     await this.notificationsService.notifyEmployee(
@@ -425,12 +494,30 @@ export class LoansService {
       loan.employeeId,
       NotificationType.LOAN_REJECTED,
       'Loan rejected',
-      dto.reason,
+      reason,
       '/loans',
     );
 
     return this.serialize(updated);
   }
+
+  /** Engine routing context of a REQUESTED loan; null otherwise. */
+  async getWorkflowContext(
+    tenantId: string,
+    id: string,
+  ): Promise<WorkflowEntityContext | null> {
+    const loan = await this.prisma.employeeLoan.findFirst({
+      where: { id, tenantId, status: LoanStatus.REQUESTED },
+      select: { employeeId: true, principal: true },
+    });
+    if (!loan) return null;
+    return {
+      requesterEmployeeId: loan.employeeId,
+      requesterUserId: await findUserIdForEmployee(this.prisma, tenantId, loan.employeeId),
+      amount: Number(loan.principal),
+    };
+  }
+
 
   /** Money out of the door: the loan becomes ACTIVE and payroll starts deducting. */
   async disburse(tenantId: string, id: string) {

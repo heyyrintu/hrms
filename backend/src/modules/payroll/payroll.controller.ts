@@ -201,7 +201,7 @@ export class PayrollController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
   ) {
-    return this.payrollService.processRun(user.tenantId, id);
+    return this.payrollService.processRun(user.tenantId, id, user.userId);
   }
 
   @Post('runs/:id/recompute')
@@ -224,7 +224,7 @@ export class PayrollController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
   ) {
-    return this.payrollService.recomputeRun(user.tenantId, id);
+    return this.payrollService.recomputeRun(user.tenantId, id, user.userId);
   }
 
   @Post('runs/:id/reset')
@@ -257,7 +257,7 @@ export class PayrollController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
   ) {
-    return this.payrollService.approveRun(user.tenantId, id);
+    return this.payrollService.approveRun(user.tenantId, id, user);
   }
 
   @Post('runs/:id/pay')

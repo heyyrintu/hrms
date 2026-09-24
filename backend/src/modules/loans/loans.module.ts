@@ -3,6 +3,8 @@ import { LoansService } from './loans.service';
 import { LoansController } from './loans.controller';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { WebhooksModule } from '../webhooks/webhooks.module';
+import { WorkflowModule } from '../workflow/workflow.module';
+import { LoanWorkflowHandler } from './loan-workflow.handler';
 
 /**
  * Employee loans and salary advances.
@@ -12,13 +14,14 @@ import { WebhooksModule } from '../webhooks/webhooks.module';
  * run's write transaction) and the exit settlement recovers what a leaver
  * still owes (`getOutstandingForSettlement` on compute,
  * `recordSettlementRepayments` on approval). PrismaModule is global, so only
- * notifications and webhooks are imported — which is what lets ExitModule
- * import this without a cycle.
+ * notifications, webhooks and the approval workflow are imported — which is
+ * what lets ExitModule import this without a cycle (WorkflowModule imports
+ * no domain module).
  */
 @Module({
-  imports: [NotificationsModule, WebhooksModule],
+  imports: [NotificationsModule, WebhooksModule, WorkflowModule],
   controllers: [LoansController],
-  providers: [LoansService],
+  providers: [LoansService, LoanWorkflowHandler],
   exports: [LoansService],
 })
 export class LoansModule {}

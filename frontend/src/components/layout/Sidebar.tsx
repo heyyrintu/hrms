@@ -53,6 +53,9 @@ import {
   LifeBuoy,
   Upload,
   SlidersHorizontal,
+  Inbox,
+  UserCheck,
+  Workflow,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -161,14 +164,16 @@ const sections: NavSection[] = [
       {
         name: 'Approvals',
         icon: <ClipboardCheck className="h-[18px] w-[18px]" />,
-        roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER],
+        // Everyone: a delegate or a named approver may hold any role.
         children: [
-          { name: 'OT Approvals', href: '/approvals/ot', icon: <Clock className="h-4 w-4" /> },
-          { name: 'Leave Approvals', href: '/approvals/leave', icon: <Calendar className="h-4 w-4" /> },
+          { name: 'My Approvals', href: '/approvals', icon: <Inbox className="h-4 w-4" /> },
+          { name: 'Delegations', href: '/approvals/delegations', icon: <UserCheck className="h-4 w-4" /> },
+          { name: 'OT Approvals', href: '/approvals/ot', icon: <Clock className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
+          { name: 'Leave Approvals', href: '/approvals/leave', icon: <Calendar className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
           { name: 'Change Requests', href: '/approvals/change-requests', icon: <GitPullRequest className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
-          { name: 'Expense Claims', href: '/approvals/expenses', icon: <Wallet className="h-4 w-4" /> },
-          { name: 'Comp-Off', href: '/approvals/comp-off', icon: <CalendarPlus className="h-4 w-4" /> },
-          { name: 'Regularization', href: '/approvals/regularization', icon: <ClipboardEdit className="h-4 w-4" /> },
+          { name: 'Expense Claims', href: '/approvals/expenses', icon: <Wallet className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
+          { name: 'Comp-Off', href: '/approvals/comp-off', icon: <CalendarPlus className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
+          { name: 'Regularization', href: '/approvals/regularization', icon: <ClipboardEdit className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
           { name: 'Loans', href: '/approvals/loans', icon: <Banknote className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
         ],
       },
@@ -189,6 +194,7 @@ const sections: NavSection[] = [
         icon: <Settings className="h-[18px] w-[18px]" />,
         roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN],
         children: [
+          { name: 'Approval Workflows', href: '/admin/workflows', icon: <Workflow className="h-4 w-4" /> },
           { name: 'Departments', href: '/admin/departments', icon: <Building2 className="h-4 w-4" /> },
           { name: 'Designations', href: '/admin/designations', icon: <Briefcase className="h-4 w-4" /> },
           { name: 'Branches', href: '/admin/branches', icon: <MapPin className="h-4 w-4" /> },

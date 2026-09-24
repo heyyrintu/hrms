@@ -158,7 +158,7 @@ export class LoansController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
   ) {
-    return this.loansService.approve(user.tenantId, id, user.userId);
+    return this.loansService.approve(user, id);
   }
 
   /**
@@ -177,7 +177,7 @@ export class LoansController {
     @Param('id') id: string,
     @Body() dto: RejectLoanDto,
   ) {
-    return this.loansService.reject(user.tenantId, id, dto);
+    return this.loansService.reject(user, id, dto);
   }
 
   /**

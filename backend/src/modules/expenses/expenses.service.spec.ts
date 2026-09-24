@@ -8,28 +8,68 @@ import {
 import { ExpensesService } from './expenses.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ApprovalEngineService } from '../workflow/approval-engine.service';
 import {
   createMockPrismaService,
   createMockNotificationsService,
 } from '../../test/helpers';
 
+const hrUser = {
+  userId: 'user-hr',
+  tenantId: 'tenant-1',
+  email: 'hr@test.com',
+  role: 'HR_ADMIN',
+  employeeId: 'emp-hr',
+} as any;
+
+const managerUser = {
+  userId: 'user-mgr',
+  tenantId: 'tenant-1',
+  email: 'mgr@test.com',
+  role: 'MANAGER',
+  employeeId: 'emp-mgr',
+} as any;
+
+function createMockEngine() {
+  return {
+    start: jest.fn().mockResolvedValue({ id: 'inst-1' }),
+    notifyPending: jest.fn().mockResolvedValue(undefined),
+    // Default: final approval — run onFinal with the (mock) transaction client.
+    act: jest.fn(),
+    cancel: jest.fn().mockResolvedValue(undefined),
+    listActionableEntityIds: jest.fn().mockResolvedValue([]),
+  };
+}
+
 describe('ExpensesService', () => {
   let service: ExpensesService;
   let prisma: any;
   let notifications: any;
+  let engine: ReturnType<typeof createMockEngine>;
 
   beforeEach(async () => {
+    engine = createMockEngine();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ExpensesService,
         { provide: PrismaService, useValue: createMockPrismaService() },
         { provide: NotificationsService, useValue: createMockNotificationsService() },
+        { provide: ApprovalEngineService, useValue: engine },
       ],
     }).compile();
 
     service = module.get<ExpensesService>(ExpensesService);
     prisma = module.get(PrismaService);
     notifications = module.get(NotificationsService);
+
+    engine.act.mockImplementation(async (input: any) => {
+      await input.onFinal?.(prisma);
+      return {
+        outcome: input.decision === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+        instanceId: 'inst-1',
+        nextStepOrder: null,
+      };
+    });
   });
 
   it('should be defined', () => {
@@ -386,25 +426,42 @@ describe('ExpensesService', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('should notify HR after submission', async () => {
+    it('should start the EXPENSE approval inside the transaction and notify after commit', async () => {
       prisma.expenseClaim.findFirst.mockResolvedValue({
         id: 'claim-1',
         employeeId: 'emp-1',
         status: 'DRAFT',
         amount: 100,
       });
+      prisma.user.findFirst.mockResolvedValue({ id: 'user-1' });
       prisma.expenseClaim.update.mockResolvedValue({ id: 'claim-1', status: 'SUBMITTED' });
 
       await service.submitClaim('tenant-1', 'emp-1', 'claim-1');
 
-      expect(notifications.notifyByRole).toHaveBeenCalledWith(
-        'tenant-1',
-        ['HR_ADMIN'],
-        expect.any(String),
-        'New Expense Claim Submitted',
-        expect.stringContaining('100'),
-        '/approvals/expenses',
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(engine.start).toHaveBeenCalledWith({
+        tenantId: 'tenant-1',
+        entityType: 'EXPENSE',
+        entityId: 'claim-1',
+        context: { requesterEmployeeId: 'emp-1', requesterUserId: 'user-1', amount: 100 },
+        tx: prisma,
+      });
+      expect(engine.notifyPending).toHaveBeenCalledWith('tenant-1', 'EXPENSE', 'claim-1');
+      // Routing notifications now come from the engine, not a blanket HR broadcast.
+      expect(notifications.notifyByRole).not.toHaveBeenCalled();
+    });
+
+    it('should not start an approval when the claim cannot be submitted', async () => {
+      prisma.expenseClaim.findFirst.mockResolvedValue({
+        id: 'claim-1',
+        employeeId: 'emp-1',
+        status: 'SUBMITTED',
+      });
+
+      await expect(service.submitClaim('tenant-1', 'emp-1', 'claim-1')).rejects.toThrow(
+        BadRequestException,
       );
+      expect(engine.start).not.toHaveBeenCalled();
     });
   });
 
@@ -452,32 +509,35 @@ describe('ExpensesService', () => {
   // ============================================
 
   describe('getPendingApprovals', () => {
-    it('should return pending approvals for HR', async () => {
+    it('should return every submitted claim for HR', async () => {
       prisma.expenseClaim.findMany.mockResolvedValue([]);
       prisma.expenseClaim.count.mockResolvedValue(0);
 
-      const result = await service.getPendingApprovals('tenant-1', 'emp-hr', 'HR_ADMIN', {});
+      const result = await service.getPendingApprovals(hrUser, {});
 
       expect(prisma.expenseClaim.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { tenantId: 'tenant-1', status: 'SUBMITTED' },
         }),
       );
+      expect(engine.listActionableEntityIds).not.toHaveBeenCalled();
       expect(result.meta).toEqual({ total: 0, page: 1, limit: 20, totalPages: 0 });
     });
 
-    it('should scope to direct reports for MANAGER role', async () => {
+    it('should scope non-admins to the claims the engine says they can act on', async () => {
+      engine.listActionableEntityIds.mockResolvedValue(['claim-7', 'claim-9']);
       prisma.expenseClaim.findMany.mockResolvedValue([]);
       prisma.expenseClaim.count.mockResolvedValue(0);
 
-      await service.getPendingApprovals('tenant-1', 'emp-mgr', 'MANAGER', {});
+      await service.getPendingApprovals(managerUser, {});
 
+      expect(engine.listActionableEntityIds).toHaveBeenCalledWith(managerUser, 'EXPENSE');
       expect(prisma.expenseClaim.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
             tenantId: 'tenant-1',
             status: 'SUBMITTED',
-            employee: { managerId: 'emp-mgr' },
+            id: { in: ['claim-7', 'claim-9'] },
           },
         }),
       );
@@ -508,18 +568,25 @@ describe('ExpensesService', () => {
       employeeId: 'emp-1',
       status: 'SUBMITTED',
       amount: 200,
-      employee: { id: 'emp-1', managerId: 'emp-mgr' },
     };
 
-    it('should approve a submitted claim', async () => {
+    it('should approve on the final step inside the engine transaction', async () => {
       prisma.expenseClaim.findFirst.mockResolvedValue(submittedClaim);
       const updated = { ...submittedClaim, status: 'APPROVED', approverId: 'emp-hr' };
       prisma.expenseClaim.update.mockResolvedValue(updated);
 
-      const result = await service.approveClaim(
-        'tenant-1', 'claim-1', 'emp-hr', 'HR_ADMIN', { approverNote: 'OK' },
-      );
+      const result = await service.approveClaim(hrUser, 'claim-1', { approverNote: 'OK' });
 
+      expect(engine.act).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant-1',
+          entityType: 'EXPENSE',
+          entityId: 'claim-1',
+          actor: hrUser,
+          decision: 'APPROVE',
+          note: 'OK',
+        }),
+      );
       expect(prisma.expenseClaim.update).toHaveBeenCalledWith({
         where: { id: 'claim-1' },
         data: {
@@ -529,35 +596,67 @@ describe('ExpensesService', () => {
           approvedAt: expect.any(Date),
         },
       });
+      expect(notifications.notifyEmployee).toHaveBeenCalledWith(
+        'tenant-1',
+        'emp-1',
+        expect.any(String),
+        'Expense Claim Approved',
+        expect.stringContaining('200'),
+        '/expenses',
+      );
       expect(result).toEqual(updated);
+    });
+
+    it('should leave the claim SUBMITTED and not notify when the engine ADVANCES', async () => {
+      prisma.expenseClaim.findFirst.mockResolvedValue(submittedClaim);
+      engine.act.mockResolvedValue({ outcome: 'ADVANCED', instanceId: 'inst-1', nextStepOrder: 2 });
+
+      const result = await service.approveClaim(managerUser, 'claim-1', {});
+
+      expect(prisma.expenseClaim.update).not.toHaveBeenCalled();
+      expect(notifications.notifyEmployee).not.toHaveBeenCalled();
+      expect(result).toEqual(submittedClaim);
+    });
+
+    it('should record a null approverId when the actor has no employee record', async () => {
+      prisma.expenseClaim.findFirst.mockResolvedValue(submittedClaim);
+      prisma.expenseClaim.update.mockResolvedValue({ ...submittedClaim, status: 'APPROVED' });
+
+      await service.approveClaim({ ...hrUser, employeeId: undefined }, 'claim-1', {});
+
+      expect(prisma.expenseClaim.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ approverId: null }) }),
+      );
     });
 
     it('should throw NotFoundException when claim not found or already processed', async () => {
       prisma.expenseClaim.findFirst.mockResolvedValue(null);
 
-      await expect(
-        service.approveClaim('tenant-1', 'missing', 'emp-hr', 'HR_ADMIN', {}),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.approveClaim(hrUser, 'missing', {})).rejects.toThrow(
+        NotFoundException,
+      );
+      expect(engine.act).not.toHaveBeenCalled();
     });
 
-    it('should throw ForbiddenException when manager is not the employee manager', async () => {
-      prisma.expenseClaim.findFirst.mockResolvedValue({
-        ...submittedClaim,
-        employee: { id: 'emp-1', managerId: 'other-manager' },
-      });
-
-      await expect(
-        service.approveClaim('tenant-1', 'claim-1', 'emp-mgr', 'MANAGER', {}),
-      ).rejects.toThrow(ForbiddenException);
-    });
-
-    it('should allow manager to approve their direct report claim', async () => {
+    it('should propagate the engine 403 for a non-approver', async () => {
       prisma.expenseClaim.findFirst.mockResolvedValue(submittedClaim);
-      prisma.expenseClaim.update.mockResolvedValue({ ...submittedClaim, status: 'APPROVED' });
+      engine.act.mockRejectedValue(
+        new ForbiddenException('You are not an approver for the current step of this request'),
+      );
 
-      await service.approveClaim('tenant-1', 'claim-1', 'emp-mgr', 'MANAGER', {});
+      await expect(service.approveClaim(managerUser, 'claim-1', {})).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(prisma.expenseClaim.update).not.toHaveBeenCalled();
+    });
 
-      expect(prisma.expenseClaim.update).toHaveBeenCalled();
+    it('should propagate the engine 409 on a concurrent approval', async () => {
+      prisma.expenseClaim.findFirst.mockResolvedValue(submittedClaim);
+      engine.act.mockRejectedValue(new ConflictException('This request was already actioned'));
+
+      await expect(service.approveClaim(hrUser, 'claim-1', {})).rejects.toThrow(
+        ConflictException,
+      );
     });
   });
 
@@ -568,18 +667,20 @@ describe('ExpensesService', () => {
       employeeId: 'emp-1',
       status: 'SUBMITTED',
       amount: 200,
-      employee: { id: 'emp-1', managerId: 'emp-mgr' },
     };
 
-    it('should reject a submitted claim', async () => {
+    it('should reject a submitted claim through the engine', async () => {
       prisma.expenseClaim.findFirst.mockResolvedValue(submittedClaim);
       const updated = { ...submittedClaim, status: 'REJECTED' };
       prisma.expenseClaim.update.mockResolvedValue(updated);
 
-      const result = await service.rejectClaim(
-        'tenant-1', 'claim-1', 'emp-hr', 'HR_ADMIN', { approverNote: 'Invalid receipt' },
-      );
+      const result = await service.rejectClaim(hrUser, 'claim-1', {
+        approverNote: 'Invalid receipt',
+      });
 
+      expect(engine.act).toHaveBeenCalledWith(
+        expect.objectContaining({ entityType: 'EXPENSE', decision: 'REJECT', note: 'Invalid receipt' }),
+      );
       expect(prisma.expenseClaim.update).toHaveBeenCalledWith({
         where: { id: 'claim-1' },
         data: {
@@ -588,18 +689,49 @@ describe('ExpensesService', () => {
           approverNote: 'Invalid receipt',
         },
       });
+      expect(notifications.notifyEmployee).toHaveBeenCalledWith(
+        'tenant-1',
+        'emp-1',
+        expect.any(String),
+        'Expense Claim Rejected',
+        expect.stringContaining('Invalid receipt'),
+        '/expenses',
+      );
       expect(result).toEqual(updated);
     });
 
-    it('should throw ForbiddenException for manager not managing the employee', async () => {
-      prisma.expenseClaim.findFirst.mockResolvedValue({
-        ...submittedClaim,
-        employee: { id: 'emp-1', managerId: 'other-manager' },
-      });
+    it('should propagate the engine 403 for a non-approver', async () => {
+      prisma.expenseClaim.findFirst.mockResolvedValue(submittedClaim);
+      engine.act.mockRejectedValue(new ForbiddenException('nope'));
 
-      await expect(
-        service.rejectClaim('tenant-1', 'claim-1', 'emp-mgr', 'MANAGER', {}),
-      ).rejects.toThrow(ForbiddenException);
+      await expect(service.rejectClaim(managerUser, 'claim-1', {})).rejects.toThrow(
+        ForbiddenException,
+      );
+      expect(notifications.notifyEmployee).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getWorkflowContext', () => {
+    it('should return routing context for a submitted claim', async () => {
+      prisma.expenseClaim.findFirst.mockResolvedValue({ employeeId: 'emp-1', amount: '250.50' });
+      prisma.user.findFirst.mockResolvedValue({ id: 'user-1' });
+
+      await expect(service.getWorkflowContext('tenant-1', 'claim-1')).resolves.toEqual({
+        requesterEmployeeId: 'emp-1',
+        requesterUserId: 'user-1',
+        amount: 250.5,
+      });
+      expect(prisma.expenseClaim.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'claim-1', tenantId: 'tenant-1', status: 'SUBMITTED' },
+        }),
+      );
+    });
+
+    it('should return null when the claim is not awaiting approval', async () => {
+      prisma.expenseClaim.findFirst.mockResolvedValue(null);
+
+      await expect(service.getWorkflowContext('tenant-1', 'claim-1')).resolves.toBeNull();
     });
   });
 

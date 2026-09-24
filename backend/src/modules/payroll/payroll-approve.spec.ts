@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { PayrollRunStatus, Prisma } from '@prisma/client';
@@ -13,6 +14,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { createMockPrismaService } from '../../test/helpers';
 import { LoansService } from '../loans/loans.service';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
+import { ApprovalEngineService } from '../workflow/approval-engine.service';
 
 /**
  * approveRun's side effects: payslip emails and the `payroll.approved`
@@ -27,6 +29,16 @@ describe('PayrollService.approveRun side effects', () => {
   let prisma: any;
   let payslipEmail: { notifyRunApproved: jest.Mock };
   let webhooks: { dispatch: jest.Mock };
+  let engine: { act: jest.Mock; start: jest.Mock; cancel: jest.Mock; notifyPending: jest.Mock };
+
+  /** The checker: an HR admin who did not compute the run. */
+  const checker = {
+    userId: 'user-checker',
+    tenantId,
+    email: 'checker@test.com',
+    role: 'HR_ADMIN',
+    employeeId: 'emp-checker',
+  } as any;
 
   const computedRun = {
     id: 'run-1',
@@ -48,6 +60,14 @@ describe('PayrollService.approveRun side effects', () => {
   beforeEach(async () => {
     payslipEmail = { notifyRunApproved: jest.fn().mockResolvedValue(undefined) };
     webhooks = { dispatch: jest.fn().mockResolvedValue(undefined) };
+    engine = {
+      start: jest.fn(),
+      cancel: jest.fn(),
+      notifyPending: jest.fn(),
+      // Default: single-step chain, so this is the final approval and onFinal
+      // runs inside the (mock) engine transaction.
+      act: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -57,11 +77,16 @@ describe('PayrollService.approveRun side effects', () => {
         { provide: LoansService, useValue: {} },
         { provide: PayslipEmailService, useValue: payslipEmail },
         { provide: WebhookDispatcherService, useValue: webhooks },
+        { provide: ApprovalEngineService, useValue: engine },
       ],
     }).compile();
 
     service = module.get(PayrollService);
     prisma = module.get(PrismaService);
+    engine.act.mockImplementation(async (input: any) => {
+      await input.onFinal?.(prisma);
+      return { outcome: 'APPROVED', instanceId: 'inst-1', nextStepOrder: null };
+    });
   });
 
   it('notifies employees only after the status update has resolved', async () => {
@@ -78,7 +103,7 @@ describe('PayrollService.approveRun side effects', () => {
       order.push('webhook');
     });
 
-    const result = await service.approveRun(tenantId, 'run-1');
+    const result = await service.approveRun(tenantId, 'run-1', checker);
 
     expect(result).toEqual(approvedRun);
     expect(order[0]).toBe('update');
@@ -89,7 +114,7 @@ describe('PayrollService.approveRun side effects', () => {
     prisma.payrollRun.findFirst.mockResolvedValue(computedRun);
     prisma.payrollRun.update.mockResolvedValue(approvedRun);
 
-    await service.approveRun(tenantId, 'run-1');
+    await service.approveRun(tenantId, 'run-1', checker);
 
     expect(webhooks.dispatch).toHaveBeenCalledWith(tenantId, 'payroll.approved', {
       runId: 'run-1',
@@ -110,7 +135,7 @@ describe('PayrollService.approveRun side effects', () => {
     payslipEmail.notifyRunApproved.mockReturnValue(new Promise(() => {}));
     webhooks.dispatch.mockReturnValue(new Promise(() => {}));
 
-    await expect(service.approveRun(tenantId, 'run-1')).resolves.toEqual(approvedRun);
+    await expect(service.approveRun(tenantId, 'run-1', checker)).resolves.toEqual(approvedRun);
   });
 
   it('still approves when email or webhook rejects', async () => {
@@ -119,7 +144,7 @@ describe('PayrollService.approveRun side effects', () => {
     payslipEmail.notifyRunApproved.mockRejectedValue(new Error('smtp down'));
     webhooks.dispatch.mockRejectedValue(new Error('webhook down'));
 
-    await expect(service.approveRun(tenantId, 'run-1')).resolves.toEqual(approvedRun);
+    await expect(service.approveRun(tenantId, 'run-1', checker)).resolves.toEqual(approvedRun);
     // Let the rejected promises settle so an unhandled rejection would surface.
     await new Promise((r) => setImmediate(r));
   });
@@ -134,13 +159,13 @@ describe('PayrollService.approveRun side effects', () => {
       throw new Error('boom');
     });
 
-    await expect(service.approveRun(tenantId, 'run-1')).resolves.toEqual(approvedRun);
+    await expect(service.approveRun(tenantId, 'run-1', checker)).resolves.toEqual(approvedRun);
   });
 
   it('sends nothing when the run is not found', async () => {
     prisma.payrollRun.findFirst.mockResolvedValue(null);
 
-    await expect(service.approveRun(tenantId, 'run-1')).rejects.toThrow(NotFoundException);
+    await expect(service.approveRun(tenantId, 'run-1', checker)).rejects.toThrow(NotFoundException);
     expect(payslipEmail.notifyRunApproved).not.toHaveBeenCalled();
     expect(webhooks.dispatch).not.toHaveBeenCalled();
   });
@@ -151,7 +176,7 @@ describe('PayrollService.approveRun side effects', () => {
       status: PayrollRunStatus.APPROVED,
     });
 
-    await expect(service.approveRun(tenantId, 'run-1')).rejects.toThrow(BadRequestException);
+    await expect(service.approveRun(tenantId, 'run-1', checker)).rejects.toThrow(BadRequestException);
     expect(prisma.payrollRun.update).not.toHaveBeenCalled();
     expect(payslipEmail.notifyRunApproved).not.toHaveBeenCalled();
     expect(webhooks.dispatch).not.toHaveBeenCalled();
@@ -171,8 +196,8 @@ describe('PayrollService.approveRun side effects', () => {
       );
 
     const [first, second] = await Promise.allSettled([
-      service.approveRun(tenantId, 'run-1'),
-      service.approveRun(tenantId, 'run-1'),
+      service.approveRun(tenantId, 'run-1', checker),
+      service.approveRun(tenantId, 'run-1', checker),
     ]);
 
     expect(first.status).toBe('fulfilled');
@@ -193,8 +218,66 @@ describe('PayrollService.approveRun side effects', () => {
     prisma.payrollRun.findFirst.mockResolvedValue(computedRun);
     prisma.payrollRun.update.mockRejectedValue(new Error('db down'));
 
-    await expect(service.approveRun(tenantId, 'run-1')).rejects.toThrow('db down');
+    await expect(service.approveRun(tenantId, 'run-1', checker)).rejects.toThrow('db down');
     expect(payslipEmail.notifyRunApproved).not.toHaveBeenCalled();
     expect(webhooks.dispatch).not.toHaveBeenCalled();
+  });
+
+  describe('maker-checker through the approval engine', () => {
+    it('approves through engine.act with the PAYROLL_RUN entity type', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(computedRun);
+      prisma.payrollRun.update.mockResolvedValue(approvedRun);
+
+      await service.approveRun(tenantId, 'run-1', checker, 'figures checked');
+
+      expect(engine.act).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId,
+          entityType: 'PAYROLL_RUN',
+          entityId: 'run-1',
+          actor: checker,
+          decision: 'APPROVE',
+          note: 'figures checked',
+        }),
+      );
+    });
+
+    it('propagates the engine 403 when the maker tries to approve, with no side effects', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(computedRun);
+      engine.act.mockRejectedValue(
+        new ForbiddenException('The person who computed a payroll run cannot approve it'),
+      );
+
+      await expect(
+        service.approveRun(tenantId, 'run-1', { ...checker, userId: 'user-maker' }),
+      ).rejects.toThrow('The person who computed a payroll run cannot approve it');
+      expect(prisma.payrollRun.update).not.toHaveBeenCalled();
+      expect(payslipEmail.notifyRunApproved).not.toHaveBeenCalled();
+      expect(webhooks.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('keeps the run COMPUTED with no side effects when a multi-level chain advances', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(computedRun);
+      engine.act.mockResolvedValue({ outcome: 'ADVANCED', instanceId: 'inst-1', nextStepOrder: 2 });
+
+      const result = await service.approveRun(tenantId, 'run-1', checker);
+
+      expect(result).toEqual(computedRun);
+      expect(prisma.payrollRun.update).not.toHaveBeenCalled();
+      expect(payslipEmail.notifyRunApproved).not.toHaveBeenCalled();
+      expect(webhooks.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('does not reach the engine for a run that is not COMPUTED', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        ...computedRun,
+        status: PayrollRunStatus.PROCESSING,
+      });
+
+      await expect(service.approveRun(tenantId, 'run-1', checker)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(engine.act).not.toHaveBeenCalled();
+    });
   });
 });

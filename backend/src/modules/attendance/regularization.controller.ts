@@ -49,6 +49,7 @@ export class RegularizationController {
       user.tenantId,
       user.employeeId,
       dto,
+      user.userId,
     );
   }
 
@@ -85,11 +86,7 @@ export class RegularizationController {
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.MANAGER, UserRole.HR_ADMIN, UserRole.SUPER_ADMIN)
   async getPendingApprovals(@CurrentUser() user: AuthenticatedUser) {
-    return this.regularizationService.getPendingApprovals(
-      user.tenantId,
-      user.employeeId,
-      user.role,
-    );
+    return this.regularizationService.getPendingApprovals(user);
   }
 
   /**
@@ -125,13 +122,7 @@ export class RegularizationController {
     @Param('id') id: string,
     @Body() dto: ApproveRegularizationDto,
   ) {
-    return this.regularizationService.approve(
-      user.tenantId,
-      id,
-      user.employeeId,
-      user.role,
-      dto,
-    );
+    return this.regularizationService.approve(user, id, dto);
   }
 
   /**
@@ -150,12 +141,6 @@ export class RegularizationController {
     @Param('id') id: string,
     @Body() dto: ApproveRegularizationDto,
   ) {
-    return this.regularizationService.reject(
-      user.tenantId,
-      id,
-      user.employeeId,
-      user.role,
-      dto,
-    );
+    return this.regularizationService.reject(user, id, dto);
   }
 }

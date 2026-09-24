@@ -96,10 +96,7 @@ export class LeaveController {
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
   async getPendingApprovals(@CurrentUser() user: AuthenticatedUser) {
-    if (!user.employeeId) {
-      throw new BadRequestException('User is not linked to an employee');
-    }
-    return this.leaveService.getPendingApprovals(user.tenantId, user.employeeId);
+    return this.leaveService.getPendingApprovals(user);
   }
 
   /**
@@ -117,7 +114,7 @@ export class LeaveController {
     if (!user.employeeId) {
       throw new BadRequestException('User is not linked to an employee');
     }
-    return this.leaveService.createRequest(user.tenantId, user.employeeId, dto);
+    return this.leaveService.createRequest(user.tenantId, user.employeeId, dto, user.userId);
   }
 
   /**
@@ -155,10 +152,7 @@ export class LeaveController {
     @Param('id') id: string,
     @Body() dto: ApproveLeaveDto,
   ) {
-    if (!user.employeeId) {
-      throw new BadRequestException('User is not linked to an employee');
-    }
-    return this.leaveService.approveRequest(user.tenantId, id, user.employeeId, user.role, dto);
+    return this.leaveService.approveRequest(user, id, dto);
   }
 
   /**
@@ -177,10 +171,7 @@ export class LeaveController {
     @Param('id') id: string,
     @Body() dto: RejectLeaveDto,
   ) {
-    if (!user.employeeId) {
-      throw new BadRequestException('User is not linked to an employee');
-    }
-    return this.leaveService.rejectRequest(user.tenantId, id, user.employeeId, user.role, dto);
+    return this.leaveService.rejectRequest(user, id, dto);
   }
 
   // ==========================================

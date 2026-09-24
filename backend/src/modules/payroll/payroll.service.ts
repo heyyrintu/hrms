@@ -12,7 +12,7 @@ import {
   PayrollRunQueryDto,
   PayslipQueryDto,
 } from './dto/payroll.dto';
-import { PayrollRunStatus, Prisma, UserRole } from '@prisma/client';
+import { PayrollRun, PayrollRunStatus, Prisma, UserRole } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { isPrismaError, PRISMA_RECORD_NOT_FOUND } from '../../common/utils/prisma-errors';
 import {
@@ -31,6 +31,9 @@ import {
 const PAYROLL_WRITE_TX_OPTIONS = { maxWait: 10_000, timeout: 60_000 };
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import { PayslipEmailService } from './payslip-email.service';
+import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
+import { ApprovalEngineService } from '../workflow/approval-engine.service';
+import { WorkflowEntityContext } from '../workflow/workflow.types';
 
 @Injectable()
 export class PayrollService {
@@ -42,6 +45,7 @@ export class PayrollService {
     private loansService: LoansService,
     private payslipEmailService: PayslipEmailService,
     private webhookDispatcher: WebhookDispatcherService,
+    private workflow: ApprovalEngineService,
   ) {}
 
   // ============================================
@@ -114,7 +118,11 @@ export class PayrollService {
     });
   }
 
-  async processRun(tenantId: string, id: string) {
+  /**
+   * `userId` is the maker: it is stored as `processedById` and, through the
+   * PAYROLL_RUN approval (maker-checker), may not approve the run.
+   */
+  async processRun(tenantId: string, id: string, userId: string) {
     const run = await this.prisma.payrollRun.findFirst({
       where: { id, tenantId },
     });
@@ -248,7 +256,7 @@ export class PayrollService {
           results,
         );
 
-        return tx.payrollRun.update({
+        const computed = await tx.payrollRun.update({
           where: { id },
           data: {
             status: PayrollRunStatus.COMPUTED,
@@ -257,15 +265,19 @@ export class PayrollService {
             totalNet,
             processedCount: results.length,
             processedAt: new Date(),
+            processedById: userId,
           },
           include: {
             _count: { select: { payslips: true } },
           },
         });
+        await this.startApproval(tx, tenantId, id, userId, totalNet);
+        return computed;
       }, PAYROLL_WRITE_TX_OPTIONS);
 
       // Only now that it has committed can a borrower be told a loan closed.
       await this.loansService.notifyLoansClosed(tenantId, closedLoans);
+      void this.workflow.notifyPending(tenantId, 'PAYROLL_RUN', id);
 
       return publishedRun;
     } catch (error) {
@@ -292,7 +304,7 @@ export class PayrollService {
    * history. A DRAFT run has nothing computed yet to recompute — it is
    * processed via processRun instead.
    */
-  async recomputeRun(tenantId: string, id: string) {
+  async recomputeRun(tenantId: string, id: string, userId: string) {
     const run = await this.prisma.payrollRun.findFirst({
       where: { id, tenantId },
     });
@@ -455,7 +467,7 @@ export class PayrollService {
         // calculating; publishing on the id alone would recreate payslips on a
         // run somebody deliberately emptied. A refusal here rolls the loan
         // reversal and re-recording above back with it.
-        return tx.payrollRun.update({
+        const recomputed = await tx.payrollRun.update({
           where: { id, status: PayrollRunStatus.PROCESSING },
           data: {
             status: PayrollRunStatus.COMPUTED,
@@ -464,14 +476,20 @@ export class PayrollService {
             totalNet,
             processedCount: results.length,
             processedAt: new Date(),
+            processedById: userId,
           },
           include: {
             _count: { select: { payslips: true } },
           },
         });
+        // New figures need a fresh sign-off: restart the approval (round + 1)
+        // with whoever recomputed as the maker.
+        await this.startApproval(tx, tenantId, id, userId, totalNet);
+        return recomputed;
       }, PAYROLL_WRITE_TX_OPTIONS);
 
       await this.loansService.notifyLoansClosed(tenantId, closedLoans);
+      void this.workflow.notifyPending(tenantId, 'PAYROLL_RUN', id);
 
       // Tell the caller what actually changed, not just that it succeeded.
       return {
@@ -531,6 +549,11 @@ export class PayrollService {
     }
 
     return this.prisma.$transaction(async (tx) => {
+      // An approval left pending by an earlier compute has nothing to sign
+      // off any more; the next process starts a new round. Cancelled first:
+      // approve locks the approval instance before the run, so this does too.
+      await this.workflow.cancel(tenantId, 'PAYROLL_RUN', id, tx);
+
       // Loan instalments the abandoned attempt managed to record are reversed
       // too, in the same transaction that discards their payslips. A
       // repayment with no payslip behind it is money taken off a loan that
@@ -623,7 +646,18 @@ export class PayrollService {
     return closed;
   }
 
-  async approveRun(tenantId: string, id: string) {
+  /**
+   * Checker step of maker-checker, through the approval engine: the engine
+   * authorizes the actor (HR by default) and refuses whoever computed the run
+   * (403) unless the tenant's PAYROLL_RUN workflow allows self-approval. On
+   * an intermediate step of a multi-level chain the run stays COMPUTED.
+   */
+  async approveRun(
+    tenantId: string,
+    id: string,
+    actor: AuthenticatedUser,
+    note?: string | null,
+  ) {
     const run = await this.prisma.payrollRun.findFirst({
       where: { id, tenantId },
     });
@@ -634,25 +668,42 @@ export class PayrollService {
       );
     }
 
-    // Conditional on the status just checked: two concurrent approvals both
-    // pass the check above, but only one can move COMPUTED -> APPROVED. The
-    // other matches no row (P2025) and gets a 409 — and, crucially, never
-    // reaches the side effects below, so payslips are emailed and the
-    // webhook fires once.
-    let approved;
-    try {
-      approved = await this.prisma.payrollRun.update({
-        where: { id, tenantId, status: PayrollRunStatus.COMPUTED },
-        data: {
-          status: PayrollRunStatus.APPROVED,
-          approvedAt: new Date(),
-        },
-      });
-    } catch (err) {
-      if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
-        throw new ConflictException('Payroll run is already being approved');
-      }
-      throw err;
+    // Assigned inside onFinal; the cast stops TS narrowing it to null here.
+    let approved = null as PayrollRun | null;
+    const result = await this.workflow.act({
+      tenantId,
+      entityType: 'PAYROLL_RUN',
+      entityId: id,
+      actor,
+      decision: 'APPROVE',
+      note,
+      onFinal: async (tx) => {
+        // Conditional on the status just checked: two concurrent approvals
+        // both pass the check above, but only one can move COMPUTED ->
+        // APPROVED. The other matches no row (P2025) and gets a 409, which
+        // rolls its recorded action back — and, crucially, never reaches the
+        // side effects below, so payslips are emailed and the webhook fires
+        // once. A recompute that claimed the run (PROCESSING) meanwhile is
+        // refused the same way.
+        try {
+          approved = await tx.payrollRun.update({
+            where: { id, tenantId, status: PayrollRunStatus.COMPUTED },
+            data: {
+              status: PayrollRunStatus.APPROVED,
+              approvedAt: new Date(),
+            },
+          });
+        } catch (err) {
+          if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
+            throw new ConflictException('Payroll run is already being approved');
+          }
+          throw err;
+        }
+      },
+    });
+
+    if (result.outcome === 'ADVANCED' || !approved) {
+      return run;
     }
 
     // This call won the approval and it has committed. Everything below is
@@ -661,6 +712,45 @@ export class PayrollService {
     this.afterApproval(tenantId, approved);
 
     return approved;
+  }
+
+  /** Engine routing context of a COMPUTED run; null otherwise. */
+  async getWorkflowContext(
+    tenantId: string,
+    id: string,
+  ): Promise<WorkflowEntityContext | null> {
+    const run = await this.prisma.payrollRun.findFirst({
+      where: { id, tenantId, status: PayrollRunStatus.COMPUTED },
+      select: { processedById: true, totalNet: true },
+    });
+    if (!run) return null;
+    return {
+      requesterEmployeeId: null,
+      // Null for runs computed before maker-checker: not restricted.
+      requesterUserId: run.processedById ?? null,
+      amount: Number(run.totalNet),
+    };
+  }
+
+  /** (Re)start the PAYROLL_RUN approval inside the compute's write transaction. */
+  private startApproval(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    id: string,
+    userId: string,
+    totalNet: Decimal,
+  ) {
+    return this.workflow.start({
+      tenantId,
+      entityType: 'PAYROLL_RUN',
+      entityId: id,
+      context: {
+        requesterEmployeeId: null,
+        requesterUserId: userId,
+        amount: totalNet.toNumber(),
+      },
+      tx,
+    });
   }
 
   /** Fire-and-forget side effects of an approval. Never throws. */
@@ -756,6 +846,8 @@ export class PayrollService {
     // transaction as the delete, so neither can happen without the other.
     // All writes together: a half-deleted run would leave orphaned payslips.
     await this.prisma.$transaction(async (tx) => {
+      // Approval instance first: approve locks it before the run.
+      await this.workflow.cancel(tenantId, 'PAYROLL_RUN', id, tx);
       await this.loansService.clearPayrollRepayments(
         tenantId,
         run.month,

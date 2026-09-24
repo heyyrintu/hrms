@@ -3,7 +3,6 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -11,7 +10,10 @@ import { EmailService } from '../../common/email/email.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { HolidaysService } from '../holidays/holidays.service';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
-import { NotificationType } from '@prisma/client';
+import { NotificationType, Prisma, UserRole, WorkflowEntityType } from '@prisma/client';
+import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
+import { ApprovalEngineService } from '../workflow/approval-engine.service';
+import { findUserIdForEmployee } from '../workflow/workflow.utils';
 import {
   CreateLeaveRequestDto,
   ApproveLeaveDto,
@@ -29,6 +31,16 @@ import {
   DEFAULT_ATTENDANCE_TIME_ZONE,
 } from '../attendance/rules/late-mark';
 
+/** Relations the approve/reject endpoints have always returned. */
+const LEAVE_REQUEST_RELATIONS = {
+  leaveType: true,
+  employee: true,
+} satisfies Prisma.LeaveRequestInclude;
+
+type LeaveRequestWithRelations = Prisma.LeaveRequestGetPayload<{
+  include: typeof LEAVE_REQUEST_RELATIONS;
+}>;
+
 @Injectable()
 export class LeaveService {
   private readonly logger = new Logger(LeaveService.name);
@@ -39,6 +51,7 @@ export class LeaveService {
     private notificationsService: NotificationsService,
     private holidaysService: HolidaysService,
     private webhookDispatcher: WebhookDispatcherService,
+    private workflow: ApprovalEngineService,
   ) {}
 
   /**
@@ -63,7 +76,12 @@ export class LeaveService {
   /**
    * Create a leave request
    */
-  async createRequest(tenantId: string, employeeId: string, dto: CreateLeaveRequestDto) {
+  async createRequest(
+    tenantId: string,
+    employeeId: string,
+    dto: CreateLeaveRequestDto,
+    requesterUserId?: string | null,
+  ) {
     const startDate = new Date(dto.startDate);
     const endDate = new Date(dto.endDate);
 
@@ -145,45 +163,70 @@ export class LeaveService {
       }
     }
 
-    // Create leave request
-    const request = await this.prisma.leaveRequest.create({
-      data: {
-        tenantId,
-        employeeId,
-        leaveTypeId: dto.leaveTypeId,
-        startDate,
-        endDate,
-        totalDays,
-        reason: dto.reason,
-        isHalfDay: dto.isHalfDay || false,
-        halfDayPeriod: dto.isHalfDay ? (dto.halfDayPeriod as any) : null,
-        status: 'PENDING',
-      },
-      include: {
-        leaveType: true,
-        employee: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            employeeCode: true,
+    const userId =
+      requesterUserId !== undefined
+        ? requesterUserId
+        : await findUserIdForEmployee(this.prisma, tenantId, employeeId);
+
+    // Creation, the balance reservation and the approval instance are one
+    // unit, so a request can never exist without the chain that routes it.
+    const request = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.leaveRequest.create({
+        data: {
+          tenantId,
+          employeeId,
+          leaveTypeId: dto.leaveTypeId,
+          startDate,
+          endDate,
+          totalDays,
+          reason: dto.reason,
+          isHalfDay: dto.isHalfDay || false,
+          halfDayPeriod: dto.isHalfDay ? (dto.halfDayPeriod as any) : null,
+          status: 'PENDING',
+        },
+        include: {
+          leaveType: true,
+          employee: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              employeeCode: true,
+            },
           },
         },
-      },
+      });
+
+      // Reserve the days against each year's balance
+      for (const [year, days] of daysByYear) {
+        const balance = balanceByYear.get(year);
+        if (balance) {
+          await tx.leaveBalance.update({
+            where: { id: balance.id },
+            data: {
+              pendingDays: { increment: days },
+            },
+          });
+        }
+      }
+
+      await this.workflow.start({
+        tenantId,
+        entityType: WorkflowEntityType.LEAVE,
+        entityId: created.id,
+        context: {
+          requesterEmployeeId: employeeId,
+          requesterUserId: userId,
+          days: totalDays,
+        },
+        tx,
+      });
+
+      return created;
     });
 
-    // Reserve the days against each year's balance
-    for (const [year, days] of daysByYear) {
-      const balance = balanceByYear.get(year);
-      if (balance) {
-        await this.prisma.leaveBalance.update({
-          where: { id: balance.id },
-          data: {
-            pendingDays: { increment: days },
-          },
-        });
-      }
-    }
+    // The instance committed with the request; tell step-1 approvers now.
+    void this.workflow.notifyPending(tenantId, WorkflowEntityType.LEAVE, request.id);
 
     // Email the manager about new leave request (fire and forget)
     const employee = await this.prisma.employee.findUnique({
@@ -274,27 +317,23 @@ export class LeaveService {
   }
 
   /**
-   * Get pending approvals for a manager
+   * Leave requests awaiting the viewer's approval. HR_ADMIN and SUPER_ADMIN
+   * see every pending request; everyone else sees what the approval engine
+   * says they can act on now (their step, delegations, leave cover).
    */
-  async getPendingApprovals(tenantId: string, managerId: string) {
-    // Get direct reports
-    const directReports = await this.prisma.employee.findMany({
-      where: {
-        tenantId,
-        managerId,
-        status: 'ACTIVE',
-      },
-      select: { id: true },
-    });
+  async getPendingApprovals(actor: AuthenticatedUser) {
+    const where: Prisma.LeaveRequestWhereInput = {
+      tenantId: actor.tenantId,
+      status: 'PENDING',
+    };
 
-    const employeeIds = directReports.map((e) => e.id);
+    if (!this.isAdmin(actor)) {
+      const ids = await this.workflow.listActionableEntityIds(actor, WorkflowEntityType.LEAVE);
+      where.id = { in: ids };
+    }
 
     return this.prisma.leaveRequest.findMany({
-      where: {
-        tenantId,
-        employeeId: { in: employeeIds },
-        status: 'PENDING',
-      },
+      where,
       orderBy: { createdAt: 'asc' },
       include: {
         leaveType: true,
@@ -312,97 +351,92 @@ export class LeaveService {
   }
 
   /**
-   * Approve a leave request
+   * Approve a leave request.
+   *
+   * Authorization comes from the approval engine. On the last step the status
+   * transition, balance confirmation and LEAVE attendance rows run inside the
+   * engine's transaction (onFinal); on an intermediate step the request stays
+   * PENDING and none of the "approved" side effects fire.
    */
   async approveRequest(
-    tenantId: string,
+    actor: AuthenticatedUser,
     requestId: string,
-    approverId: string,
-    approverRole: string,
-    dto: ApproveLeaveDto,
+    dto: ApproveLeaveDto = {},
   ) {
+    const tenantId = actor.tenantId;
+    const approverId = actor.employeeId ?? null;
+
     const request = await this.prisma.leaveRequest.findFirst({
       where: { id: requestId, tenantId, status: 'PENDING' },
-      include: {
-        employee: {
-          select: {
-            id: true,
-            managerId: true,
-          },
-        },
-      },
     });
 
     if (!request) {
       throw new NotFoundException('Leave request not found or already processed');
     }
 
-    // Authorization check: Managers can only approve their direct reports' leaves
-    if (approverRole === 'MANAGER') {
-      if (request.employee.managerId !== approverId) {
-        throw new ForbiddenException(
-          'You can only approve leave requests for your direct reports',
-        );
-      }
-    }
-    // SUPER_ADMIN and HR_ADMIN can approve any leave request
-
     // Same per-year split that was reserved when the request was created.
     const daysByYear = await this.storedRequestDaysByYear(tenantId, request);
 
-    // Transition + balance adjustment are atomic, and the transition only
-    // succeeds if the request is still PENDING, so a concurrent approve/reject
-    // cannot apply the balance change twice.
-    const updated = await this.prisma.$transaction(async (tx) => {
-      let transitioned;
-      try {
-        transitioned = await tx.leaveRequest.update({
-          where: { id: requestId, status: 'PENDING' },
-          data: {
-            status: 'APPROVED',
-            approverId,
-            approverNote: dto.approverNote,
-            approvedAt: new Date(),
-          },
-          include: {
-            leaveType: true,
-            employee: true,
+    const final: { row?: LeaveRequestWithRelations } = {};
+    const result = await this.workflow.act({
+      tenantId,
+      entityType: WorkflowEntityType.LEAVE,
+      entityId: requestId,
+      actor,
+      decision: 'APPROVE',
+      note: dto.approverNote ?? null,
+      // Transition + balance adjustment are atomic with the recorded action,
+      // and the transition only succeeds if the request is still PENDING, so a
+      // concurrent approve/reject cannot apply the balance change twice.
+      onFinal: async (tx) => {
+        const transitioned = await this.transitionPending(tx, requestId, {
+          status: 'APPROVED',
+          approverId,
+          approverNote: dto.approverNote,
+          approvedAt: new Date(),
+        });
+
+        // Confirm the same per-year split that was reserved at creation.
+        const balances = await tx.leaveBalance.findMany({
+          where: {
+            tenantId,
+            employeeId: request.employeeId,
+            leaveTypeId: request.leaveTypeId,
+            year: { in: [...daysByYear.keys()] },
           },
         });
-      } catch (err) {
-        if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
-          throw new ConflictException('Leave request has already been processed');
+
+        for (const balance of balances) {
+          const days = daysByYear.get(balance.year) ?? 0;
+          if (days === 0) continue;
+          await tx.leaveBalance.update({
+            where: { id: balance.id },
+            data: {
+              usedDays: { increment: days },
+              pendingDays: { decrement: days },
+            },
+          });
         }
-        throw err;
-      }
 
-      // Confirm the same per-year split that was reserved at creation.
-      const balances = await tx.leaveBalance.findMany({
-        where: {
+        // Mark attendance as LEAVE for the leave dates
+        await this.markAttendanceAsLeave(
+          tx,
           tenantId,
-          employeeId: request.employeeId,
-          leaveTypeId: request.leaveTypeId,
-          year: { in: [...daysByYear.keys()] },
-        },
-      });
+          request.employeeId,
+          request.startDate,
+          request.endDate,
+        );
 
-      for (const balance of balances) {
-        const days = daysByYear.get(balance.year) ?? 0;
-        if (days === 0) continue;
-        await tx.leaveBalance.update({
-          where: { id: balance.id },
-          data: {
-            usedDays: { increment: days },
-            pendingDays: { decrement: days },
-          },
-        });
-      }
-
-      return transitioned;
+        final.row = transitioned;
+      },
     });
 
-    // Mark attendance as LEAVE for the leave dates
-    await this.markAttendanceAsLeave(tenantId, request.employeeId, request.startDate, request.endDate);
+    if (result.outcome === 'ADVANCED' || !final.row) {
+      // An intermediate step: still PENDING, awaiting the next approver.
+      return this.findRequestWithRelations(tenantId, requestId);
+    }
+
+    const updated = final.row;
 
     // The approval has committed, so tell subscribed webhooks. Not awaited on
     // purpose: dispatch never rejects, but it retries a failing endpoint with
@@ -453,89 +487,73 @@ export class LeaveService {
   }
 
   /**
-   * Reject a leave request
+   * Reject a leave request. Authorization comes from the approval engine; the
+   * transition and the release of the reserved days run inside its transaction.
    */
   async rejectRequest(
-    tenantId: string,
+    actor: AuthenticatedUser,
     requestId: string,
-    approverId: string,
-    approverRole: string,
-    dto: RejectLeaveDto,
+    dto: RejectLeaveDto = {},
   ) {
+    const tenantId = actor.tenantId;
+    const approverId = actor.employeeId ?? null;
+
     const request = await this.prisma.leaveRequest.findFirst({
       where: { id: requestId, tenantId, status: 'PENDING' },
-      include: {
-        employee: {
-          select: {
-            id: true,
-            managerId: true,
-          },
-        },
-      },
     });
 
     if (!request) {
       throw new NotFoundException('Leave request not found or already processed');
     }
 
-    // Authorization check: Managers can only reject their direct reports' leaves
-    if (approverRole === 'MANAGER') {
-      if (request.employee.managerId !== approverId) {
-        throw new ForbiddenException(
-          'You can only reject leave requests for your direct reports',
-        );
-      }
-    }
-    // SUPER_ADMIN and HR_ADMIN can reject any leave request
-
     // Same per-year split that was reserved when the request was created.
     const daysByYear = await this.storedRequestDaysByYear(tenantId, request);
 
-    const updated = await this.prisma.$transaction(async (tx) => {
-      let transitioned;
-      try {
-        transitioned = await tx.leaveRequest.update({
-          where: { id: requestId, status: 'PENDING' },
-          data: {
-            status: 'REJECTED',
-            approverId,
-            approverNote: dto.approverNote,
-          },
-          include: {
-            leaveType: true,
-            employee: true,
+    const final: { row?: LeaveRequestWithRelations } = {};
+    const result = await this.workflow.act({
+      tenantId,
+      entityType: WorkflowEntityType.LEAVE,
+      entityId: requestId,
+      actor,
+      decision: 'REJECT',
+      note: dto.approverNote ?? null,
+      onFinal: async (tx) => {
+        const transitioned = await this.transitionPending(tx, requestId, {
+          status: 'REJECTED',
+          approverId,
+          approverNote: dto.approverNote,
+        });
+
+        // Release the same per-year reservation that was taken at creation.
+        const balances = await tx.leaveBalance.findMany({
+          where: {
+            tenantId,
+            employeeId: request.employeeId,
+            leaveTypeId: request.leaveTypeId,
+            year: { in: [...daysByYear.keys()] },
           },
         });
-      } catch (err) {
-        if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
-          throw new ConflictException('Leave request has already been processed');
+
+        for (const balance of balances) {
+          const days = daysByYear.get(balance.year) ?? 0;
+          if (days === 0) continue;
+          await tx.leaveBalance.update({
+            where: { id: balance.id },
+            data: {
+              pendingDays: { decrement: days },
+            },
+          });
         }
-        throw err;
-      }
 
-      // Release the same per-year reservation that was taken at creation.
-      const balances = await tx.leaveBalance.findMany({
-        where: {
-          tenantId,
-          employeeId: request.employeeId,
-          leaveTypeId: request.leaveTypeId,
-          year: { in: [...daysByYear.keys()] },
-        },
-      });
-
-      for (const balance of balances) {
-        const days = daysByYear.get(balance.year) ?? 0;
-        if (days === 0) continue;
-        await tx.leaveBalance.update({
-          where: { id: balance.id },
-          data: {
-            pendingDays: { decrement: days },
-          },
-        });
-      }
-
-      return transitioned;
+        final.row = transitioned;
+      },
     });
+
+    if (result.outcome === 'ADVANCED' || !final.row) {
+      return this.findRequestWithRelations(tenantId, requestId);
+    }
+
+    const updated = final.row;
 
     // Notify the employee (in-app + email)
     this.notificationsService.notifyEmployee(
@@ -588,6 +606,10 @@ export class LeaveService {
     const daysByYear = await this.storedRequestDaysByYear(tenantId, request);
 
     return this.prisma.$transaction(async (tx) => {
+      // Withdraw it from every approver's queue first: approve locks the
+      // approval instance before the domain row, so cancel does too.
+      await this.workflow.cancel(tenantId, WorkflowEntityType.LEAVE, requestId, tx);
+
       let transitioned;
       try {
         transitioned = await tx.leaveRequest.update({
@@ -624,6 +646,51 @@ export class LeaveService {
 
       return transitioned;
     });
+  }
+
+
+  private isAdmin(actor: AuthenticatedUser): boolean {
+    return actor.role === UserRole.HR_ADMIN || actor.role === UserRole.SUPER_ADMIN;
+  }
+
+  /** Reload a request in the shape the approve/reject endpoints return. */
+  private async findRequestWithRelations(tenantId: string, requestId: string) {
+    const row = await this.prisma.leaveRequest.findFirst({
+      where: { id: requestId, tenantId },
+      include: LEAVE_REQUEST_RELATIONS,
+    });
+    if (!row) {
+      throw new NotFoundException('Leave request not found');
+    }
+    return row;
+  }
+
+  /**
+   * Move a PENDING request to a terminal status. The where-clause includes the
+   * status, so a concurrent reviewer gets a 409 instead of a double balance change.
+   */
+  private async transitionPending(
+    tx: Prisma.TransactionClient,
+    requestId: string,
+    data: {
+      status: 'APPROVED' | 'REJECTED';
+      approverId: string | null;
+      approverNote?: string;
+      approvedAt?: Date;
+    },
+  ): Promise<LeaveRequestWithRelations> {
+    try {
+      return await tx.leaveRequest.update({
+        where: { id: requestId, status: 'PENDING' },
+        data,
+        include: LEAVE_REQUEST_RELATIONS,
+      });
+    } catch (err) {
+      if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
+        throw new ConflictException('Leave request has already been processed');
+      }
+      throw err;
+    }
   }
 
   /**
@@ -833,6 +900,7 @@ export class LeaveService {
    * Mark attendance records as LEAVE for approved leave dates
    */
   private async markAttendanceAsLeave(
+    client: Prisma.TransactionClient,
     tenantId: string,
     employeeId: string,
     startDate: Date,
@@ -852,7 +920,7 @@ export class LeaveService {
       if (dayOfWeek !== 0 && dayOfWeek !== 6) {
         const dateOnly = zonedDateOnlyUtc(current, DEFAULT_ATTENDANCE_TIME_ZONE);
 
-        await this.prisma.attendanceRecord.upsert({
+        await client.attendanceRecord.upsert({
           where: {
             tenantId_employeeId_date: {
               tenantId,
