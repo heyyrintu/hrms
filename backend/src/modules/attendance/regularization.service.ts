@@ -23,6 +23,7 @@ import {
 } from '@prisma/client';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { ApprovalEngineService } from '../workflow/approval-engine.service';
+import { findUserIdForEmployee } from '../workflow/workflow.utils';
 import { zonedDateOnlyUtc, DEFAULT_ATTENDANCE_TIME_ZONE } from './rules/late-mark';
 import { classifyWorkedDay } from './rules/day-classification';
 import { AttendancePolicyService } from './policy/attendance-policy.service';
@@ -117,7 +118,7 @@ export class RegularizationService {
     const userId =
       requesterUserId !== undefined
         ? requesterUserId
-        : await this.resolveRequesterUserId(tenantId, employeeId);
+        : await findUserIdForEmployee(this.prisma, tenantId, employeeId);
 
     // The request and its approval instance are created together, so a
     // request can never sit PENDING with no chain to route it.
@@ -406,17 +407,6 @@ export class RegularizationService {
     return final.row;
   }
 
-  /**
-   * The user account linked to an employee, used as the requester for the
-   * self-approval rule. Null when the employee has no login.
-   */
-  async resolveRequesterUserId(tenantId: string, employeeId: string): Promise<string | null> {
-    const user = await this.prisma.user.findFirst({
-      where: { tenantId, employeeId },
-      select: { id: true },
-    });
-    return user?.id ?? null;
-  }
 
   /**
    * Rewrite the day's attendance record to the approved clock times. Runs in

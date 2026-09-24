@@ -9,6 +9,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType, Prisma, UserRole, WorkflowEntityType } from '@prisma/client';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { ApprovalEngineService } from '../workflow/approval-engine.service';
+import { findUserIdForEmployee } from '../workflow/workflow.utils';
 import { isPrismaError, PRISMA_RECORD_NOT_FOUND } from '../../common/utils/prisma-errors';
 
 /** Either the root client or a transaction-scoped one, so helpers work in both. */
@@ -113,7 +114,7 @@ export class CompOffService {
     const userId =
       requesterUserId !== undefined
         ? requesterUserId
-        : await this.resolveRequesterUserId(tenantId, employeeId);
+        : await findUserIdForEmployee(this.prisma, tenantId, employeeId);
 
     // The request and its approval instance are created together, so a
     // request can never sit PENDING with no chain to route it.
@@ -372,17 +373,6 @@ export class CompOffService {
     return final.row;
   }
 
-  /**
-   * The user account linked to an employee, used as the requester for the
-   * self-approval rule. Null when the employee has no login.
-   */
-  async resolveRequesterUserId(tenantId: string, employeeId: string): Promise<string | null> {
-    const user = await this.prisma.user.findFirst({
-      where: { tenantId, employeeId },
-      select: { id: true },
-    });
-    return user?.id ?? null;
-  }
 
   /** Reload a request in the shape the approve/reject endpoints return. */
   private async findWithRelations(tenantId: string, id: string) {

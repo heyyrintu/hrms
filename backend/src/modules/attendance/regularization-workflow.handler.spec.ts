@@ -10,7 +10,6 @@ describe('RegularizationWorkflowHandler', () => {
   let regularizationService: {
     approve: jest.Mock;
     reject: jest.Mock;
-    resolveRequesterUserId: jest.Mock;
   };
   let handler: RegularizationWorkflowHandler;
 
@@ -28,8 +27,8 @@ describe('RegularizationWorkflowHandler', () => {
     regularizationService = {
       approve: jest.fn().mockResolvedValue({}),
       reject: jest.fn().mockResolvedValue({}),
-      resolveRequesterUserId: jest.fn().mockResolvedValue('user-emp'),
     };
+    prisma.user.findFirst.mockResolvedValue({ id: 'user-emp' });
     handler = new RegularizationWorkflowHandler(
       prisma,
       registry as any,
@@ -55,7 +54,10 @@ describe('RegularizationWorkflowHandler', () => {
         requesterUserId: 'user-emp',
         days: null,
       });
-      expect(regularizationService.resolveRequesterUserId).toHaveBeenCalledWith(tenantId, 'emp-1');
+      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+        where: { tenantId, employeeId: 'emp-1' },
+        select: { id: true },
+      });
     });
 
     it('returns null unless the request is PENDING', async () => {

@@ -13,6 +13,7 @@ import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service
 import { NotificationType, Prisma, UserRole, WorkflowEntityType } from '@prisma/client';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { ApprovalEngineService } from '../workflow/approval-engine.service';
+import { findUserIdForEmployee } from '../workflow/workflow.utils';
 import {
   CreateLeaveRequestDto,
   ApproveLeaveDto,
@@ -165,7 +166,7 @@ export class LeaveService {
     const userId =
       requesterUserId !== undefined
         ? requesterUserId
-        : await this.resolveRequesterUserId(tenantId, employeeId);
+        : await findUserIdForEmployee(this.prisma, tenantId, employeeId);
 
     // Creation, the balance reservation and the approval instance are one
     // unit, so a request can never exist without the chain that routes it.
@@ -646,17 +647,6 @@ export class LeaveService {
     });
   }
 
-  /**
-   * The user account linked to an employee, used as the requester for the
-   * self-approval rule. Null when the employee has no login.
-   */
-  async resolveRequesterUserId(tenantId: string, employeeId: string): Promise<string | null> {
-    const user = await this.prisma.user.findFirst({
-      where: { tenantId, employeeId },
-      select: { id: true },
-    });
-    return user?.id ?? null;
-  }
 
   private isAdmin(actor: AuthenticatedUser): boolean {
     return actor.role === UserRole.HR_ADMIN || actor.role === UserRole.SUPER_ADMIN;

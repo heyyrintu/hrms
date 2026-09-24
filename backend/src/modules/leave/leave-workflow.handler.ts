@@ -3,6 +3,7 @@ import { WorkflowEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { WorkflowRegistry } from '../workflow/workflow-registry.service';
+import { findUserIdForEmployee } from '../workflow/workflow.utils';
 import {
   WorkflowEntityContext,
   WorkflowEntityHandler,
@@ -48,7 +49,7 @@ export class LeaveWorkflowHandler implements WorkflowEntityHandler, OnModuleInit
     }
     return {
       requesterEmployeeId: request.employeeId,
-      requesterUserId: await this.leaveService.resolveRequesterUserId(tenantId, request.employeeId),
+      requesterUserId: await findUserIdForEmployee(this.prisma, tenantId, request.employeeId),
       days: Number(request.totalDays),
     };
   }

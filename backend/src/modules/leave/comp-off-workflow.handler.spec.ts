@@ -7,7 +7,7 @@ describe('CompOffWorkflowHandler', () => {
   const tenantId = 'test-tenant';
   let prisma: any;
   let registry: { register: jest.Mock };
-  let compOffService: { approve: jest.Mock; reject: jest.Mock; resolveRequesterUserId: jest.Mock };
+  let compOffService: { approve: jest.Mock; reject: jest.Mock };
   let handler: CompOffWorkflowHandler;
 
   const actor: AuthenticatedUser = {
@@ -23,8 +23,8 @@ describe('CompOffWorkflowHandler', () => {
     compOffService = {
       approve: jest.fn().mockResolvedValue({}),
       reject: jest.fn().mockResolvedValue({}),
-      resolveRequesterUserId: jest.fn().mockResolvedValue(null),
     };
+    prisma.user.findFirst.mockResolvedValue(null);
     handler = new CompOffWorkflowHandler(prisma, registry as any, compOffService as any);
   });
 

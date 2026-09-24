@@ -35,6 +35,7 @@ import { RecordRepaymentDto } from './dto/record-repayment.dto';
 import { ListLoansDto } from './dto/list-loans.dto';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { ApprovalEngineService } from '../workflow/approval-engine.service';
+import { findUserIdForEmployee } from '../workflow/workflow.utils';
 import { WorkflowEntityContext } from '../workflow/workflow.types';
 
 /** Route of the per-flow approvals page for loans. */
@@ -227,7 +228,7 @@ export class LoansService {
     );
     const emiAmount = computeEmi(totalPayable, dto.tenureMonths);
 
-    const requesterUserId = await this.userIdOfEmployee(tenantId, employeeId);
+    const requesterUserId = await findUserIdForEmployee(this.prisma, tenantId, employeeId);
 
     const loan = await this.prisma.$transaction(async (tx) => {
       const created = await tx.employeeLoan.create({
@@ -511,18 +512,11 @@ export class LoansService {
     if (!loan) return null;
     return {
       requesterEmployeeId: loan.employeeId,
-      requesterUserId: await this.userIdOfEmployee(tenantId, loan.employeeId),
+      requesterUserId: await findUserIdForEmployee(this.prisma, tenantId, loan.employeeId),
       amount: Number(loan.principal),
     };
   }
 
-  private async userIdOfEmployee(tenantId: string, employeeId: string): Promise<string | null> {
-    const user = await this.prisma.user.findFirst({
-      where: { tenantId, employeeId },
-      select: { id: true },
-    });
-    return user?.id ?? null;
-  }
 
   /** Money out of the door: the loan becomes ACTIVE and payroll starts deducting. */
   async disburse(tenantId: string, id: string) {

@@ -10,7 +10,6 @@ describe('LeaveWorkflowHandler', () => {
   let leaveService: {
     approveRequest: jest.Mock;
     rejectRequest: jest.Mock;
-    resolveRequesterUserId: jest.Mock;
   };
   let handler: LeaveWorkflowHandler;
 
@@ -28,8 +27,8 @@ describe('LeaveWorkflowHandler', () => {
     leaveService = {
       approveRequest: jest.fn().mockResolvedValue({ id: 'req-1' }),
       rejectRequest: jest.fn().mockResolvedValue({ id: 'req-1' }),
-      resolveRequesterUserId: jest.fn().mockResolvedValue('user-emp'),
     };
+    prisma.user.findFirst.mockResolvedValue({ id: 'user-emp' });
     handler = new LeaveWorkflowHandler(prisma, registry as any, leaveService as any);
   });
 
@@ -52,7 +51,10 @@ describe('LeaveWorkflowHandler', () => {
       expect(prisma.leaveRequest.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 'req-1', tenantId } }),
       );
-      expect(leaveService.resolveRequesterUserId).toHaveBeenCalledWith(tenantId, 'emp-1');
+      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+        where: { tenantId, employeeId: 'emp-1' },
+        select: { id: true },
+      });
       expect(ctx).toEqual({ requesterEmployeeId: 'emp-1', requesterUserId: 'user-emp', days: 2.5 });
     });
 

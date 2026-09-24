@@ -18,6 +18,7 @@ import {
 import { ExpenseClaimStatus, NotificationType, UserRole } from '@prisma/client';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { ApprovalEngineService } from '../workflow/approval-engine.service';
+import { findUserIdForEmployee } from '../workflow/workflow.utils';
 import { WorkflowEntityContext } from '../workflow/workflow.types';
 
 /** Route of the per-flow approvals page for expense claims. */
@@ -219,7 +220,7 @@ export class ExpensesService {
       throw new BadRequestException('Only DRAFT claims can be submitted');
     }
 
-    const requesterUserId = await this.userIdOfEmployee(tenantId, employeeId);
+    const requesterUserId = await findUserIdForEmployee(this.prisma, tenantId, employeeId);
 
     // The status change and the approval instance commit together; step-1
     // approvers are notified by the engine once the transaction is done.
@@ -482,7 +483,7 @@ export class ExpensesService {
     if (!claim) return null;
     return {
       requesterEmployeeId: claim.employeeId,
-      requesterUserId: await this.userIdOfEmployee(tenantId, claim.employeeId),
+      requesterUserId: await findUserIdForEmployee(this.prisma, tenantId, claim.employeeId),
       amount: Number(claim.amount),
     };
   }
@@ -497,11 +498,4 @@ export class ExpensesService {
     return claim;
   }
 
-  private async userIdOfEmployee(tenantId: string, employeeId: string): Promise<string | null> {
-    const user = await this.prisma.user.findFirst({
-      where: { tenantId, employeeId },
-      select: { id: true },
-    });
-    return user?.id ?? null;
-  }
 }

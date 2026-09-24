@@ -3,6 +3,7 @@ import { RegularizationStatus, WorkflowEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { WorkflowRegistry } from '../workflow/workflow-registry.service';
+import { findUserIdForEmployee } from '../workflow/workflow.utils';
 import {
   WorkflowEntityContext,
   WorkflowEntityHandler,
@@ -38,7 +39,8 @@ export class RegularizationWorkflowHandler implements WorkflowEntityHandler, OnM
     }
     return {
       requesterEmployeeId: request.employeeId,
-      requesterUserId: await this.regularizationService.resolveRequesterUserId(
+      requesterUserId: await findUserIdForEmployee(
+        this.prisma,
         tenantId,
         request.employeeId,
       ),
