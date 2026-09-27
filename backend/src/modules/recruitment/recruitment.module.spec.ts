@@ -47,7 +47,12 @@ describe('RecruitmentModule', () => {
   it('compiles and registers the JOB_REQUISITION and OFFER handlers', async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }), ThrottlerModule.forRoot([]), GlobalStubsModule, RecruitmentModule],
-    }).compile();
+    })
+      // LettersModule imports PrismaModule itself, which would build a real
+      // client (and need DATABASE_URL); replace every PrismaService instance.
+      .overrideProvider(PrismaService)
+      .useValue(createMockPrismaService())
+      .compile();
     await moduleRef.init();
 
     const registry = moduleRef.get(WorkflowRegistry);
