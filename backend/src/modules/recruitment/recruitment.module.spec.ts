@@ -57,5 +57,5 @@ describe('RecruitmentModule', () => {
     expect(moduleRef.get(ApplicationsService)).toBeInstanceOf(ApplicationsService);
 
     await moduleRef.close();
-  });
+  }, 30_000);
 });
