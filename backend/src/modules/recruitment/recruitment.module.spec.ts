@@ -1,3 +1,4 @@
+import { ThrottlerModule } from '@nestjs/throttler';
 import { Global, Module } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
@@ -45,7 +46,7 @@ class GlobalStubsModule {}
 describe('RecruitmentModule', () => {
   it('compiles and registers the JOB_REQUISITION and OFFER handlers', async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }), GlobalStubsModule, RecruitmentModule],
+      imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }), ThrottlerModule.forRoot([]), GlobalStubsModule, RecruitmentModule],
     }).compile();
     await moduleRef.init();
 
