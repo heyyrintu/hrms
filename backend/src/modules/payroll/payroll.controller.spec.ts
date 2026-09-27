@@ -21,6 +21,7 @@ const mockPayrollService = {
   getRuns: jest.fn(),
   getRun: jest.fn(),
   createRun: jest.fn(),
+  createOffCycleRun: jest.fn(),
   processRun: jest.fn(),
   recomputeRun: jest.fn(),
   approveRun: jest.fn(),
@@ -72,6 +73,18 @@ describe('PayrollController', () => {
 
   it('should be defined', () => {
     expect(controller).toBeDefined();
+  });
+
+  describe('createOffCycleRun (Keka wave C)', () => {
+    it("creates the off-cycle run for the caller's tenant", async () => {
+      const dto = { month: 10, year: 2026, reason: 'Bonus', includeSalary: false, employeeIds: ['emp-1'] };
+      payrollService.createOffCycleRun.mockResolvedValue({ id: 'run-oc', sequence: 1 });
+
+      const result = await controller.createOffCycleRun(adminUser, dto);
+
+      expect(payrollService.createOffCycleRun).toHaveBeenCalledWith('tenant-1', dto);
+      expect(result).toEqual({ id: 'run-oc', sequence: 1 });
+    });
   });
 
   // ============================================
