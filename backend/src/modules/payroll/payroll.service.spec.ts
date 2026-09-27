@@ -13,6 +13,7 @@ import { LoansService } from '../loans/loans.service';
 import { PayslipEmailService } from './payslip-email.service';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import { ApprovalEngineService } from '../workflow/approval-engine.service';
+import { createRunInputMocks } from './adjustments/run-inputs.testing';
 import { PayrollRunStatus, Prisma, UserRole } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 
@@ -69,6 +70,8 @@ describe('PayrollService', () => {
         { provide: PayslipEmailService, useValue: { notifyRunApproved: jest.fn().mockResolvedValue(undefined) } },
         { provide: WebhookDispatcherService, useValue: { dispatch: jest.fn().mockResolvedValue(undefined) } },
         { provide: ApprovalEngineService, useValue: engine },
+        // Keka wave C collaborators: nothing attached to any run.
+        ...createRunInputMocks().providers,
       ],
     }).compile();
 
@@ -101,7 +104,8 @@ describe('PayrollService', () => {
 
       expect(prisma.payrollRun.findMany).toHaveBeenCalledWith({
         where: { tenantId },
-        orderBy: [{ year: 'desc' }, { month: 'desc' }],
+        // The month's regular run (sequence 0) before its off-cycle runs.
+        orderBy: [{ year: 'desc' }, { month: 'desc' }, { sequence: 'asc' }],
         include: { _count: { select: { payslips: true } } },
       });
       expect(result).toEqual(mockRuns);
@@ -816,9 +820,10 @@ describe('PayrollService', () => {
 
       const result = await service.markAsPaid(tenantId, 'run-1');
 
+      // Guarded on APPROVED and stamped with when the money moved (wave C).
       expect(prisma.payrollRun.update).toHaveBeenCalledWith({
-        where: { id: 'run-1' },
-        data: { status: PayrollRunStatus.PAID },
+        where: { id: 'run-1', status: PayrollRunStatus.APPROVED },
+        data: { status: PayrollRunStatus.PAID, paidAt: expect.any(Date) },
       });
       expect(result).toEqual(paid);
     });

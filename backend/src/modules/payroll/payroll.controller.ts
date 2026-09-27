@@ -27,6 +27,7 @@ import {
   UpdateSalaryStructureDto,
   AssignSalaryDto,
   CreatePayrollRunDto,
+  CreateOffCycleRunDto,
   PayrollRunQueryDto,
   PayslipQueryDto,
 } from './dto/payroll.dto';
@@ -188,6 +189,25 @@ export class PayrollController {
     @Body() dto: CreatePayrollRunDto,
   ) {
     return this.payrollService.createRun(user.tenantId, dto);
+  }
+
+  @Post('runs/off-cycle')
+  @ApiOperation({
+    summary: 'Create an off-cycle payroll run',
+    description:
+      'A DRAFT run for up to 500 employees, numbered after the month\'s other off-cycle runs. It pays arrears, one-time payments, released holds, reimbursements and settlements; with includeSalary it also pays the month\'s salary (refused for anyone the regular run already paid). It never deducts loans, professional tax or LWF.',
+  })
+  @ApiResponse({ status: 201, description: 'Created' })
+  @ApiResponse({ status: 400, description: 'Invalid scope or reason' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 409, description: 'Concurrent create took the run number' })
+  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  async createOffCycleRun(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CreateOffCycleRunDto,
+  ) {
+    return this.payrollService.createOffCycleRun(user.tenantId, dto);
   }
 
   @Post('runs/:id/process')
