@@ -595,5 +595,25 @@ describe('ReturnsService', () => {
         'E001 (Asha Rao): skipped from the bank transfer file, net pay is not positive',
       ]);
     });
+
+    it('leaves out an employee whose salary is held in the run, whatever became of the hold', async () => {
+      // HELD: not paid yet. VOIDED: never paid. RELEASED: paid by another run.
+      prisma.payslip.findMany.mockResolvedValue([payslipA(), payslipB()]);
+      prisma.salaryHold.findMany.mockResolvedValue([{ employeeId: 'emp-b', status: 'RELEASED' }]);
+
+      const file = await service.bankTransferFile(TENANT, RUN_ID);
+
+      expect(prisma.salaryHold.findMany).toHaveBeenCalledWith({
+        where: { tenantId: TENANT, payrollRunId: RUN_ID },
+        select: { employeeId: true, status: true },
+      });
+      expect(file.content.split('\n')).toEqual([
+        'Beneficiary Name,Account Number,IFSC,Amount,Reference',
+        'Asha Rao,000123456789,HDFC0000123,27300.00,SAL-052026-E001',
+      ]);
+      expect(file.warnings).toEqual([
+        'E002 (Bo, Jr Singh): skipped from the bank transfer file, salary is held (RELEASED)',
+      ]);
+    });
   });
 });

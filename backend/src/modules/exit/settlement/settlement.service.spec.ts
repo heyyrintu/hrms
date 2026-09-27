@@ -1162,12 +1162,27 @@ describe('SettlementService', () => {
 
       const result: any = await service.markPaid(TENANT, 'stl-1');
 
+      // Guarded on not being carried by a payroll run (Keka wave C).
       expect(prisma.settlement.update.mock.calls[0][0].where).toEqual({
         id: 'stl-1',
         status: 'APPROVED',
+        payrollRunId: null,
       });
       expect(result.status).toBe('PAID');
       expect(result.paidAt).toBeInstanceOf(Date);
+    });
+
+    it('refuses a settlement an off-cycle payroll run is paying', async () => {
+      prisma.settlement.findFirst.mockResolvedValue({
+        id: 'stl-1',
+        status: 'APPROVED',
+        payrollRunId: 'run-oc',
+      });
+
+      await expect(service.markPaid(TENANT, 'stl-1')).rejects.toThrow(
+        'This settlement is being paid through payroll run run-oc; it is marked paid when that run is paid',
+      );
+      expect(prisma.settlement.update).not.toHaveBeenCalled();
     });
 
     it('refuses to pay a settlement that was never approved', async () => {
