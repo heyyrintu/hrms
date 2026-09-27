@@ -145,6 +145,34 @@ describe('ApplicationsService', () => {
     });
   });
 
+  describe('move (manual, board)', () => {
+    it('refuses a manual move into a HIRED-category stage: hiring happens only through offer conversion', async () => {
+      prisma.jobApplication.findFirst.mockResolvedValue(detailRow);
+      prisma.pipelineStage.findFirst.mockResolvedValue(hiredStage);
+
+      await expect(service.move(mockHrAdmin, 'app-1', { stageId: 'stage-hired' })).rejects.toThrow(
+        /accepted offer is converted/,
+      );
+      expect(prisma.pipelineStage.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ id: 'stage-hired', tenantId }) }),
+      );
+      expect(prisma.jobApplication.update).not.toHaveBeenCalled();
+      expect(prisma.jobApplicationStageEvent.create).not.toHaveBeenCalled();
+    });
+
+    it('still moves into a non-HIRED stage', async () => {
+      const screening = { id: 'stage-screen', name: 'Screening', sortOrder: 2, category: 'SCREENING', isActive: true };
+      prisma.jobApplication.findFirst.mockResolvedValue(detailRow);
+      prisma.pipelineStage.findFirst.mockResolvedValue(screening);
+
+      await service.move(mockHrAdmin, 'app-1', { stageId: 'stage-screen' });
+
+      expect(prisma.jobApplication.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ stageId: 'stage-screen' }) }),
+      );
+    });
+  });
+
   describe('moveToStage', () => {
     it('404s when the application does not exist', async () => {
       prisma.jobApplication.findFirst.mockResolvedValue(null);

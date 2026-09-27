@@ -80,6 +80,16 @@ export class OfferConversionService {
     if (offer.status !== JobOfferStatus.ACCEPTED) {
       throw new BadRequestException('Only an accepted offer can be converted');
     }
+    // The candidate accepted, but HR has since rejected or withdrawn the
+    // application: hiring them now would contradict the pipeline.
+    if (
+      offer.application.status === JobApplicationStatus.REJECTED ||
+      offer.application.status === JobApplicationStatus.WITHDRAWN
+    ) {
+      throw new ConflictException(
+        `The application was ${offer.application.status.toLowerCase()}; this offer can no longer be converted`,
+      );
+    }
     const employeeCode = input.employeeCode?.trim();
     if (!employeeCode) throw new BadRequestException('employeeCode is required');
     if (input.createUser && !input.userPassword) {

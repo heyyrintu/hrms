@@ -22,7 +22,10 @@ const LINK_INVALID_MESSAGE = 'This pre-onboarding link is invalid or has expired
 const LOCKED_MESSAGE = 'This pre-onboarding submission is locked. Ask HR to resend the invite to make further changes.';
 
 const LIVE_STATUSES = ['INVITED', 'IN_PROGRESS', 'SUBMITTED'] as const;
-const TERMINAL_STATUSES = ['REVOKED', 'EXPIRED'] as const;
+// COMPLETED is terminal for the public link too: once HR has closed the
+// checklist the token must stop serving the joiner's personal details.
+// HR views (by id) are unaffected.
+const TERMINAL_STATUSES = ['REVOKED', 'EXPIRED', 'COMPLETED'] as const;
 const LOCKED_STATUSES = ['SUBMITTED', 'COMPLETED', 'REVOKED', 'EXPIRED'] as const;
 
 type InviteRow = Prisma.PreOnboardingInviteGetPayload<{
@@ -64,6 +67,20 @@ export class PreOnboardingService {
       where: { employeeId: employee.id, tenantId: actor.tenantId, status: { in: [...LIVE_STATUSES] } },
     });
     if (live) throw new ConflictException('This employee already has a live pre-onboarding invite');
+
+    if (input.offerId) {
+      const offer = await this.prisma.jobOffer.findFirst({
+        where: { id: input.offerId, tenantId: actor.tenantId },
+        select: { id: true, employeeId: true, preOnboarding: { select: { id: true } } },
+      });
+      if (!offer) throw new BadRequestException('Offer not found in this tenant');
+      if (offer.employeeId && offer.employeeId !== employee.id) {
+        throw new BadRequestException('The offer belongs to a different employee');
+      }
+      if (offer.preOnboarding) {
+        throw new ConflictException('This offer already has a pre-onboarding invite');
+      }
+    }
 
     const settings = await this.prisma.recruitmentSettings.findUnique({ where: { tenantId: actor.tenantId } });
     const tenantDocuments = settings?.preOnboardingDocuments as unknown as PreOnboardingDocumentDefinition[] | undefined;

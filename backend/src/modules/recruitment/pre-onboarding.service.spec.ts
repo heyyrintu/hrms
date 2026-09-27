@@ -107,6 +107,52 @@ describe('PreOnboardingService', () => {
     });
   });
 
+  describe('create: offer link', () => {
+    beforeEach(() => {
+      (prisma.employee.findFirst as jest.Mock).mockResolvedValue(employeeRow);
+      (prisma.preOnboardingInvite.findFirst as jest.Mock).mockResolvedValue(null);
+      (prisma.recruitmentSettings.findUnique as jest.Mock).mockResolvedValue(null);
+      (prisma.preOnboardingInvite.create as jest.Mock).mockResolvedValue(inviteRow({ offerId: 'offer-1' }));
+    });
+
+    it('400s an offer that is not in the tenant', async () => {
+      (prisma.jobOffer.findFirst as jest.Mock).mockResolvedValue(null);
+      await expect(service.create(mockHrAdmin, { employeeId: 'emp-1', offerId: 'offer-x' })).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.jobOffer.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'offer-x', tenantId } }),
+      );
+      expect(prisma.preOnboardingInvite.create).not.toHaveBeenCalled();
+    });
+
+    it('400s an offer converted to a different employee', async () => {
+      (prisma.jobOffer.findFirst as jest.Mock).mockResolvedValue({ id: 'offer-1', employeeId: 'emp-other', preOnboarding: null });
+      await expect(service.create(mockHrAdmin, { employeeId: 'emp-1', offerId: 'offer-1' })).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('409s an offer that already has an invite (offerId is unique)', async () => {
+      (prisma.jobOffer.findFirst as jest.Mock).mockResolvedValue({
+        id: 'offer-1',
+        employeeId: 'emp-1',
+        preOnboarding: { id: 'invite-old' },
+      });
+      await expect(service.create(mockHrAdmin, { employeeId: 'emp-1', offerId: 'offer-1' })).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
+    it('links an offer of the tenant for the same employee', async () => {
+      (prisma.jobOffer.findFirst as jest.Mock).mockResolvedValue({ id: 'offer-1', employeeId: 'emp-1', preOnboarding: null });
+      await service.create(mockHrAdmin, { employeeId: 'emp-1', offerId: 'offer-1' });
+      expect(prisma.preOnboardingInvite.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ offerId: 'offer-1' }) }),
+      );
+    });
+  });
+
   describe('revoke / resend / complete', () => {
     it('revoke: 400 when the invite is not live', async () => {
       (prisma.preOnboardingInvite.findFirst as jest.Mock).mockResolvedValue(inviteRow({ status: 'COMPLETED' }));
@@ -155,6 +201,14 @@ describe('PreOnboardingService', () => {
     it('404s the same message for an unknown token', async () => {
       (prisma.preOnboardingInvite.findFirst as jest.Mock).mockResolvedValue(null);
       await expect(service.getPublic(rawToken)).rejects.toThrow('This pre-onboarding link is invalid or has expired');
+    });
+
+    it('404s the same message for a COMPLETED invite, so personal data stops being served', async () => {
+      (prisma.preOnboardingInvite.findFirst as jest.Mock).mockResolvedValue(
+        inviteRow({ status: 'COMPLETED', personalDetails: { mobileNumber: '999' } }),
+      );
+      await expect(service.getPublic(rawToken)).rejects.toThrow('This pre-onboarding link is invalid or has expired');
+      expect(prisma.preOnboardingInvite.update).not.toHaveBeenCalled();
     });
 
     it('404s the same message for a revoked token', async () => {

@@ -4,6 +4,7 @@ import { ApiTags, ApiConsumes, ApiBody, ApiOperation, ApiResponse } from '@nestj
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { PublicCareersService } from './public-careers.service';
 import { CareersApplyDto } from './dto/careers.dto';
+import { PUBLIC_UPLOAD_LIMITS } from './upload-guards';
 
 /**
  * PUBLIC, no auth. Careers page per tenant and public apply.
@@ -14,17 +15,23 @@ export class PublicCareersController {
   constructor(private readonly service: PublicCareersService) {}
 
   @Get(':tenantCode')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @ApiOperation({ summary: 'Public careers page' })
   @ApiResponse({ status: 200 })
   @ApiResponse({ status: 404, description: 'Careers page not found' })
+  @ApiResponse({ status: 429, description: 'Too many requests' })
   getCareers(@Param('tenantCode') tenantCode: string) {
     return this.service.getCareers(tenantCode);
   }
 
   @Get(':tenantCode/jobs/:slug')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @ApiOperation({ summary: 'Public job listing' })
   @ApiResponse({ status: 200 })
   @ApiResponse({ status: 404, description: 'Careers page not found' })
+  @ApiResponse({ status: 429, description: 'Too many requests' })
   getJob(@Param('tenantCode') tenantCode: string, @Param('slug') slug: string) {
     return this.service.getJob(tenantCode, slug);
   }
@@ -47,9 +54,10 @@ export class PublicCareersController {
   @ApiOperation({ summary: 'Apply to a job opening' })
   @ApiResponse({ status: 201 })
   @ApiResponse({ status: 400, description: 'Invalid resume file' })
+  @ApiResponse({ status: 413, description: 'Resume larger than 5 MB' })
   @ApiResponse({ status: 404, description: 'Careers page not found' })
   @ApiResponse({ status: 429, description: 'Too many applications' })
-  @UseInterceptors(FileInterceptor('resume'))
+  @UseInterceptors(FileInterceptor('resume', { limits: PUBLIC_UPLOAD_LIMITS }))
   apply(
     @Param('tenantCode') tenantCode: string,
     @Param('slug') slug: string,

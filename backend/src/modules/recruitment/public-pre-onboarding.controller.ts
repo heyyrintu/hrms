@@ -4,6 +4,7 @@ import { ApiTags, ApiConsumes, ApiBody, ApiOperation, ApiResponse } from '@nestj
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { PreOnboardingService } from './pre-onboarding.service';
 import { PreOnboardingDetailsDto } from './dto/pre-onboarding.dto';
+import { PUBLIC_UPLOAD_LIMITS } from './upload-guards';
 
 /**
  * PUBLIC, no auth. Token-based pre-onboarding portal for a future joiner.
@@ -42,8 +43,9 @@ export class PublicPreOnboardingController {
   @ApiOperation({ summary: 'Upload a checklist document' })
   @ApiResponse({ status: 200 })
   @ApiResponse({ status: 400, description: 'Invalid document or locked after submission' })
+  @ApiResponse({ status: 413, description: 'Document larger than 5 MB' })
   @ApiResponse({ status: 404, description: 'Invalid or expired link' })
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', { limits: PUBLIC_UPLOAD_LIMITS }))
   uploadDocument(
     @Param('token') token: string,
     @Param('documentKey') documentKey: string,

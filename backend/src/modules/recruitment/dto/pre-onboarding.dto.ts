@@ -9,6 +9,7 @@ import {
   IsString,
   IsUUID,
   Max,
+  Matches,
   MaxLength,
   Min,
   ValidateIf,
@@ -52,10 +53,16 @@ export class CreatePreOnboardingDto {
  * bank/tax fields, before this DTO's own validators run.
  */
 export class PreOnboardingDetailsDto {
-  @ApiPropertyOptional({ nullable: true })
+  /**
+   * A plain YYYY-MM-DD calendar date only: the service appends
+   * `T00:00:00.000Z`, so a full ISO datetime would become an Invalid Date
+   * (a 500) rather than a 400. The strict ISO check rejects 1995-02-30.
+   */
+  @ApiPropertyOptional({ nullable: true, example: '1995-06-15' })
   @IsOptional()
   @ValidateIf((_o, value) => value !== null)
-  @IsDateString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'dateOfBirth must be a date in YYYY-MM-DD format' })
+  @IsDateString({ strict: true }, { message: 'dateOfBirth must be a valid calendar date' })
   dateOfBirth?: string | null;
 
   @ApiPropertyOptional({ nullable: true })

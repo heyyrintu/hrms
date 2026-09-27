@@ -62,6 +62,9 @@ function stageView(stage: {
   };
 }
 
+export const HIRED_ONLY_BY_CONVERSION =
+  'An application moves to Hired only when its accepted offer is converted to an employee';
+
 /**
  * Applications and stage moves (with JobApplicationStageEvent history).
  * Spec: docs/superpowers/specs/2026-09-27-keka-wave-c-d-design.md, D1.
@@ -142,6 +145,16 @@ export class ApplicationsService {
     input: { stageId: string; note?: string | null },
   ): Promise<ApplicationDetailView> {
     await this.findScoped(actor, id);
+    // HIRED is reached only through offer conversion (OfferConversionService),
+    // which also records the hire on the requisition. A manual board move
+    // would skip that bookkeeping and drift filledCount and the funnel.
+    const target = await this.prisma.pipelineStage.findFirst({
+      where: { id: input.stageId, tenantId: actor.tenantId },
+      select: { category: true },
+    });
+    if (target?.category === 'HIRED') {
+      throw new BadRequestException(HIRED_ONLY_BY_CONVERSION);
+    }
     await this.moveToStage({
       tenantId: actor.tenantId,
       applicationId: id,

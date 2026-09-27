@@ -200,6 +200,19 @@ describe('OfferConversionService', () => {
     expect(onboarding.createProcess).not.toHaveBeenCalled();
   });
 
+  it.each(['REJECTED', 'WITHDRAWN'])(
+    '409s an accepted offer whose application was %s, before creating anything',
+    async (status) => {
+      prisma.jobOffer.findFirst.mockResolvedValue(
+        acceptedOffer({ application: { id: 'app-1', status, jobOpening: { requisitionId: 'req-1' } } }),
+      );
+      await expect(service.convert(mockHrAdmin, 'off-1', dto)).rejects.toThrow(ConflictException);
+      expect(employees.create).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(requisitions.recordHire).not.toHaveBeenCalled();
+    },
+  );
+
   it('keeps the conversion when onboarding fails afterwards', async () => {
     onboarding.createProcess.mockRejectedValue(new Error('boom'));
     const result = await service.convert(mockHrAdmin, 'off-1', dto);

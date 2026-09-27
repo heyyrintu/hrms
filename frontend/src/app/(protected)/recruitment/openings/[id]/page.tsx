@@ -206,7 +206,15 @@ export default function OpeningDetailPage() {
                             options={[
                               { value: '', label: 'Move to...' },
                               ...stages
-                                .filter((s) => s.isActive && s.id !== stage.id && s.category !== 'REJECTED')
+                                // Rejected has its own button (needs a reason); Hired is
+                                // reached only by converting an accepted offer.
+                                .filter(
+                                  (s) =>
+                                    s.isActive &&
+                                    s.id !== stage.id &&
+                                    s.category !== 'REJECTED' &&
+                                    s.category !== 'HIRED',
+                                )
                                 .map((s) => ({ value: s.id, label: s.name })),
                             ]}
                             className="h-8 text-xs"

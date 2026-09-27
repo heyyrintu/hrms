@@ -14,6 +14,22 @@ import { BadRequestException } from '@nestjs/common';
 
 export const MAX_UPLOAD_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
+/**
+ * Multer limits for the public upload routes, enforced while the body
+ * streams: without them multer buffers a whole (multi-GB) file into memory
+ * before assertResume / assertDocument ever see it. Nest maps the file-size
+ * breach to 413 and the other limits to 400.
+ *
+ * fieldSize is in bytes: the longest form field is the 5000-character cover
+ * letter, up to 20 000 bytes in UTF-8, so 25 000 leaves headroom.
+ */
+export const PUBLIC_UPLOAD_LIMITS = {
+  fileSize: MAX_UPLOAD_SIZE_BYTES,
+  files: 1,
+  fields: 20,
+  fieldSize: 25_000,
+} as const;
+
 type FileKind = 'pdf' | 'doc' | 'docx' | 'jpeg' | 'png';
 
 const MIME_TO_KINDS: Record<string, FileKind> = {
