@@ -11,7 +11,7 @@ import { OFFERS_LINK, OffersService } from './offers.service';
 
 /**
  * OFFER approvals through the Wave B engine (Keka wave D2). The requester is
- * the HR user who created the offer; approve / reject delegate to
+ * the HR user who submitted the offer (maker-checker); approve / reject delegate to
  * OffersService, the single approval code path (engine.act with onFinal).
  */
 @Injectable()
@@ -40,6 +40,7 @@ export class OfferWorkflowHandler implements WorkflowEntityHandler, OnModuleInit
         id: true,
         annualCtc: true,
         createdById: true,
+        submittedById: true,
         createdAt: true,
         updatedAt: true,
         status: true,
@@ -48,15 +49,18 @@ export class OfferWorkflowHandler implements WorkflowEntityHandler, OnModuleInit
       },
     });
 
-    const creatorIds = [...new Set(offers.map((o) => o.createdById))];
-    const creators = creatorIds.length
+    // The requester is whoever submitted it (maker-checker), not the creator.
+    const requesterOf = (o: { submittedById: string | null; createdById: string }) =>
+      o.submittedById ?? o.createdById;
+    const requesterIds = [...new Set(offers.map(requesterOf))];
+    const requesters = requesterIds.length
       ? await this.prisma.user.findMany({
-          where: { tenantId, id: { in: creatorIds } },
+          where: { tenantId, id: { in: requesterIds } },
           select: { id: true, email: true, employee: { select: { firstName: true, lastName: true } } },
         })
       : [];
-    const creatorName = new Map(
-      creators.map((u) => [
+    const requesterName = new Map(
+      requesters.map((u) => [
         u.id,
         u.employee ? `${u.employee.firstName} ${u.employee.lastName}`.trim() : u.email,
       ]),
@@ -66,7 +70,7 @@ export class OfferWorkflowHandler implements WorkflowEntityHandler, OnModuleInit
       entityId: offer.id,
       title: `Offer · ${offer.candidate.firstName} ${offer.candidate.lastName} · ${offer.application.jobOpening.title}`,
       subtitle: `₹${Number(offer.annualCtc).toLocaleString('en-IN')} annual CTC`,
-      requesterName: creatorName.get(offer.createdById) ?? null,
+      requesterName: requesterName.get(requesterOf(offer)) ?? null,
       link: OFFERS_LINK,
       // Submitting is the last write before approval, so updatedAt is when it was raised.
       submittedAt: (offer.status === 'PENDING_APPROVAL' ? offer.updatedAt : offer.createdAt).toISOString(),

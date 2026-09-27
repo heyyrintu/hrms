@@ -295,16 +295,31 @@ export class OffersService {
     }
 
     await this.prisma.$transaction(async (tx) => {
+      // Maker-checker: whoever submits is the requester (not the creator), so
+      // an HR user who edits and submits someone else's draft cannot then
+      // approve it when the OFFER workflow disallows self-approval. Edits are
+      // only possible while DRAFT/REJECTED, so every change is covered by a
+      // later submit.
       const guarded = await tx.jobOffer.updateMany({
         where: { id, tenantId, status: { in: EDITABLE_STATUSES } },
-        data: { status: JobOfferStatus.PENDING_APPROVAL, decisionNote: null },
+        data: { status: JobOfferStatus.PENDING_APPROVAL, decisionNote: null, submittedById: actor.userId },
       });
       if (guarded.count === 0) throw new ConflictException(OFFER_CHANGED);
+      // Route on the CTC as written: an edit may have landed after `row` was
+      // read, and the guarded update above now holds the row lock.
+      const fresh = await tx.jobOffer.findFirst({
+        where: { id, tenantId },
+        select: { annualCtc: true },
+      });
       await this.engine.start({
         tenantId,
         entityType: 'OFFER',
         entityId: id,
-        context: this.contextOf(row),
+        context: this.contextOf({
+          submittedById: actor.userId,
+          createdById: row.createdById,
+          annualCtc: fresh?.annualCtc ?? row.annualCtc,
+        }),
         tx,
       });
     });
@@ -400,7 +415,7 @@ export class OffersService {
   async getWorkflowContext(tenantId: string, id: string): Promise<WorkflowEntityContext | null> {
     const row = await this.prisma.jobOffer.findFirst({
       where: { id, tenantId, status: JobOfferStatus.PENDING_APPROVAL },
-      select: { createdById: true, annualCtc: true },
+      select: { createdById: true, submittedById: true, annualCtc: true },
     });
     return row ? this.contextOf(row) : null;
   }
@@ -520,10 +535,15 @@ export class OffersService {
     return this.toView(await this.findOrFail(tenantId, id));
   }
 
-  private contextOf(row: { createdById: string; annualCtc: Prisma.Decimal | number }): WorkflowEntityContext {
+  /** The submitter is the requester (maker-checker); createdById only for legacy rows. */
+  private contextOf(row: {
+    createdById: string;
+    submittedById: string | null;
+    annualCtc: Prisma.Decimal | number;
+  }): WorkflowEntityContext {
     return {
       requesterEmployeeId: null,
-      requesterUserId: row.createdById,
+      requesterUserId: row.submittedById ?? row.createdById,
       amount: Number(row.annualCtc),
     };
   }

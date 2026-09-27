@@ -66,6 +66,30 @@ describe('OfferWorkflowHandler', () => {
     });
   });
 
+  it('names the submitter, not the creator, as the requester', async () => {
+    prisma.jobOffer.findMany.mockResolvedValue([
+      {
+        id: 'off-1',
+        annualCtc: new Prisma.Decimal(1200000),
+        createdById: 'u-hr-a',
+        submittedById: 'u-hr-b',
+        createdAt: new Date('2026-03-14T12:00:00Z'),
+        updatedAt: new Date('2026-03-15T12:00:00Z'),
+        status: 'PENDING_APPROVAL',
+        candidate: { firstName: 'Asha', lastName: 'Rao' },
+        application: { jobOpening: { title: 'Backend Engineer' } },
+      },
+    ]);
+    prisma.user.findMany.mockResolvedValue([
+      { id: 'u-hr-a', email: 'a@x.com', employee: { firstName: 'Anil', lastName: 'A' } },
+      { id: 'u-hr-b', email: 'b@x.com', employee: { firstName: 'Bina', lastName: 'B' } },
+    ]);
+
+    const [summary] = await handler.describe('t1', ['off-1']);
+
+    expect(summary.requesterName).toBe('Bina B');
+  });
+
   it('describes nothing for no ids', async () => {
     await expect(handler.describe('t1', [])).resolves.toEqual([]);
     expect(prisma.jobOffer.findMany).not.toHaveBeenCalled();

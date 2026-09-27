@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../../common/email/email.service';
 import { ApprovalEngineService } from '../workflow/approval-engine.service';
+import { ApproverResolverService } from '../workflow/approver-resolver.service';
 import {
   createMockEmailService,
   createMockNotificationsService,
@@ -262,7 +263,7 @@ describe('OffersService', () => {
 
       expect(prisma.jobOffer.updateMany).toHaveBeenCalledWith({
         where: { id: 'off-1', tenantId: TENANT, status: { in: ['DRAFT', 'REJECTED'] } },
-        data: { status: 'PENDING_APPROVAL', decisionNote: null },
+        data: { status: 'PENDING_APPROVAL', decisionNote: null, submittedById: 'hr-admin-id' },
       });
       expect(engine.start).toHaveBeenCalledWith({
         tenantId: TENANT,
@@ -272,6 +273,44 @@ describe('OffersService', () => {
         tx: prisma,
       });
       expect(engine.notifyPending).toHaveBeenCalledWith(TENANT, 'OFFER', 'off-1');
+    });
+
+    it('makes the submitter the requester, so HR-B cannot approve a draft of HR-A they submitted', async () => {
+      // HR-A created the draft; HR-B raised the CTC and submits it.
+      const hrB = { ...mockHrAdmin, userId: 'hr-b-id', employeeId: 'emp-hr-b', email: 'hrb@test.com' };
+      prisma.jobOffer.findFirst.mockResolvedValue(offerRow({ createdById: 'hr-a-id' }));
+      prisma.jobOffer.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.submit(hrB, 'off-1');
+
+      expect(prisma.jobOffer.updateMany.mock.calls[0][0].data.submittedById).toBe('hr-b-id');
+      const { context } = engine.start.mock.calls[0][0];
+      expect(context.requesterUserId).toBe('hr-b-id');
+
+      // The engine's maker-checker, with allowSelfApproval=false: HR-B is the
+      // requester and is blocked even though HR is an eligible approver.
+      const resolver = new ApproverResolverService(prisma);
+      const instance = { entityType: 'OFFER' as const, ...context, adminOverride: true, allowSelfApproval: false };
+      const resolution = { approvers: new Set(['hr-a-id', 'hr-b-id']), onBehalf: new Map<string, string>() };
+      expect(resolver.access(hrB, instance, resolution)).toEqual(
+        expect.objectContaining({ canAct: false, selfBlocked: true }),
+      );
+      // HR-A (who did not submit) remains a valid checker.
+      const hrA = { ...mockHrAdmin, userId: 'hr-a-id', employeeId: 'emp-hr-a' };
+      expect(resolver.access(hrA, instance, resolution).canAct).toBe(true);
+    });
+
+    it('routes on the CTC as written by the guarded update, not the pre-read row', async () => {
+      // An edit landed between the read and the guarded update.
+      prisma.jobOffer.findFirst
+        .mockResolvedValueOnce(offerRow())
+        .mockResolvedValueOnce({ submittedById: 'hr-admin-id', createdById: 'hr-admin-id', annualCtc: new Prisma.Decimal(5000000) })
+        .mockResolvedValue(offerRow({ status: 'PENDING_APPROVAL' }));
+      prisma.jobOffer.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.submit(mockHrAdmin, 'off-1');
+
+      expect(engine.start.mock.calls[0][0].context.amount).toBe(5000000);
     });
 
     it('409s a lost race', async () => {
@@ -336,13 +375,17 @@ describe('OffersService', () => {
   });
 
   describe('getWorkflowContext', () => {
-    it('is null unless pending, else the creator and CTC', async () => {
+    it('is null unless pending, else the submitter and CTC', async () => {
       prisma.jobOffer.findFirst.mockResolvedValueOnce(null);
       await expect(service.getWorkflowContext(TENANT, 'off-1')).resolves.toBeNull();
-      prisma.jobOffer.findFirst.mockResolvedValueOnce({ createdById: 'u1', annualCtc: new Prisma.Decimal(900000) });
+      prisma.jobOffer.findFirst.mockResolvedValueOnce({
+        createdById: 'u1',
+        submittedById: 'u2',
+        annualCtc: new Prisma.Decimal(900000),
+      });
       await expect(service.getWorkflowContext(TENANT, 'off-1')).resolves.toEqual({
         requesterEmployeeId: null,
-        requesterUserId: 'u1',
+        requesterUserId: 'u2',
         amount: 900000,
       });
       expect(prisma.jobOffer.findFirst).toHaveBeenLastCalledWith(

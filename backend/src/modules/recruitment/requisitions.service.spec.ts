@@ -1,8 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { RequisitionsService } from './requisitions.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ApprovalEngineService } from '../workflow/approval-engine.service';
+import { ApproverResolverService } from '../workflow/approver-resolver.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { createMockPrismaService, mockHrAdmin, mockManager } from '../../test/helpers';
 
@@ -125,6 +126,20 @@ describe('RequisitionsService', () => {
   });
 
   describe('update', () => {
+    it('guards the write on an editable status so no edit lands after submission', async () => {
+      prisma.jobRequisition.findFirst.mockResolvedValue(baseRow);
+      prisma.jobRequisition.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.update(mockHrAdmin, 'req-1', { budgetMax: 9_000_000 })).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(prisma.jobRequisition.updateMany).toHaveBeenCalledWith({
+        where: { id: 'req-1', tenantId, status: { in: ['DRAFT', 'REJECTED'] } },
+        data: { budgetMax: 9_000_000 },
+      });
+      expect(prisma.jobRequisition.update).not.toHaveBeenCalled();
+    });
+
     it('refuses to edit an APPROVED requisition', async () => {
       prisma.jobRequisition.findFirst.mockResolvedValue({ ...baseRow, status: 'APPROVED' });
 
@@ -138,9 +153,18 @@ describe('RequisitionsService', () => {
     it('starts the approval instance with budgetMax * headcount as the amount', async () => {
       prisma.jobRequisition.findFirst.mockResolvedValue(baseRow);
       prisma.$transaction.mockImplementation(async (cb: any) => cb(prisma));
-      prisma.jobRequisition.update.mockResolvedValue({ ...baseRow, status: 'PENDING_APPROVAL' });
+      prisma.jobRequisition.updateMany.mockResolvedValue({ count: 1 });
 
       await service.submit(mockManager, 'req-1');
+
+      expect(prisma.jobRequisition.updateMany).toHaveBeenCalledWith({
+        where: { id: 'req-1', tenantId, status: { in: ['DRAFT', 'REJECTED'] } },
+        data: expect.objectContaining({
+          status: 'PENDING_APPROVAL',
+          submittedById: mockManager.userId,
+          submittedAt: expect.any(Date),
+        }),
+      });
 
       expect(workflow.start).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -162,14 +186,60 @@ describe('RequisitionsService', () => {
     });
 
     it('restarts approval from REJECTED (ADVANCED keeps PENDING_APPROVAL)', async () => {
-      prisma.jobRequisition.findFirst.mockResolvedValue({ ...baseRow, status: 'REJECTED' });
+      prisma.jobRequisition.findFirst
+        .mockResolvedValueOnce({ ...baseRow, status: 'REJECTED' })
+        .mockResolvedValue({ ...baseRow, status: 'PENDING_APPROVAL' });
       prisma.$transaction.mockImplementation(async (cb: any) => cb(prisma));
-      prisma.jobRequisition.update.mockResolvedValue({ ...baseRow, status: 'PENDING_APPROVAL' });
+      prisma.jobRequisition.updateMany.mockResolvedValue({ count: 1 });
 
       const result = await service.submit(mockManager, 'req-1');
 
       expect(result.status).toBe('PENDING_APPROVAL');
       expect(workflow.start).toHaveBeenCalled();
+    });
+
+    it('409s a lost race without starting the workflow', async () => {
+      prisma.jobRequisition.findFirst.mockResolvedValue(baseRow);
+      prisma.$transaction.mockImplementation(async (cb: any) => cb(prisma));
+      prisma.jobRequisition.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.submit(mockManager, 'req-1')).rejects.toBeInstanceOf(ConflictException);
+      expect(workflow.start).not.toHaveBeenCalled();
+    });
+
+    it('makes the submitting HR user the requester, so they cannot approve a manager draft they edited', async () => {
+      // A manager raised the draft; HR edits the budget and submits it.
+      prisma.jobRequisition.findFirst
+        .mockResolvedValueOnce(baseRow)
+        .mockResolvedValue({ ...baseRow, budgetMax: '5000000', status: 'PENDING_APPROVAL' });
+      prisma.$transaction.mockImplementation(async (cb: any) => cb(prisma));
+      prisma.jobRequisition.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.submit(mockHrAdmin, 'req-1');
+
+      const { context } = workflow.start.mock.calls[0][0];
+      expect(context).toEqual({
+        // Routing stays on the manager the requisition is for...
+        requesterEmployeeId: mockManager.employeeId,
+        // ...but the maker is whoever submitted it.
+        requesterUserId: mockHrAdmin.userId,
+        // Amount from the row as written, not the pre-read.
+        amount: 10_000_000,
+      });
+
+      const resolver = new ApproverResolverService(prisma);
+      const instance = {
+        entityType: 'JOB_REQUISITION' as const,
+        ...context,
+        adminOverride: true,
+        allowSelfApproval: false,
+      };
+      const resolution = { approvers: new Set([mockHrAdmin.userId, 'hr-2-id']), onBehalf: new Map<string, string>() };
+      expect(resolver.access(mockHrAdmin, instance, resolution)).toEqual(
+        expect.objectContaining({ canAct: false, selfBlocked: true }),
+      );
+      const otherHr = { ...mockHrAdmin, userId: 'hr-2-id', employeeId: 'emp-hr-2' };
+      expect(resolver.access(otherHr, instance, resolution).canAct).toBe(true);
     });
   });
 
@@ -245,17 +315,18 @@ describe('RequisitionsService', () => {
       await expect(service.getWorkflowContext(tenantId, 'req-1')).resolves.toBeNull();
     });
 
-    it('returns the routing context when PENDING_APPROVAL', async () => {
+    it('returns the routing context, with the submitter as the requester, when PENDING_APPROVAL', async () => {
       prisma.jobRequisition.findFirst.mockResolvedValue({
         requesterEmployeeId: 'emp-1',
         requestedById: 'user-1',
+        submittedById: 'hr-user',
         budgetMax: '500000',
         headcount: 3,
       });
 
       await expect(service.getWorkflowContext(tenantId, 'req-1')).resolves.toEqual({
         requesterEmployeeId: 'emp-1',
-        requesterUserId: 'user-1',
+        requesterUserId: 'hr-user',
         amount: 1500000,
       });
     });

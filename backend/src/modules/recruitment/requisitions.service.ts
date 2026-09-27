@@ -1,4 +1,10 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { JobRequisitionStatus, NotificationType, Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -23,6 +29,26 @@ type RequisitionRow = Prisma.JobRequisitionGetPayload<{ include: typeof requisit
 
 function isHr(role: UserRole): boolean {
   return role === UserRole.HR_ADMIN || role === UserRole.SUPER_ADMIN;
+}
+
+export const REQUISITION_CHANGED = 'The requisition was changed by someone else; reload and try again';
+
+/**
+ * Routing stays on the employee the requisition is for (requesterEmployeeId);
+ * the maker for the self-approval rule is whoever submitted it.
+ */
+function contextOf(req: {
+  requesterEmployeeId: string | null;
+  requestedById: string;
+  submittedById: string | null;
+  budgetMax: Prisma.Decimal | number | string | null;
+  headcount: number;
+}): WorkflowEntityContext {
+  return {
+    requesterEmployeeId: req.requesterEmployeeId,
+    requesterUserId: req.submittedById ?? req.requestedById,
+    amount: req.budgetMax != null ? Number(req.budgetMax) * req.headcount : null,
+  };
 }
 
 /**
@@ -89,8 +115,10 @@ export class RequisitionsService {
     }
     await this.validateRefs(actor.tenantId, input);
 
-    const updated = await this.prisma.jobRequisition.update({
-      where: { id },
+    // Guarded on the editable status: an edit racing a submit either lands
+    // before it (and is covered by the approval) or fails here — never after.
+    const guarded = await this.prisma.jobRequisition.updateMany({
+      where: { id, tenantId: actor.tenantId, status: { in: EDITABLE } },
       data: {
         ...(input.title !== undefined ? { title: input.title } : {}),
         ...(input.departmentId !== undefined ? { departmentId: input.departmentId } : {}),
@@ -102,9 +130,9 @@ export class RequisitionsService {
         ...(input.budgetMax !== undefined ? { budgetMax: input.budgetMax } : {}),
         ...(input.justification !== undefined ? { justification: input.justification } : {}),
       },
-      include: requisitionInclude,
     });
-    return this.toView(updated);
+    if (guarded.count === 0) throw new ConflictException(REQUISITION_CHANGED);
+    return this.toView(await this.mustExist(actor.tenantId, id));
   }
 
   async submit(actor: AuthenticatedUser, id: string): Promise<RequisitionView> {
@@ -116,29 +144,33 @@ export class RequisitionsService {
       throw new ForbiddenException('You cannot submit this requisition');
     }
 
-    const amount = req.budgetMax != null ? Number(req.budgetMax) * req.headcount : null;
-    const context: WorkflowEntityContext = {
-      requesterEmployeeId: req.requesterEmployeeId,
-      requesterUserId: req.requestedById,
-      amount,
-    };
-
     const updated = await this.prisma.$transaction(async (tx) => {
-      const result = await tx.jobRequisition.update({
-        where: { id },
+      // Maker-checker: the submitter is the workflow requester, so HR who edits
+      // and submits a manager's draft cannot approve it when self-approval is
+      // off. Edits are only possible while DRAFT/REJECTED (guarded), so every
+      // change is covered by a later submit.
+      const guarded = await tx.jobRequisition.updateMany({
+        where: { id, tenantId: actor.tenantId, status: { in: EDITABLE } },
         data: {
           status: 'PENDING_APPROVAL',
+          submittedById: actor.userId,
           submittedAt: new Date(),
           decidedAt: null,
           decisionNote: null,
         },
+      });
+      if (guarded.count === 0) throw new ConflictException(REQUISITION_CHANGED);
+      // Re-read under the row lock: route on the budget as written.
+      const result = await tx.jobRequisition.findFirst({
+        where: { id, tenantId: actor.tenantId },
         include: requisitionInclude,
       });
+      if (!result) throw new NotFoundException('Job requisition not found');
       await this.workflow.start({
         tenantId: actor.tenantId,
         entityType: 'JOB_REQUISITION',
         entityId: id,
-        context,
+        context: contextOf({ ...result, submittedById: actor.userId }),
         tx,
       });
       return result;
@@ -248,14 +280,15 @@ export class RequisitionsService {
   async getWorkflowContext(tenantId: string, id: string): Promise<WorkflowEntityContext | null> {
     const req = await this.prisma.jobRequisition.findFirst({
       where: { id, tenantId, status: 'PENDING_APPROVAL' },
-      select: { requesterEmployeeId: true, requestedById: true, budgetMax: true, headcount: true },
+      select: {
+        requesterEmployeeId: true,
+        requestedById: true,
+        submittedById: true,
+        budgetMax: true,
+        headcount: true,
+      },
     });
-    if (!req) return null;
-    return {
-      requesterEmployeeId: req.requesterEmployeeId,
-      requesterUserId: req.requestedById,
-      amount: req.budgetMax != null ? Number(req.budgetMax) * req.headcount : null,
-    };
+    return req ? contextOf(req) : null;
   }
 
   /**

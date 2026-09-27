@@ -3021,6 +3021,8 @@ model JobRequisition {
   /// User who raised it (the approval requester).
   requestedById       String
   requesterEmployeeId String?
+  /// User who last submitted it for approval: the workflow requester (maker-checker).
+  submittedById       String?
   submittedAt         DateTime?
   decidedAt           DateTime?
   decisionNote        String?              @db.VarChar(1000)
@@ -3294,6 +3296,8 @@ model JobOffer {
   respondedUserAgent String?        @db.VarChar(300)
   decisionNote       String?        @db.VarChar(1000)
   createdById        String
+  /// User who last submitted it for approval: the workflow requester (maker-checker).
+  submittedById      String?
   /// The employee the accepted offer was converted to.
   employeeId         String?
   convertedAt        DateTime?
