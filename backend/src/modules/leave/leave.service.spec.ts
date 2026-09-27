@@ -24,11 +24,13 @@ describe('LeaveService', () => {
   let service: LeaveService;
   let prisma: any;
   let notifications: any;
+  let emailService: any;
   let holidays: { getHolidaysBetween: jest.Mock };
   let webhooks: { dispatch: jest.Mock };
   let engine: {
     start: jest.Mock;
     notifyPending: jest.Mock;
+    getPendingApprovers: jest.Mock;
     act: jest.Mock;
     cancel: jest.Mock;
     listActionableEntityIds: jest.Mock;
@@ -101,6 +103,7 @@ describe('LeaveService', () => {
     engine = {
       start: jest.fn().mockResolvedValue({ id: 'inst-1' }),
       notifyPending: jest.fn().mockResolvedValue(undefined),
+      getPendingApprovers: jest.fn().mockResolvedValue([]),
       act: jest.fn(),
       cancel: jest.fn().mockResolvedValue(undefined),
       listActionableEntityIds: jest.fn().mockResolvedValue([]),
@@ -137,9 +140,14 @@ describe('LeaveService', () => {
     service = module.get<LeaveService>(LeaveService);
     prisma = module.get(PrismaService);
     notifications = module.get(NotificationsService);
+    emailService = module.get(EmailService);
     holidays = module.get(HolidaysService);
     webhooks = module.get(WebhookDispatcherService);
   });
+
+  // Lets the fire-and-forget approver-email chain (a promise createRequest
+  // never awaits) settle before assertions.
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
 
   it('should be defined', () => {
     expect(service).toBeDefined();
@@ -446,6 +454,77 @@ describe('LeaveService', () => {
       await service.createRequest(tenantId, employeeId, createDto);
 
       expect(prisma.leaveBalance.update).not.toHaveBeenCalled();
+    });
+
+    it('emails every engine-resolved approver with the leave-request template, not the reporting manager directly', async () => {
+      prisma.leaveType.findFirst.mockResolvedValue(mockLeaveType);
+      prisma.leaveRequest.findFirst.mockResolvedValue(null);
+      prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
+      prisma.leaveRequest.create.mockResolvedValue({
+        id: 'req-new',
+        totalDays: 3,
+        leaveType: mockLeaveType,
+        employee: { id: employeeId, firstName: 'Jane', lastName: 'Doe' },
+      });
+      engine.getPendingApprovers.mockResolvedValue([
+        { userId: 'user-approver', email: 'approver@test.com', name: 'Ann Approver' },
+      ]);
+
+      await service.createRequest(tenantId, employeeId, createDto);
+      await flush();
+
+      expect(engine.getPendingApprovers).toHaveBeenCalledWith(tenantId, 'LEAVE', 'req-new');
+      expect(prisma.employee.findUnique).not.toHaveBeenCalled();
+      expect(emailService.sendEmail).toHaveBeenCalledTimes(1);
+      expect(emailService.sendEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'approver@test.com',
+          template: 'leave-request',
+          context: expect.objectContaining({
+            approverName: 'Ann Approver',
+            employeeName: 'Jane Doe',
+          }),
+        }),
+      );
+    });
+
+    it('sends no email when the engine resolves no pending approvers', async () => {
+      prisma.leaveType.findFirst.mockResolvedValue(mockLeaveType);
+      prisma.leaveRequest.findFirst.mockResolvedValue(null);
+      prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
+      prisma.leaveRequest.create.mockResolvedValue({
+        id: 'req-new',
+        totalDays: 3,
+        leaveType: mockLeaveType,
+        employee: { id: employeeId, firstName: 'Jane', lastName: 'Doe' },
+      });
+      engine.getPendingApprovers.mockResolvedValue([]);
+
+      await service.createRequest(tenantId, employeeId, createDto);
+      await flush();
+
+      expect(emailService.sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('does not fail the create when an approver email fails to send', async () => {
+      prisma.leaveType.findFirst.mockResolvedValue(mockLeaveType);
+      prisma.leaveRequest.findFirst.mockResolvedValue(null);
+      prisma.leaveBalance.findMany.mockResolvedValue([mockBalance]);
+      prisma.leaveRequest.create.mockResolvedValue({
+        id: 'req-new',
+        totalDays: 3,
+        leaveType: mockLeaveType,
+        employee: { id: employeeId, firstName: 'Jane', lastName: 'Doe' },
+      });
+      engine.getPendingApprovers.mockResolvedValue([
+        { userId: 'user-approver', email: 'approver@test.com', name: 'Ann Approver' },
+      ]);
+      emailService.sendEmail.mockRejectedValue(new Error('smtp down'));
+
+      const result = await service.createRequest(tenantId, employeeId, createDto);
+      await flush();
+
+      expect(result.id).toBe('req-new');
     });
   });
 

@@ -729,6 +729,61 @@ describe('ApprovalEngineService', () => {
     });
   });
 
+  describe('getPendingApprovers', () => {
+    it('returns the current step\'s approvers with email/name, excluding the requester', async () => {
+      db.approvalInstance.findUnique.mockResolvedValue(
+        instance({ steps: [step(1, { approverType: 'ROLE', approverRole: UserRole.MANAGER })] }),
+      );
+
+      const result = await engine.getPendingApprovers(TENANT, 'LEAVE', 'leave-1');
+
+      // u-mgr and u-dir hold MANAGER; u-req (the requester) is excluded.
+      expect(result).toEqual(
+        expect.arrayContaining([
+          { userId: 'u-mgr', email: 'mgr@x.com', name: 'Manoj Mgr' },
+          { userId: 'u-dir', email: 'dir@x.com', name: 'Divya Dir' },
+        ]),
+      );
+      expect(result).toHaveLength(2);
+    });
+
+    it('includes an on-behalf delegate alongside the approver they stand in for', async () => {
+      directory({ delegations: [{ delegatorUserId: 'u-dir', delegateUserId: 'u-other', entityType: null }] });
+      db.approvalInstance.findUnique.mockResolvedValue(
+        instance({ steps: [step(1, { approverType: 'SPECIFIC_USER', approverUserId: 'u-dir' })] }),
+      );
+
+      const result = await engine.getPendingApprovers(TENANT, 'LEAVE', 'leave-1');
+
+      expect(result).toEqual(
+        expect.arrayContaining([
+          { userId: 'u-dir', email: 'dir@x.com', name: 'Divya Dir' },
+          { userId: 'u-other', email: 'other@x.com', name: 'Omar Other' },
+        ]),
+      );
+      expect(result).toHaveLength(2);
+    });
+
+    it('returns [] when there is no instance', async () => {
+      db.approvalInstance.findUnique.mockResolvedValue(null);
+
+      await expect(engine.getPendingApprovers(TENANT, 'LEAVE', 'leave-1')).resolves.toEqual([]);
+    });
+
+    it('returns [] for a terminal (non-PENDING) instance', async () => {
+      db.approvalInstance.findUnique.mockResolvedValue(instance({ status: 'APPROVED' }));
+
+      await expect(engine.getPendingApprovers(TENANT, 'LEAVE', 'leave-1')).resolves.toEqual([]);
+    });
+
+    it('returns [] when the resolver throws', async () => {
+      db.approvalInstance.findUnique.mockResolvedValue(instance());
+      db.user.findMany.mockRejectedValue(new Error('db down'));
+
+      await expect(engine.getPendingApprovers(TENANT, 'LEAVE', 'leave-1')).resolves.toEqual([]);
+    });
+  });
+
   describe('cancel', () => {
     it('marks the PENDING instance cancelled, inside the given transaction', async () => {
       const tx = createMockPrismaService() as any;
