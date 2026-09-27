@@ -259,6 +259,12 @@ describe('RunAdjustmentsTabs', () => {
       expect(props.reloadHolds).toHaveBeenCalled();
     });
 
+    it('cannot hold on an approved run: its bank transfer file may already include the salary', () => {
+      renderTabs({ run: makeRun({ status: 'APPROVED' }), holds: [] as any });
+      openTab('Holds');
+      expect(screen.queryByRole('button', { name: 'Hold salary' })).not.toBeInTheDocument();
+    });
+
     it('cannot hold on a paid run and offers release and void but not unhold', async () => {
       renderTabs({ run: makeRun({ status: 'PAID' }), holds: [hold()] as any });
       openTab('Holds');

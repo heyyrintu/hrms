@@ -149,7 +149,7 @@ export class PayrollAdjustmentsController {
   }
 
   @Post('runs/:id/holds')
-  @ApiOperation({ summary: "Hold an employee's net pay in a DRAFT, COMPUTED or APPROVED run" })
+  @ApiOperation({ summary: "Hold an employee's net pay in a DRAFT or COMPUTED run" })
   @ApiResponse({ status: 201, description: 'Held' })
   @ApiResponse({ status: 400, description: 'Run status or eligibility' })
   @ApiResponse({ status: 404, description: 'Run or employee not found' })

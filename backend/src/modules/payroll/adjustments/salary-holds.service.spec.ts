@@ -47,7 +47,7 @@ describe('SalaryHoldsService', () => {
   });
 
   describe('hold', () => {
-    it.each(['DRAFT', 'COMPUTED', 'APPROVED'])('holds an employee in a %s run and tells them, without amounts', async (status) => {
+    it.each(['DRAFT', 'COMPUTED'])('holds an employee in a %s run and tells them, without amounts', async (status) => {
       prisma.payrollRun.findFirst.mockResolvedValue(run({ status }));
 
       const view = await service.hold(actor, 'run-3', { employeeId: 'emp-1', reason: '  Absconding ' });
@@ -66,11 +66,19 @@ describe('SalaryHoldsService', () => {
       );
     });
 
-    it.each(['PAID', 'PROCESSING'])('refuses a %s run', async (status) => {
+    it.each(['APPROVED', 'PAID', 'PROCESSING'])('refuses a %s run', async (status) => {
       prisma.payrollRun.findFirst.mockResolvedValue(run({ status }));
       await expect(
         service.hold(actor, 'run-3', { employeeId: 'emp-1', reason: 'x' }),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('refuses an APPROVED run: its bank transfer file may already include the salary', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(run({ status: 'APPROVED' }));
+      await expect(
+        service.hold(actor, 'run-3', { employeeId: 'emp-1', reason: 'x' }),
+      ).rejects.toThrow(/DRAFT or COMPUTED.*bank transfer file/);
+      expect(prisma.salaryHold.create).not.toHaveBeenCalled();
     });
 
     it('needs a payslip in a computed run, the scope in an off-cycle run', async () => {

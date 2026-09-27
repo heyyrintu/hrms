@@ -11,7 +11,8 @@ import { HoldStatusBadge } from './HoldStatusBadge';
 import { employeeName, errorMessage, formatRunLabel } from './shared';
 import type { RunContext, RunEmployee } from './types';
 
-const HOLDABLE: PayrollRunStatus[] = ['DRAFT', 'COMPUTED', 'APPROVED'];
+// Not once approved: the bank transfer file may already include the salary.
+const HOLDABLE: PayrollRunStatus[] = ['DRAFT', 'COMPUTED'];
 const RELEASABLE: PayrollRunStatus[] = ['APPROVED', 'PAID'];
 
 interface Props {

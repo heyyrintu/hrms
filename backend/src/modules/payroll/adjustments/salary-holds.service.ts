@@ -115,16 +115,15 @@ export class SalaryHoldsService {
       select: { ...RUN_REF_SELECT, scopeEmployeeIds: true },
     });
     if (!run) throw new NotFoundException('Payroll run not found');
-    const holdable: PayrollRunStatus[] = [
-      PayrollRunStatus.DRAFT,
-      PayrollRunStatus.COMPUTED,
-      PayrollRunStatus.APPROVED,
-    ];
+    // Review I1: not once the run is APPROVED. The bank transfer file can be
+    // downloaded from an approved run, and a salary held after that is in the
+    // file already — then paid a second time when the hold is released.
+    const holdable: PayrollRunStatus[] = [PayrollRunStatus.DRAFT, PayrollRunStatus.COMPUTED];
     if (!holdable.includes(run.status)) {
       throw new BadRequestException(
         run.status === PayrollRunStatus.PAID
           ? 'This run has been paid; its salaries can no longer be held'
-          : `Salaries can be held in a DRAFT, COMPUTED or APPROVED run; this run is ${run.status}`,
+          : `Salaries can be held in a DRAFT or COMPUTED run; this run is ${run.status}, and its bank transfer file may already include the salary`,
       );
     }
 
