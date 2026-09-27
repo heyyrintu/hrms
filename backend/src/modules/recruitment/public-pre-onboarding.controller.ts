@@ -1,17 +1,65 @@
-import { Controller } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Param, Post, Put, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiTags, ApiConsumes, ApiBody, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { PreOnboardingService } from './pre-onboarding.service';
+import { PreOnboardingDetailsDto } from './dto/pre-onboarding.dto';
 
 /**
- * PUBLIC, no auth. ThrottlerGuard + @Throttle per route.
- * Scaffold shell (Keka wave D) — WS-D3 adds the routes:
- *   GET /public/pre-onboarding/:token
- *   PUT /public/pre-onboarding/:token/details
- *   POST /public/pre-onboarding/:token/documents/:documentKey (multipart)
- *   POST /public/pre-onboarding/:token/submit
+ * PUBLIC, no auth. Token-based pre-onboarding portal for a future joiner.
  */
 @ApiTags('public')
 @Controller('public/pre-onboarding')
 export class PublicPreOnboardingController {
   constructor(private readonly service: PreOnboardingService) {}
+
+  @Get(':token')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Get the pre-onboarding checklist for a token' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404, description: 'Invalid or expired link' })
+  get(@Param('token') token: string) {
+    return this.service.getPublic(token);
+  }
+
+  @Put(':token/details')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Save personal details' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 400, description: 'Locked after submission' })
+  @ApiResponse({ status: 404, description: 'Invalid or expired link' })
+  saveDetails(@Param('token') token: string, @Body() dto: PreOnboardingDetailsDto) {
+    return this.service.saveDetailsPublic(token, dto);
+  }
+
+  @Post(':token/documents/:documentKey')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
+  @ApiOperation({ summary: 'Upload a checklist document' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 400, description: 'Invalid document or locked after submission' })
+  @ApiResponse({ status: 404, description: 'Invalid or expired link' })
+  @UseInterceptors(FileInterceptor('file'))
+  uploadDocument(
+    @Param('token') token: string,
+    @Param('documentKey') documentKey: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.service.uploadDocumentPublic(token, documentKey, file);
+  }
+
+  @Post(':token/submit')
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Submit the pre-onboarding checklist' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 400, description: 'Required documents missing, or already submitted' })
+  @ApiResponse({ status: 404, description: 'Invalid or expired link' })
+  submit(@Param('token') token: string) {
+    return this.service.submitPublic(token);
+  }
 }
