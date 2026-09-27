@@ -26,6 +26,11 @@ import {
 } from './statutory.calculators';
 import { ageBandOn31March, collectsProfessionalTaxIn, DeductionLimits } from './tax-correctness.types';
 import { Section10AllowancesPaid, Section10ComponentHead } from './completion.types';
+import {
+  calculateSection89Relief,
+  Section89YearBasis,
+} from '../../exit/settlement/section-89-relief';
+import { toIncomeTaxConfigInput } from '../../exit/settlement/settlement-tax';
 
 /**
  * What the employer actually pays under each section 10 head.
@@ -81,6 +86,64 @@ export interface StatutoryInput {
    * exactly the figures they were computed from before.
    */
   section10Allowances?: Section10AllowancesInput;
+
+  // ---- Keka wave C (spec C.T). All optional; absent = today's behaviour. ----
+
+  /**
+   * The part of `grossPay` that does not recur: positive net arrears and
+   * taxable one-time earnings. Projected once rather than across the months
+   * that remain, its tax is deducted in full this month, and ESI and
+   * professional tax are computed on `grossPay` without it.
+   */
+  nonRecurringTaxable?: Decimal;
+  /**
+   * The part of `nonRecurringTaxable` that is arrears of earlier financial
+   * years, eligible for section 89 relief when the employee has furnished
+   * Form 10E for this year.
+   */
+  priorYearArrears?: { amount: Decimal; financialYears: number[] };
+  /**
+   * False for an off-cycle run: professional tax and LWF are monthly charges
+   * the month's regular run makes. Defaults to true.
+   */
+  chargeMonthlyStatutory?: boolean;
+  /**
+   * The run being computed. Its own payslips (from an earlier compute of the
+   * same run) are not "year to date": counting them would project this month
+   * twice on a recompute.
+   */
+  excludePayrollRunId?: string;
+  /**
+   * Off-cycle run paying no salary: the regular salary the rest of the year
+   * is projected on, and over how many months it is still to be paid. When
+   * set, only the tax attributable to `nonRecurringTaxable` is deducted — the
+   * recurring instalment is the regular run's business.
+   */
+  offCycleProjection?: { regularMonthlyGross: Decimal; monthsAhead: number };
+}
+
+/** Non-recurring taxable income of an input, never negative. */
+function nonRecurringOf(input: StatutoryInput): Decimal {
+  const value = input.nonRecurringTaxable;
+  return value && value.gt(0) ? value : ZERO;
+}
+
+/** TDS is deducted in whole rupees (section 288B), as the instalment is. */
+function toWholeRupees(value: Decimal): Decimal {
+  return value.toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+}
+
+/** Section 89 relief recorded in a stored tax computation, or zero. */
+function section89ReliefOf(taxComputation: unknown): Decimal {
+  const relief = (taxComputation as { section89?: { relief?: unknown } } | null)?.section89
+    ?.relief;
+  if (relief === undefined || relief === null) return ZERO;
+  try {
+    const value = new Decimal(relief as Decimal.Value);
+    return value.gt(0) ? value : ZERO;
+  } catch {
+    return ZERO;
+  }
 }
 
 export interface StatutoryResult {
@@ -449,8 +512,16 @@ export class StatutoryService {
 
     const pf = calculatePf(input.pfWages, config, input.pfOptOut);
 
+    // ESI and professional tax are monthly charges on the month's regular
+    // wages: a bonus or arrears paid this month does not push the employee
+    // over the ESI limit or into a higher PT slab (spec C.T). Without
+    // non-recurring income this is exactly the gross.
+    const nonRecurring = nonRecurringOf(input);
+    const regularGross = nonRecurring.gt(0) ? input.grossPay.sub(nonRecurring) : input.grossPay;
+    const chargeMonthly = input.chargeMonthlyStatutory ?? true;
+
     const esi = calculateEsi(
-      input.grossPay,
+      regularGross,
       config,
       await this.wasCoveredEarlierInEsiPeriod(input),
     );
@@ -458,16 +529,21 @@ export class StatutoryService {
     // An empty (or unset) ptMonths means every month, which is what every
     // tenant that predates the column gets, so their deduction cannot move.
     const professionalTax =
-      config.ptEnabled && collectsProfessionalTaxIn(input.month, config.ptMonths)
+      chargeMonthly &&
+      config.ptEnabled &&
+      collectsProfessionalTaxIn(input.month, config.ptMonths)
         ? calculateProfessionalTax(
-            input.grossPay,
+            regularGross,
             await this.loadPtSlabs(input.tenantId, config.ptState),
             input.month,
             input.gender,
           )
         : ZERO;
 
-    const lwf = calculateLwf(config, input.month);
+    // Off-cycle runs leave LWF to the month's regular run.
+    const lwf = chargeMonthly
+      ? calculateLwf(config, input.month)
+      : { employee: ZERO, employer: ZERO };
 
     const { tds, taxComputation } = config.tdsEnabled
       ? await this.computeTds(input, config, professionalTax)
@@ -531,6 +607,7 @@ export class StatutoryService {
             { year: period.startYear, month: { gte: period.startMonth } },
             { year: period.endYear, month: { lte: period.endMonth } },
           ],
+          ...(input.excludePayrollRunId ? { id: { not: input.excludePayrollRunId } } : {}),
         },
       },
       select: { id: true },
@@ -602,7 +679,23 @@ export class StatutoryService {
 
     const ytd = await this.yearToDateTotals(input, financialYear);
 
-    const annualGross = ytd.gross.add(input.grossPay.mul(remainingMonths));
+    // Keka wave C (spec C.T): a non-recurring amount (bonus, arrears) is
+    // projected once, not repeated across the months that remain. An
+    // off-cycle run paying no salary projects the regular salary instead of
+    // this payslip. With neither, this is exactly `ytd + gross × remaining`.
+    const nonRecurring = nonRecurringOf(input);
+    const projection = input.offCycleProjection;
+    const recurringThisMonth = nonRecurring.gt(0)
+      ? input.grossPay.sub(nonRecurring)
+      : input.grossPay;
+    const annualGrossWithout = projection
+      ? ytd.gross
+          .add(recurringThisMonth)
+          .add(projection.regularMonthlyGross.mul(projection.monthsAhead))
+      : ytd.gross.add(recurringThisMonth.mul(remainingMonths));
+    const annualGross = nonRecurring.gt(0)
+      ? annualGrossWithout.add(nonRecurring)
+      : annualGrossWithout;
     const annualProfessionalTax = ytd.professionalTax.add(
       professionalTaxThisMonth.mul(remainingMonths),
     );
@@ -783,11 +876,85 @@ export class StatutoryService {
 
     // Tax already collected this year, whether by us or a previous employer.
     const alreadyDeducted = ytd.tds.add(declarations.previousEmployerTds);
-    const tds = monthlyTdsInstalment(computed.totalTax, alreadyDeducted, remainingMonths);
+
+    // Keka wave C (spec C.T). With no non-recurring income, no off-cycle
+    // projection and no relief given earlier this year, this is exactly the
+    // single instalment it always was, and the working gains no keys.
+    const waveC =
+      nonRecurring.gt(0) || projection !== undefined || ytd.section89Relief.gt(0);
+    let tds: Decimal;
+    let nonRecurringWorking: Record<string, unknown> = {};
+
+    if (!waveC) {
+      tds = monthlyTdsInstalment(computed.totalTax, alreadyDeducted, remainingMonths);
+    } else {
+      // The year's tax without this month's non-recurring amount, with the
+      // same arguments otherwise, so the difference is the tax on it alone.
+      const computedWithout: IncomeTaxResult | null = nonRecurring.gt(0)
+        ? annualAllowancesPaid
+          ? calculateIncomeTax(annualGrossWithout, taxArgs[1], taxArgs[2], taxArgs[3], annualAllowancesPaid)
+          : calculateIncomeTax(annualGrossWithout, taxArgs[1], taxArgs[2], taxArgs[3])
+        : null;
+
+      // Relief already given this year stays given: it is taken off the year's
+      // tax before the recurring part is spread, or later months would claw
+      // it back.
+      const recurringAnnualTax = (computedWithout ?? computed).totalTax.sub(
+        ytd.section89Relief,
+      );
+      // An off-cycle run paying no salary leaves the recurring instalment to
+      // the month's regular run.
+      const recurringInstalment = projection
+        ? ZERO
+        : monthlyTdsInstalment(recurringAnnualTax, alreadyDeducted, remainingMonths);
+      // The whole tax on the non-recurring amount is deducted now.
+      const taxOnNonRecurring = computedWithout
+        ? Decimal.max(computed.totalTax.sub(computedWithout.totalTax), ZERO)
+        : ZERO;
+
+      const section89 = input.priorYearArrears?.amount.gt(0)
+        ? await this.section89OnArrears({
+            input,
+            financialYear,
+            regime,
+            ageBand: ageBandRequested,
+            receiptConfig: taxArgs[1],
+            declaration: taxArgs[2],
+            professionalTaxPaid: annualProfessionalTax,
+            annualGross,
+            form10EFurnished:
+              (declaration as { form10EFurnished?: boolean } | null)?.form10EFurnished ?? false,
+          })
+        : null;
+      const relief = section89 ? new Decimal(section89.relief) : ZERO;
+
+      tds = toWholeRupees(
+        Decimal.max(recurringInstalment.add(taxOnNonRecurring).sub(relief), ZERO),
+      );
+
+      nonRecurringWorking = {
+        nonRecurringTaxable: nonRecurring.toFixed(2),
+        annualGrossWithoutNonRecurring: annualGrossWithout.toFixed(2),
+        annualTaxWithoutNonRecurring: (computedWithout ?? computed).totalTax.toFixed(2),
+        taxOnNonRecurring: taxOnNonRecurring.toFixed(2),
+        recurringInstalment: recurringInstalment.toFixed(2),
+        section89ReliefEarlierThisYear: ytd.section89Relief.toFixed(2),
+        ...(projection
+          ? {
+              offCycleProjection: {
+                regularMonthlyGross: projection.regularMonthlyGross.toFixed(2),
+                monthsAhead: projection.monthsAhead,
+              },
+            }
+          : {}),
+        ...(section89 ? { section89 } : {}),
+      };
+    }
 
     return {
       tds,
       taxComputation: {
+        ...nonRecurringWorking,
         financialYear,
         regime,
         // Which age band's slabs were actually used, whether that required
@@ -867,6 +1034,79 @@ export class StatutoryService {
   }
 
   /**
+   * Section 89 relief on arrears of earlier financial years paid this month
+   * (Keka wave C, spec C1), through the same `calculateSection89Relief` a
+   * settlement uses and with its input built the same way: the year of
+   * receipt plus one basis per earlier year, each with that year's own slabs
+   * from `resolveIncomeTaxConfig`, and no gratuity.
+   *
+   * Refused (relief 0, with the reason) without Form 10E for the year.
+   */
+  private async section89OnArrears(args: {
+    input: StatutoryInput;
+    financialYear: number;
+    regime: TaxRegime;
+    ageBand: TaxAgeBand;
+    receiptConfig: Parameters<typeof calculateIncomeTax>[1];
+    declaration: Parameters<typeof calculateIncomeTax>[2];
+    professionalTaxPaid: Decimal;
+    annualGross: Decimal;
+    form10EFurnished: boolean;
+  }): Promise<Record<string, unknown> & { relief: string }> {
+    const arrears = args.input.priorYearArrears!.amount;
+    const priorYears = [...new Set(args.input.priorYearArrears!.financialYears)]
+      .filter((fy) => fy < args.financialYear)
+      .sort((a, b) => b - a);
+
+    const receiptYear: Section89YearBasis = {
+      financialYear: args.financialYear,
+      config: args.receiptConfig,
+    };
+    // No fallback warning for an earlier year: a missing year makes the
+    // relief module refuse and name it, rather than borrow another year's slabs.
+    const earlier: Section89YearBasis[] = await Promise.all(
+      priorYears.map(async (fy) => {
+        const row = await resolveIncomeTaxConfig(
+          this.prisma,
+          args.input.tenantId,
+          fy,
+          args.regime,
+          args.ageBand,
+        );
+        return {
+          financialYear: fy,
+          config: row ? toIncomeTaxConfigInput(row.taxConfig, args.regime, row.ageBandUsed) : null,
+        };
+      }),
+    );
+
+    const outcome = calculateSection89Relief({
+      totalIncomeWithArrears: args.annualGross,
+      totalIncomeWithoutArrears: args.annualGross.sub(arrears),
+      arrears,
+      yearsEarnedOver: 1 + earlier.length,
+      receiptYear,
+      spreadYears: [receiptYear, ...earlier],
+      declaration: args.declaration,
+      professionalTaxPaid: args.professionalTaxPaid,
+      form10EFurnished: args.form10EFurnished,
+    });
+
+    return {
+      relief: outcome.relief.toFixed(2),
+      ineligibleReason: outcome.ineligibleReason,
+      arrears: arrears.toFixed(2),
+      priorFinancialYears: priorYears,
+      form10EFurnished: args.form10EFurnished,
+      taxWithArrears: outcome.taxWithArrears.toFixed(2),
+      taxWithoutArrears: outcome.taxWithoutArrears.toFixed(2),
+      taxIfSpread: outcome.taxIfSpread.toFixed(2),
+      years: outcome.working.years,
+      note: outcome.working.note,
+    };
+  }
+
+  /**
    * The sum of the employee's approved proofs for the year, by declaration
    * field. Only approved rows count: a pending proof has not been accepted and
    * a rejected one never will be.
@@ -930,6 +1170,8 @@ export class StatutoryService {
     gross: Decimal;
     professionalTax: Decimal;
     tds: Decimal;
+    /** Section 89 relief already given on earlier payslips of the year. */
+    section89Relief: Decimal;
     section10: Section10AllowancesPaid | null;
   }> {
     const names = input.section10Allowances?.componentNames;
@@ -943,12 +1185,15 @@ export class StatutoryService {
             { year: financialYear, month: { gte: 4 } },
             { year: financialYear + 1, month: { lte: 3 } },
           ],
+          ...(input.excludePayrollRunId ? { id: { not: input.excludePayrollRunId } } : {}),
         },
       },
       select: {
         grossPay: true,
         professionalTax: true,
         tds: true,
+        // Section 89 relief already given this year (Keka wave C).
+        taxComputation: true,
         ...(names ? { earnings: true } : {}),
       },
     });
@@ -958,8 +1203,11 @@ export class StatutoryService {
         gross: acc.gross.add(new Decimal(p.grossPay)),
         professionalTax: acc.professionalTax.add(new Decimal(p.professionalTax)),
         tds: acc.tds.add(new Decimal(p.tds)),
+        section89Relief: acc.section89Relief.add(
+          section89ReliefOf((p as { taxComputation?: unknown }).taxComputation),
+        ),
       }),
-      { gross: ZERO, professionalTax: ZERO, tds: ZERO },
+      { gross: ZERO, professionalTax: ZERO, tds: ZERO, section89Relief: ZERO },
     );
 
     if (!names) return { ...totals, section10: null };
