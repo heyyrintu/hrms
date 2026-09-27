@@ -62,6 +62,8 @@ const TYPE_LABELS: Record<WorkflowEntityType, string> = {
   COMP_OFF: 'Comp-off request',
   REGULARIZATION: 'Attendance regularization',
   PAYROLL_RUN: 'Payroll run',
+  JOB_REQUISITION: 'Job requisition',
+  OFFER: 'Job offer',
 };
 
 type Db = Prisma.TransactionClient | PrismaService;

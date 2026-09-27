@@ -15,7 +15,10 @@ export type WorkflowEntityType =
   | 'LOAN'
   | 'COMP_OFF'
   | 'REGULARIZATION'
-  | 'PAYROLL_RUN';
+  | 'PAYROLL_RUN'
+  // Keka wave D (hiring)
+  | 'JOB_REQUISITION'
+  | 'OFFER';
 
 export type WorkflowApproverType =
   | 'REPORTING_MANAGER'
@@ -33,6 +36,8 @@ export const WORKFLOW_ENTITY_TYPES: WorkflowEntityType[] = [
   'COMP_OFF',
   'REGULARIZATION',
   'PAYROLL_RUN',
+  'JOB_REQUISITION',
+  'OFFER',
 ];
 
 export const WORKFLOW_ENTITY_LABELS: Record<WorkflowEntityType, string> = {
@@ -42,6 +47,8 @@ export const WORKFLOW_ENTITY_LABELS: Record<WorkflowEntityType, string> = {
   COMP_OFF: 'Comp-Off',
   REGULARIZATION: 'Regularization',
   PAYROLL_RUN: 'Payroll Run',
+  JOB_REQUISITION: 'Job Requisition',
+  OFFER: 'Job Offer',
 };
 
 export const APPROVER_TYPE_LABELS: Record<WorkflowApproverType, string> = {

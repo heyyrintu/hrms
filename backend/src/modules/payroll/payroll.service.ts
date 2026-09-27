@@ -95,10 +95,14 @@ export class PayrollService {
     // Check for duplicate
     const existing = await this.prisma.payrollRun.findUnique({
       where: {
-        tenantId_month_year: {
+        // The month's REGULAR run is always sequence 0; off-cycle runs
+        // (Keka wave C) share the month with higher sequences.
+        tenantId_month_year_runType_sequence: {
           tenantId,
           month: dto.month,
           year: dto.year,
+          runType: 'REGULAR',
+          sequence: 0,
         },
       },
     });

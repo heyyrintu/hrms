@@ -209,7 +209,13 @@ describe('PayrollService', () => {
 
       expect(prisma.payrollRun.findUnique).toHaveBeenCalledWith({
         where: {
-          tenantId_month_year: { tenantId, month: 1, year: 2026 },
+          tenantId_month_year_runType_sequence: {
+            tenantId,
+            month: 1,
+            year: 2026,
+            runType: 'REGULAR',
+            sequence: 0,
+          },
         },
       });
       expect(prisma.payrollRun.create).toHaveBeenCalledWith({

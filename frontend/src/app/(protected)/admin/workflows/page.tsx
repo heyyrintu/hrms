@@ -36,7 +36,14 @@ import { cn } from '@/lib/utils';
 const MAX_WORKFLOW_STEPS = 10;
 
 /** Which condition a later step may carry, per request type. */
-const AMOUNT_TYPES: WorkflowEntityType[] = ['EXPENSE', 'LOAN', 'PAYROLL_RUN'];
+const AMOUNT_TYPES: WorkflowEntityType[] = [
+  'EXPENSE',
+  'LOAN',
+  'PAYROLL_RUN',
+  // Keka wave D: requisition budget (max × headcount) and offer annual CTC.
+  'JOB_REQUISITION',
+  'OFFER',
+];
 const DAYS_TYPES: WorkflowEntityType[] = ['LEAVE', 'COMP_OFF'];
 
 const APPROVER_TYPES = Object.keys(APPROVER_TYPE_LABELS) as WorkflowApproverType[];

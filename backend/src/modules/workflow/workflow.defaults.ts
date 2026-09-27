@@ -27,6 +27,11 @@ export const WORKFLOW_DEFAULTS: Record<WorkflowEntityType, WorkflowDefaultDefini
   LOAN: { name: 'Loan approval', ...HR_ONLY },
   // Maker-checker: whoever computed the run may not approve it.
   PAYROLL_RUN: { name: 'Payroll run approval', ...HR_ONLY, allowSelfApproval: false },
+  // Keka wave D (hiring). Nothing was in flight when these were added, so no
+  // migration backfill mirrors them. Self-approval stays allowed so a
+  // one-person HR team is not deadlocked; tenants tighten it in the builder.
+  JOB_REQUISITION: { name: 'Job requisition approval', ...HR_ONLY },
+  OFFER: { name: 'Job offer approval', ...HR_ONLY },
 };
 
 export const WORKFLOW_ENTITY_TYPES = Object.keys(WORKFLOW_DEFAULTS) as WorkflowEntityType[];

@@ -128,6 +128,27 @@ model Tenant {
   workflowDefinitions     WorkflowDefinition[]
   approvalInstances       ApprovalInstance[]
   approvalDelegations     ApprovalDelegation[]
+  // Keka wave C (payroll depth)
+  payrollOneTimePayments  PayrollOneTimePayment[]
+  salaryArrears           SalaryArrear[]
+  salaryHolds             SalaryHold[]
+  payrollSettings         PayrollSettings?
+  payrollGlMappings       PayrollGlMapping[]
+  payrollAccountingConfig PayrollAccountingConfig?
+  // Keka wave D (hiring)
+  recruitmentSettings       RecruitmentSettings?
+  jobRequisitions           JobRequisition[]
+  jobOpenings               JobOpening[]
+  pipelineStages            PipelineStage[]
+  candidates                Candidate[]
+  jobApplications           JobApplication[]
+  jobApplicationStageEvents JobApplicationStageEvent[]
+  interviews                Interview[]
+  interviewPanelists        InterviewPanelist[]
+  interviewFeedback         InterviewFeedback[]
+  jobOffers                 JobOffer[]
+  preOnboardingInvites      PreOnboardingInvite[]
+  preOnboardingDocuments    PreOnboardingDocument[]
 
   @@map("tenants")
 }
@@ -191,6 +212,9 @@ model Department {
   parent    Department?  @relation("DepartmentHierarchy", fields: [parentId], references: [id])
   children  Department[] @relation("DepartmentHierarchy")
   employees Employee[]
+  jobRequisitions JobRequisition[]
+  jobOpenings     JobOpening[]
+  jobOffers       JobOffer[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -207,6 +231,9 @@ model Designation {
 
   tenant    Tenant     @relation(fields: [tenantId], references: [id])
   employees Employee[]
+  jobRequisitions JobRequisition[]
+  jobOpenings     JobOpening[]
+  jobOffers       JobOffer[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -229,6 +256,8 @@ model Branch {
 
   tenant    Tenant     @relation(fields: [tenantId], references: [id])
   employees Employee[]
+  jobOpenings JobOpening[]
+  jobOffers   JobOffer[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -364,6 +393,19 @@ model Employee {
   processedSeparations  Separation[]               @relation("SeparationProcessedBy")
   loans                 EmployeeLoan[]
   hrTickets             HrTicket[]
+  // Keka wave C
+  oneTimePayments        PayrollOneTimePayment[]
+  salaryArrears          SalaryArrear[]
+  salaryHolds            SalaryHold[]
+  // Keka wave D
+  managedRequisitions    JobRequisition[]    @relation("RequisitionHiringManager")
+  managedOpenings        JobOpening[]        @relation("OpeningHiringManager")
+  referredCandidates     Candidate[]         @relation("CandidateReferrer")
+  interviewPanels        InterviewPanelist[]
+  interviewFeedbackGiven InterviewFeedback[]
+  jobOffersAsManager     JobOffer[]          @relation("OfferReportingManager")
+  jobOffersConverted     JobOffer[]          @relation("OfferEmployee")
+  preOnboardingInvites   PreOnboardingInvite[]
 
   @@unique([tenantId, employeeCode])
   @@unique([tenantId, email])
@@ -756,6 +798,8 @@ model Upload {
   documents    EmployeeDocument[]
   expenseClaims ExpenseClaim[]
   investmentProofs InvestmentProof[]
+  candidateResumes   Candidate[]      @relation("CandidateResume")
+  applicationResumes JobApplication[] @relation("ApplicationResume")
 
   @@index([tenantId])
   @@index([entityType, entityId])
@@ -881,6 +925,7 @@ model EmployeeDocument {
   tenant   Tenant   @relation(fields: [tenantId], references: [id])
   employee Employee @relation(fields: [employeeId], references: [id])
   upload   Upload   @relation(fields: [uploadId], references: [id])
+  preOnboardingDocuments PreOnboardingDocument[]
 
   @@index([tenantId])
   @@index([employeeId])
@@ -965,6 +1010,20 @@ enum NotificationType {
   LEAVE_CARRIED_FORWARD
   APPROVAL_REQUIRED
   APPROVAL_STEP_APPROVED
+  // Keka wave C
+  SALARY_HELD
+  SALARY_RELEASED
+  // Keka wave D
+  REQUISITION_APPROVED
+  REQUISITION_REJECTED
+  APPLICATION_RECEIVED
+  INTERVIEW_SCHEDULED
+  INTERVIEW_FEEDBACK_SUBMITTED
+  OFFER_APPROVED
+  OFFER_REJECTED
+  OFFER_ACCEPTED
+  OFFER_DECLINED
+  PRE_ONBOARDING_SUBMITTED
   GENERAL
 }
 
@@ -1048,6 +1107,7 @@ model SalaryStructure {
   // Relations
   tenant           Tenant           @relation(fields: [tenantId], references: [id])
   employeeSalaries EmployeeSalary[]
+  jobOffers        JobOffer[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -1070,6 +1130,7 @@ model EmployeeSalary {
   tenant          Tenant          @relation(fields: [tenantId], references: [id])
   employee        Employee        @relation(fields: [employeeId], references: [id])
   salaryStructure SalaryStructure @relation(fields: [salaryStructureId], references: [id])
+  arrears         SalaryArrear[]
 
   @@index([tenantId])
   @@index([employeeId])
@@ -1094,14 +1155,39 @@ model PayrollRun {
   // allows self-approval. Null for runs computed before Wave B.
   processedById   String?
   approvedAt      DateTime?
+  /// When the run was marked PAID. Reimbursements, arrears and settlements
+  /// carried by the run are settled at this moment (Keka wave C).
+  paidAt          DateTime?
+
+  // ---- Keka wave C ----
+  /// REGULAR is the month's one ordinary run (sequence 0). OFF_CYCLE runs pay
+  /// corrections, one-time payments, arrears, released holds or settlements
+  /// to a limited set of employees (sequence 1..n within the month).
+  runType          PayrollRunType @default(REGULAR)
+  sequence         Int            @default(0)
+  offCycleReason   String?        @db.VarChar(500)
+  /// Off-cycle only: also compute the month's full salary for the scope.
+  includeSalary    Boolean        @default(false)
+  /// Off-cycle only: the employees the run is limited to.
+  scopeEmployeeIds String[]       @default([])
+  /// An input (one-time payment, hold release) changed after the run was
+  /// computed. Approval is refused until it is recomputed.
+  needsRecompute   Boolean        @default(false)
+
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
   // Relations
-  tenant   Tenant    @relation(fields: [tenantId], references: [id])
-  payslips Payslip[]
+  tenant          Tenant                  @relation(fields: [tenantId], references: [id])
+  payslips        Payslip[]
+  oneTimePayments PayrollOneTimePayment[]
+  arrears         SalaryArrear[]
+  holds           SalaryHold[]            @relation("HoldRun")
+  holdReleases    SalaryHold[]            @relation("HoldReleaseRun")
+  expenseClaims   ExpenseClaim[]
+  settlements     Settlement[]
 
-  @@unique([tenantId, month, year])
+  @@unique([tenantId, month, year, runType, sequence])
   @@index([tenantId])
   @@map("payroll_runs")
 }
@@ -1143,6 +1229,19 @@ model Payslip {
   /// How the TDS figure was arrived at, for the payslip and for Form 16 later.
   taxComputation  Json?
 
+  // ---- Keka wave C ----
+  // netPay = grossPay + nonTaxableEarnings - totalDeductions.
+  /// Part of grossPay that does not recur (positive arrears, taxable one-time
+  /// earnings). TDS projects it once rather than across the remaining months.
+  nonRecurringTaxable Decimal @default(0) @db.Decimal(12, 2)
+  /// Paid on top of grossPay without tax: reimbursements, non-taxable one-time
+  /// earnings, released held salary, exempt settlement parts.
+  nonTaxableEarnings  Decimal @default(0) @db.Decimal(12, 2)
+  /// Net arrears included in grossPay (positive side only).
+  arrearsAmount       Decimal @default(0) @db.Decimal(12, 2)
+  /// Expense reimbursements included in nonTaxableEarnings.
+  reimbursementAmount Decimal @default(0) @db.Decimal(12, 2)
+
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -1150,6 +1249,7 @@ model Payslip {
   tenant     Tenant     @relation(fields: [tenantId], references: [id])
   payrollRun PayrollRun @relation(fields: [payrollRunId], references: [id])
   employee   Employee   @relation(fields: [employeeId], references: [id])
+  arrearsFor SalaryArrear[]
 
   @@unique([payrollRunId, employeeId])
   @@index([tenantId])
@@ -1204,19 +1304,24 @@ model ExpenseClaim {
   approverNote String?
   approvedAt   DateTime?
   reimbursedAt DateTime?
+  /// Keka wave C: the payroll run paying this APPROVED claim, when the tenant
+  /// reimburses through payroll. REIMBURSED when that run is marked PAID.
+  payrollRunId String?
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
 
   // Relations
-  tenant   Tenant          @relation(fields: [tenantId], references: [id])
-  employee Employee        @relation(fields: [employeeId], references: [id])
-  category ExpenseCategory @relation(fields: [categoryId], references: [id])
-  receipt  Upload?         @relation(fields: [receiptId], references: [id])
-  approver Employee?       @relation("ExpenseApprover", fields: [approverId], references: [id])
+  tenant     Tenant          @relation(fields: [tenantId], references: [id])
+  employee   Employee        @relation(fields: [employeeId], references: [id])
+  category   ExpenseCategory @relation(fields: [categoryId], references: [id])
+  receipt    Upload?         @relation(fields: [receiptId], references: [id])
+  approver   Employee?       @relation("ExpenseApprover", fields: [approverId], references: [id])
+  payrollRun PayrollRun?     @relation(fields: [payrollRunId], references: [id])
 
   @@index([tenantId])
   @@index([employeeId])
   @@index([status])
+  @@index([payrollRunId])
   @@map("expense_claims")
 }
 
@@ -1573,6 +1678,7 @@ model LetterTemplate {
 
   tenant            Tenant            @relation(fields: [tenantId], references: [id])
   lettersGenerated  LetterGenerated[]
+  jobOffers         JobOffer[]
 
   @@index([tenantId])
   @@index([type])
@@ -2112,16 +2218,20 @@ model Settlement {
   approvedBy String?
   approvedAt DateTime?
   paidAt     DateTime?
+  /// Keka wave C: the off-cycle payroll run disbursing this settlement, if any.
+  payrollRunId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  tenant     Tenant     @relation(fields: [tenantId], references: [id])
-  separation Separation @relation(fields: [separationId], references: [id])
-  employee   Employee   @relation("SettlementEmployee", fields: [employeeId], references: [id])
+  tenant     Tenant      @relation(fields: [tenantId], references: [id])
+  separation Separation  @relation(fields: [separationId], references: [id])
+  employee   Employee    @relation("SettlementEmployee", fields: [employeeId], references: [id])
+  payrollRun PayrollRun? @relation(fields: [payrollRunId], references: [id])
 
   @@index([tenantId])
   @@index([employeeId])
+  @@index([payrollRunId])
   @@map("settlements")
 }
 
@@ -2467,6 +2577,9 @@ enum WorkflowEntityType {
   COMP_OFF
   REGULARIZATION
   PAYROLL_RUN
+  // Keka wave D
+  JOB_REQUISITION
+  OFFER
 }
 
 enum WorkflowApproverType {
@@ -2597,4 +2710,656 @@ model ApprovalDelegation {
   @@index([tenantId, delegateUserId])
   @@index([tenantId, delegatorUserId])
   @@map("approval_delegations")
+}
+
+// ============================================================================
+// Keka wave C: payroll depth
+// Spec: docs/superpowers/specs/2026-09-27-keka-wave-c-d-design.md (Part C)
+// ============================================================================
+
+enum PayrollRunType {
+  REGULAR
+  OFF_CYCLE
+}
+
+enum OneTimePaymentKind {
+  BONUS
+  INCENTIVE
+  COMMISSION
+  OTHER_EARNING
+  RECOVERY
+  OTHER_DEDUCTION
+}
+
+enum SalaryArrearStatus {
+  PENDING
+  INCLUDED
+  PAID
+  CANCELLED
+}
+
+enum SalaryHoldStatus {
+  HELD
+  RELEASED
+  VOIDED
+}
+
+enum AccountingCostCenterMode {
+  NONE
+  DEPARTMENT
+  BRANCH
+}
+
+/// A bonus, incentive or ad-hoc deduction attached to one run for one employee.
+model PayrollOneTimePayment {
+  id           String             @id @default(uuid())
+  tenantId     String
+  payrollRunId String
+  employeeId   String
+  kind         OneTimePaymentKind
+  /// Label on the payslip; also the key the GL mapping matches first.
+  name         String             @db.VarChar(100)
+  amount       Decimal            @db.Decimal(12, 2)
+  /// Earnings only. Deductions are always post-tax and stored false.
+  taxable      Boolean            @default(true)
+  note         String?            @db.VarChar(500)
+  createdById  String
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id])
+  payrollRun PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  employee   Employee   @relation(fields: [employeeId], references: [id])
+
+  @@index([tenantId, payrollRunId])
+  @@index([employeeId])
+  @@map("payroll_one_time_payments")
+}
+
+/// The difference a backdated salary revision makes to one month already paid.
+model SalaryArrear {
+  id                String             @id @default(uuid())
+  tenantId          String
+  employeeId        String
+  /// The revision that caused it.
+  employeeSalaryId  String
+  forMonth          Int
+  forYear           Int
+  /// Financial year (April start) of forMonth/forYear, for section 89.
+  financialYear     Int
+  /// The payslip originally paid for that month.
+  originalPayslipId String
+  originalAmount    Decimal            @db.Decimal(12, 2)
+  revisedAmount     Decimal            @db.Decimal(12, 2)
+  /// revised - original. Negative is a recovery.
+  amount            Decimal            @db.Decimal(12, 2)
+  pfWagesDelta      Decimal            @default(0) @db.Decimal(12, 2)
+  /// [{ name, original, revised, delta }]
+  lines             Json               @default("[]")
+  status            SalaryArrearStatus @default(PENDING)
+  /// The run paying it once INCLUDED.
+  payrollRunId      String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  tenant          Tenant         @relation(fields: [tenantId], references: [id])
+  employee        Employee       @relation(fields: [employeeId], references: [id])
+  employeeSalary  EmployeeSalary @relation(fields: [employeeSalaryId], references: [id])
+  originalPayslip Payslip        @relation(fields: [originalPayslipId], references: [id])
+  payrollRun      PayrollRun?    @relation(fields: [payrollRunId], references: [id])
+
+  @@unique([employeeSalaryId, forMonth, forYear])
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@index([payrollRunId])
+  @@map("salary_arrears")
+}
+
+/// Net pay withheld from one employee in one run; later released or voided.
+model SalaryHold {
+  id           String           @id @default(uuid())
+  tenantId     String
+  employeeId   String
+  /// The run the salary is held in.
+  payrollRunId String
+  reason       String           @db.VarChar(500)
+  status       SalaryHoldStatus @default(HELD)
+  /// The held payslip's net pay, frozen at release or void.
+  heldAmount   Decimal?         @db.Decimal(12, 2)
+  /// The run paying it out once RELEASED.
+  releaseRunId String?
+  releasedAt   DateTime?
+  releasedById String?
+  voidedAt     DateTime?
+  voidedById   String?
+  voidReason   String?          @db.VarChar(500)
+  createdById  String
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  tenant     Tenant      @relation(fields: [tenantId], references: [id])
+  employee   Employee    @relation(fields: [employeeId], references: [id])
+  payrollRun PayrollRun  @relation("HoldRun", fields: [payrollRunId], references: [id], onDelete: Cascade)
+  releaseRun PayrollRun? @relation("HoldReleaseRun", fields: [releaseRunId], references: [id])
+
+  @@unique([payrollRunId, employeeId])
+  @@index([tenantId, status])
+  @@index([releaseRunId])
+  @@map("salary_holds")
+}
+
+model PayrollSettings {
+  id                          String   @id @default(uuid())
+  tenantId                    String   @unique
+  /// APPROVED expense claims are paid as a non-taxable line by payroll and
+  /// marked REIMBURSED when the run is paid. Off = the manual flow.
+  reimburseExpensesViaPayroll Boolean  @default(false)
+  /// Detect arrears for backdated salary revisions when a regular run is processed.
+  autoArrears                 Boolean  @default(true)
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("payroll_settings")
+}
+
+/// One ledger account per payslip line name or system key (see
+/// payroll/accounting/accounting.types.ts GL_SYSTEM_KEYS).
+model PayrollGlMapping {
+  id           String   @id @default(uuid())
+  tenantId     String
+  componentKey String   @db.VarChar(100)
+  glCode       String   @db.VarChar(50)
+  glName       String   @db.VarChar(150)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, componentKey])
+  @@map("payroll_gl_mappings")
+}
+
+model PayrollAccountingConfig {
+  id                String                   @id @default(uuid())
+  tenantId          String                   @unique
+  /// Unmapped keys post here when an export allows it.
+  suspenseGlCode    String?                  @db.VarChar(50)
+  suspenseGlName    String?                  @db.VarChar(150)
+  costCenterMode    AccountingCostCenterMode @default(NONE)
+  tallyCompanyName  String?                  @db.VarChar(150)
+  tallyVoucherType  String                   @default("Journal") @db.VarChar(50)
+  narrationTemplate String                   @default("Salary for {{month}} {{year}}") @db.VarChar(200)
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("payroll_accounting_configs")
+}
+
+// ============================================================================
+// Keka wave D: hiring (applicant tracking)
+// Spec: docs/superpowers/specs/2026-09-27-keka-wave-c-d-design.md (Part D)
+// ============================================================================
+
+enum JobRequisitionStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  CANCELLED
+  FILLED
+}
+
+enum JobOpeningStatus {
+  DRAFT
+  OPEN
+  ON_HOLD
+  CLOSED
+}
+
+enum PipelineStageCategory {
+  APPLIED
+  SCREENING
+  INTERVIEW
+  OFFER
+  HIRED
+  REJECTED
+}
+
+enum CandidateSource {
+  CAREERS_PAGE
+  REFERRAL
+  AGENCY
+  JOB_BOARD
+  DIRECT
+  OTHER
+}
+
+enum JobApplicationStatus {
+  ACTIVE
+  REJECTED
+  WITHDRAWN
+  HIRED
+}
+
+enum InterviewMode {
+  IN_PERSON
+  VIDEO
+  PHONE
+}
+
+enum InterviewStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum InterviewRecommendation {
+  STRONG_HIRE
+  HIRE
+  NO_HIRE
+  STRONG_NO_HIRE
+}
+
+enum JobOfferStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  SENT
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  WITHDRAWN
+}
+
+enum PreOnboardingStatus {
+  INVITED
+  IN_PROGRESS
+  SUBMITTED
+  COMPLETED
+  REVOKED
+  EXPIRED
+}
+
+model RecruitmentSettings {
+  id                      String   @id @default(uuid())
+  tenantId                String   @unique
+  /// The public careers page (/careers/<tenant code>) is off until enabled.
+  careersPageEnabled      Boolean  @default(false)
+  careersIntro            String?  @db.Text
+  offerExpiryDays         Int      @default(7)
+  preOnboardingExpiryDays Int      @default(14)
+  /// [{ key, label, category (DocumentCategory), required }]
+  preOnboardingDocuments  Json     @default("[]")
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("recruitment_settings")
+}
+
+model JobRequisition {
+  id                  String               @id @default(uuid())
+  tenantId            String
+  title               String               @db.VarChar(150)
+  departmentId        String?
+  designationId       String?
+  hiringManagerId     String?
+  headcount           Int                  @default(1)
+  employmentType      EmploymentType       @default(PERMANENT)
+  /// Annual CTC budget per position.
+  budgetMin           Decimal?             @db.Decimal(14, 2)
+  budgetMax           Decimal?             @db.Decimal(14, 2)
+  justification       String?              @db.Text
+  status              JobRequisitionStatus @default(DRAFT)
+  /// User who raised it (the approval requester).
+  requestedById       String
+  requesterEmployeeId String?
+  submittedAt         DateTime?
+  decidedAt           DateTime?
+  decisionNote        String?              @db.VarChar(1000)
+  filledCount         Int                  @default(0)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  tenant        Tenant       @relation(fields: [tenantId], references: [id])
+  department    Department?  @relation(fields: [departmentId], references: [id])
+  designation   Designation? @relation(fields: [designationId], references: [id])
+  hiringManager Employee?    @relation("RequisitionHiringManager", fields: [hiringManagerId], references: [id])
+  openings      JobOpening[]
+
+  @@index([tenantId, status])
+  @@map("job_requisitions")
+}
+
+model JobOpening {
+  id              String           @id @default(uuid())
+  tenantId        String
+  requisitionId   String?
+  title           String           @db.VarChar(150)
+  /// Public URL segment, unique per tenant, immutable after first publish.
+  slug            String           @db.VarChar(100)
+  description     String           @db.Text
+  requirements    String?          @db.Text
+  location        String?          @db.VarChar(150)
+  departmentId    String?
+  designationId   String?
+  branchId        String?
+  employmentType  EmploymentType   @default(PERMANENT)
+  experienceMin   Int?
+  experienceMax   Int?
+  salaryMin       Decimal?         @db.Decimal(14, 2)
+  salaryMax       Decimal?         @db.Decimal(14, 2)
+  showSalary      Boolean          @default(false)
+  /// Listed on the public careers page when OPEN.
+  isPublic        Boolean          @default(true)
+  positions       Int              @default(1)
+  hiringManagerId String?
+  status          JobOpeningStatus @default(DRAFT)
+  publishedAt     DateTime?
+  closedAt        DateTime?
+  createdById     String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  tenant        Tenant           @relation(fields: [tenantId], references: [id])
+  requisition   JobRequisition?  @relation(fields: [requisitionId], references: [id])
+  department    Department?      @relation(fields: [departmentId], references: [id])
+  designation   Designation?     @relation(fields: [designationId], references: [id])
+  branch        Branch?          @relation(fields: [branchId], references: [id])
+  hiringManager Employee?        @relation("OpeningHiringManager", fields: [hiringManagerId], references: [id])
+  applications  JobApplication[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId, status])
+  @@index([requisitionId])
+  @@map("job_openings")
+}
+
+/// Per-tenant configurable pipeline. Defaults are created on first read.
+model PipelineStage {
+  id        String                @id @default(uuid())
+  tenantId  String
+  name      String                @db.VarChar(60)
+  sortOrder Int
+  category  PipelineStageCategory
+  isActive  Boolean               @default(true)
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+
+  tenant       Tenant                     @relation(fields: [tenantId], references: [id])
+  applications JobApplication[]
+  eventsFrom   JobApplicationStageEvent[] @relation("StageEventFrom")
+  eventsTo     JobApplicationStageEvent[] @relation("StageEventTo")
+
+  @@unique([tenantId, name])
+  @@index([tenantId, sortOrder])
+  @@map("pipeline_stages")
+}
+
+model Candidate {
+  id                   String          @id @default(uuid())
+  tenantId             String
+  firstName            String          @db.VarChar(100)
+  lastName             String          @db.VarChar(100)
+  /// Trimmed and lower-cased; one candidate per email per tenant.
+  email                String          @db.VarChar(255)
+  phone                String?         @db.VarChar(30)
+  currentCompany       String?         @db.VarChar(150)
+  currentTitle         String?         @db.VarChar(150)
+  totalExperienceYears Decimal?        @db.Decimal(4, 1)
+  /// HR-only fields.
+  currentCtc           Decimal?        @db.Decimal(14, 2)
+  expectedCtc          Decimal?        @db.Decimal(14, 2)
+  noticePeriodDays     Int?
+  location             String?         @db.VarChar(150)
+  linkedinUrl          String?         @db.VarChar(300)
+  source               CandidateSource @default(DIRECT)
+  referredByEmployeeId String?
+  resumeUploadId       String?
+  notes                String?         @db.Text
+  createdById          String?
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  tenant       Tenant           @relation(fields: [tenantId], references: [id])
+  referredBy   Employee?        @relation("CandidateReferrer", fields: [referredByEmployeeId], references: [id])
+  resumeUpload Upload?          @relation("CandidateResume", fields: [resumeUploadId], references: [id])
+  applications JobApplication[]
+  offers       JobOffer[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@map("candidates")
+}
+
+model JobApplication {
+  id              String               @id @default(uuid())
+  tenantId        String
+  candidateId     String
+  jobOpeningId    String
+  stageId         String
+  status          JobApplicationStatus @default(ACTIVE)
+  source          CandidateSource      @default(DIRECT)
+  resumeUploadId  String?
+  coverLetter     String?              @db.Text
+  rejectionReason String?              @db.VarChar(1000)
+  appliedAt       DateTime             @default(now())
+  stageChangedAt  DateTime             @default(now())
+  hiredAt         DateTime?
+  /// Null when the candidate applied through the careers page.
+  createdById     String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  tenant       Tenant                     @relation(fields: [tenantId], references: [id])
+  candidate    Candidate                  @relation(fields: [candidateId], references: [id])
+  jobOpening   JobOpening                 @relation(fields: [jobOpeningId], references: [id])
+  stage        PipelineStage              @relation(fields: [stageId], references: [id])
+  resumeUpload Upload?                    @relation("ApplicationResume", fields: [resumeUploadId], references: [id])
+  stageEvents  JobApplicationStageEvent[]
+  interviews   Interview[]
+  offers       JobOffer[]
+
+  @@unique([jobOpeningId, candidateId])
+  @@index([tenantId, stageId])
+  @@index([tenantId, status])
+  @@index([candidateId])
+  @@map("job_applications")
+}
+
+/// Every stage move, for the funnel report and the application history.
+model JobApplicationStageEvent {
+  id            String   @id @default(uuid())
+  tenantId      String
+  applicationId String
+  fromStageId   String?
+  toStageId     String
+  /// Null for moves made by the system (careers apply, offer acceptance).
+  movedById     String?
+  note          String?  @db.VarChar(1000)
+  createdAt     DateTime @default(now())
+
+  tenant      Tenant         @relation(fields: [tenantId], references: [id])
+  application JobApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  fromStage   PipelineStage? @relation("StageEventFrom", fields: [fromStageId], references: [id])
+  toStage     PipelineStage  @relation("StageEventTo", fields: [toStageId], references: [id])
+
+  @@index([applicationId])
+  @@index([tenantId, createdAt])
+  @@map("job_application_stage_events")
+}
+
+model Interview {
+  id             String          @id @default(uuid())
+  tenantId       String
+  applicationId  String
+  roundName      String          @db.VarChar(100)
+  scheduledStart DateTime
+  scheduledEnd   DateTime
+  mode           InterviewMode   @default(VIDEO)
+  location       String?         @db.VarChar(300)
+  meetingLink    String?         @db.VarChar(500)
+  status         InterviewStatus @default(SCHEDULED)
+  notes          String?         @db.Text
+  createdById    String
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  tenant      Tenant              @relation(fields: [tenantId], references: [id])
+  application JobApplication      @relation(fields: [applicationId], references: [id])
+  panel       InterviewPanelist[]
+  feedback    InterviewFeedback[]
+
+  @@index([tenantId, scheduledStart])
+  @@index([applicationId])
+  @@map("interviews")
+}
+
+model InterviewPanelist {
+  id          String   @id @default(uuid())
+  tenantId    String
+  interviewId String
+  employeeId  String
+  createdAt   DateTime @default(now())
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  interview Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  employee  Employee  @relation(fields: [employeeId], references: [id])
+
+  @@unique([interviewId, employeeId])
+  @@index([tenantId, employeeId])
+  @@map("interview_panelists")
+}
+
+model InterviewFeedback {
+  id                    String                  @id @default(uuid())
+  tenantId              String
+  interviewId           String
+  interviewerEmployeeId String
+  /// 1-5
+  overallRating         Int
+  recommendation        InterviewRecommendation
+  /// [{ criterion, rating (1-5), comment? }]
+  scores                Json                    @default("[]")
+  strengths             String?                 @db.Text
+  concerns              String?                 @db.Text
+  submittedAt           DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  interview   Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  interviewer Employee  @relation(fields: [interviewerEmployeeId], references: [id])
+
+  @@unique([interviewId, interviewerEmployeeId])
+  @@index([tenantId])
+  @@map("interview_feedback")
+}
+
+model JobOffer {
+  id                 String         @id @default(uuid())
+  tenantId           String
+  applicationId      String
+  candidateId        String
+  /// An OFFER_LETTER letter template.
+  templateId         String
+  /// Rendered letter content.
+  content            String         @db.Text
+  designationId      String?
+  departmentId       String?
+  branchId           String?
+  reportingManagerId String?
+  employmentType     EmploymentType @default(PERMANENT)
+  annualCtc          Decimal        @db.Decimal(14, 2)
+  /// Used with salaryStructureId to create the EmployeeSalary on conversion.
+  monthlyBasePay     Decimal?       @db.Decimal(12, 2)
+  salaryStructureId  String?
+  joiningDate        DateTime       @db.Date
+  expiresAt          DateTime?
+  status             JobOfferStatus @default(DRAFT)
+  /// SHA-256 (hex) of the public accept/decline token. The raw token is only emailed.
+  tokenHash          String?        @unique
+  sentAt             DateTime?
+  respondedAt        DateTime?
+  /// Typed full name the candidate accepted with.
+  acceptedName       String?        @db.VarChar(200)
+  declineReason      String?        @db.VarChar(1000)
+  respondedIp        String?        @db.VarChar(64)
+  respondedUserAgent String?        @db.VarChar(300)
+  decisionNote       String?        @db.VarChar(1000)
+  createdById        String
+  /// The employee the accepted offer was converted to.
+  employeeId         String?
+  convertedAt        DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  tenant           Tenant               @relation(fields: [tenantId], references: [id])
+  application      JobApplication       @relation(fields: [applicationId], references: [id])
+  candidate        Candidate            @relation(fields: [candidateId], references: [id])
+  template         LetterTemplate       @relation(fields: [templateId], references: [id])
+  designation      Designation?         @relation(fields: [designationId], references: [id])
+  department       Department?          @relation(fields: [departmentId], references: [id])
+  branch           Branch?              @relation(fields: [branchId], references: [id])
+  reportingManager Employee?            @relation("OfferReportingManager", fields: [reportingManagerId], references: [id])
+  salaryStructure  SalaryStructure?     @relation(fields: [salaryStructureId], references: [id])
+  employee         Employee?            @relation("OfferEmployee", fields: [employeeId], references: [id])
+  preOnboarding    PreOnboardingInvite?
+
+  @@index([tenantId, status])
+  @@index([applicationId])
+  @@map("job_offers")
+}
+
+/// Token link for a future joiner to submit documents and personal details
+/// before day one, without an account.
+model PreOnboardingInvite {
+  id                String              @id @default(uuid())
+  tenantId          String
+  employeeId        String
+  offerId           String?             @unique
+  /// SHA-256 (hex) of the token. The raw token is only emailed / returned once.
+  tokenHash         String              @unique
+  expiresAt         DateTime
+  status            PreOnboardingStatus @default(INVITED)
+  /// [{ key, label, category (DocumentCategory), required }]
+  requiredDocuments Json                @default("[]")
+  personalDetails   Json?
+  submittedAt       DateTime?
+  lastAccessedAt    DateTime?
+  createdById       String
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  tenant    Tenant                  @relation(fields: [tenantId], references: [id])
+  employee  Employee                @relation(fields: [employeeId], references: [id])
+  offer     JobOffer?               @relation(fields: [offerId], references: [id])
+  documents PreOnboardingDocument[]
+
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@map("pre_onboarding_invites")
+}
+
+model PreOnboardingDocument {
+  id                 String   @id @default(uuid())
+  tenantId           String
+  inviteId           String
+  documentKey        String   @db.VarChar(50)
+  employeeDocumentId String
+  uploadedAt         DateTime @default(now())
+
+  tenant           Tenant              @relation(fields: [tenantId], references: [id])
+  invite           PreOnboardingInvite @relation(fields: [inviteId], references: [id], onDelete: Cascade)
+  employeeDocument EmployeeDocument    @relation(fields: [employeeDocumentId], references: [id])
+
+  @@unique([inviteId, documentKey])
+  @@index([tenantId])
+  @@map("pre_onboarding_documents")
 }

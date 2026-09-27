@@ -7,5 +7,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
   imports: [NotificationsModule],
   controllers: [OnboardingController],
   providers: [OnboardingService],
+  // Keka wave D: an accepted offer starts onboarding through createProcess.
+  exports: [OnboardingService],
 })
 export class OnboardingModule {}

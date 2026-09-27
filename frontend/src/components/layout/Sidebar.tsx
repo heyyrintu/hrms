@@ -56,6 +56,18 @@ import {
   Inbox,
   UserCheck,
   Workflow,
+  UserPlus,
+  Users2,
+  FileSignature,
+  ClipboardSignature,
+  BarChart3,
+  CalendarSearch,
+  Calculator,
+  BookOpenCheck,
+  PauseCircle,
+  History,
+  ListOrdered,
+  Globe,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -111,6 +123,8 @@ const sections: NavSection[] = [
       { name: 'My Onboarding', href: '/onboarding/my-tasks', icon: <ClipboardList className="h-[18px] w-[18px]" /> },
       { name: 'Loans & Advances', href: '/loans', icon: <Banknote className="h-[18px] w-[18px]" /> },
       { name: 'HR Helpdesk', href: '/helpdesk', icon: <LifeBuoy className="h-[18px] w-[18px]" /> },
+      // Keka wave D: any employee can sit on an interview panel.
+      { name: 'My Interviews', href: '/recruitment/interviews', icon: <CalendarSearch className="h-[18px] w-[18px]" /> },
     ],
   },
   {
@@ -139,6 +153,29 @@ const sections: NavSection[] = [
           { name: 'Tax Declarations', href: '/payroll/declarations', icon: <ReceiptText className="h-4 w-4" /> },
           { name: 'Proof Review', href: '/payroll/proofs', icon: <FileSearch className="h-4 w-4" /> },
           { name: 'Loans & Advances', href: '/payroll/loans', icon: <Banknote className="h-4 w-4" /> },
+          // Keka wave C
+          { name: 'Arrears', href: '/payroll/arrears', icon: <History className="h-4 w-4" /> },
+          { name: 'Salary Holds', href: '/payroll/holds', icon: <PauseCircle className="h-4 w-4" /> },
+          { name: 'Accounting Export', href: '/payroll/accounting', icon: <BookOpenCheck className="h-4 w-4" /> },
+          { name: 'Variance Report', href: '/payroll/variance', icon: <Calculator className="h-4 w-4" /> },
+        ],
+      },
+    ],
+  },
+  {
+    label: 'HIRING',
+    items: [
+      {
+        name: 'Recruitment',
+        icon: <UserPlus className="h-[18px] w-[18px]" />,
+        roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER],
+        children: [
+          { name: 'Job Openings', href: '/recruitment', icon: <Briefcase className="h-4 w-4" /> },
+          { name: 'Requisitions', href: '/recruitment/requisitions', icon: <ClipboardSignature className="h-4 w-4" /> },
+          { name: 'Candidates', href: '/recruitment/candidates', icon: <Users2 className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
+          { name: 'Offers', href: '/recruitment/offers', icon: <FileSignature className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
+          { name: 'Pre-onboarding', href: '/recruitment/pre-onboarding', icon: <ClipboardList className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
+          { name: 'Hiring Funnel', href: '/recruitment/reports', icon: <BarChart3 className="h-4 w-4" /> },
         ],
       },
     ],
@@ -218,6 +255,10 @@ const sections: NavSection[] = [
           { name: 'Attendance Policy', href: '/admin/attendance-policy', icon: <SlidersHorizontal className="h-4 w-4" /> },
           { name: 'Helpdesk Queue', href: '/admin/helpdesk', icon: <LifeBuoy className="h-4 w-4" /> },
           { name: 'Helpdesk Categories', href: '/admin/helpdesk/categories', icon: <Tags className="h-4 w-4" /> },
+          // Keka waves C and D
+          { name: 'Payroll Settings', href: '/admin/payroll-settings', icon: <SlidersHorizontal className="h-4 w-4" /> },
+          { name: 'Pipeline Stages', href: '/admin/pipeline-stages', icon: <ListOrdered className="h-4 w-4" /> },
+          { name: 'Recruitment Settings', href: '/admin/recruitment-settings', icon: <Globe className="h-4 w-4" /> },
         ],
       },
     ],

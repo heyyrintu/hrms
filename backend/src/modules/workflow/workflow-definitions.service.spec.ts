@@ -16,7 +16,7 @@ describe('WorkflowDefinitionsService', () => {
   });
 
   describe('list / get', () => {
-    it('returns all six types, the default view where there is no row', async () => {
+    it('returns every type, the default view where there is no row', async () => {
       db.workflowDefinition.findMany.mockResolvedValue([
         {
           id: 'def-1',
@@ -37,7 +37,16 @@ describe('WorkflowDefinitionsService', () => {
       const views = await service.list(TENANT);
 
       expect(views.map((v) => v.entityType).sort()).toEqual(
-        ['COMP_OFF', 'EXPENSE', 'LEAVE', 'LOAN', 'PAYROLL_RUN', 'REGULARIZATION'],
+        [
+          'COMP_OFF',
+          'EXPENSE',
+          'JOB_REQUISITION',
+          'LEAVE',
+          'LOAN',
+          'OFFER',
+          'PAYROLL_RUN',
+          'REGULARIZATION',
+        ],
       );
       const expense = views.find((v) => v.entityType === 'EXPENSE')!;
       expect(expense.isCustom).toBe(true);
