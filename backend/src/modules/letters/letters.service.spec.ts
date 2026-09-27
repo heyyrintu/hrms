@@ -240,6 +240,54 @@ describe('LettersService', () => {
     });
   });
 
+  describe('generateLetter rendering (shared letter-render)', () => {
+    const employee = {
+      id: 'emp-1', firstName: 'John', lastName: 'Doe', employeeCode: 'E1',
+      email: 'j@t.com', joinDate: new Date('2026-03-15T00:00:00Z'), exitDate: null,
+      designation: null, department: null, branch: null, manager: null,
+      tenant: { name: 'Acme' },
+    };
+
+    it('renders the stored content through the isolated environment', async () => {
+      prisma.letterTemplate.findFirst.mockResolvedValue({
+        id: 'tpl-1', name: 'Offer', content: 'Hi {{firstName}}, joining {{joinDate}}',
+        type: 'OFFER_LETTER', isActive: true,
+      });
+      prisma.employee.findFirst.mockResolvedValue(employee);
+      prisma.letterGenerated.create.mockImplementation(async (args: any) => args.data);
+
+      const result: any = await service.generateLetter('tenant-1', 'user-1', { templateId: 'tpl-1', employeeId: 'emp-1' });
+
+      expect(result.content).toBe('Hi John, joining 15 March 2026');
+    });
+
+    it('throws BadRequestException for a template that does not compile', async () => {
+      prisma.letterTemplate.findFirst.mockResolvedValue({
+        id: 'tpl-1', name: 'Offer', content: '{{#if}}', type: 'OFFER_LETTER', isActive: true,
+      });
+      prisma.employee.findFirst.mockResolvedValue(employee);
+
+      await expect(
+        service.generateLetter('tenant-1', 'user-1', { templateId: 'tpl-1', employeeId: 'emp-1' }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.letterGenerated.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('generatePdf', () => {
+    it('returns a PDF of the stored letter', async () => {
+      prisma.letterGenerated.findFirst.mockResolvedValue({
+        id: 'gen-1', content: '<p>Hello</p>', generatedAt: new Date('2026-03-15T12:00:00Z'),
+        template: { name: 'Offer', type: 'OFFER_LETTER' },
+        employee: { firstName: 'John', lastName: 'Doe', employeeCode: 'E1', department: { name: 'Eng' } },
+      });
+
+      const pdf = await service.generatePdf('tenant-1', 'gen-1');
+
+      expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+    });
+  });
+
   // ── Generated Letters ─────────────────────────────────────
 
   describe('getGeneratedLetters', () => {

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #1a56db; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+    .content { padding: 20px; background: #f9fafb; border: 1px solid #e5e7eb; }
+    .button { display: inline-block; background: #1a56db; color: #ffffff !important; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold; }
+    .footer { padding: 15px; text-align: center; font-size: 12px; color: #6b7280; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Your offer from {{companyName}}</h1>
+    </div>
+    <div class="content">
+      <p>Hi {{candidateFirstName}},</p>
+      <p>We are delighted to offer you the position of <strong>{{jobTitle}}</strong> at {{companyName}}.</p>
+      <p>You can read your offer letter and accept or decline it using the private link below.</p>
+      <p style="text-align: center; margin: 24px 0;">
+        <a class="button" href="{{link}}">View your offer</a>
+      </p>
+      <p>This link is personal to you. Please respond by <strong>{{expiryDate}}</strong>; after that the link stops working.</p>
+      <p style="font-size: 12px; color: #6b7280; word-break: break-all;">If the button does not work, copy this address into your browser: {{link}}</p>
+      <p>Best regards,<br>{{companyName}} HR Team</p>
+    </div>
+    <div class="footer">
+      <p>This is an automated message. If you were not expecting it, you can ignore it.</p>
+    </div>
+  </div>
+</body>
+</html>

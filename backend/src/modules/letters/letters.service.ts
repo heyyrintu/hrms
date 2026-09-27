@@ -1,26 +1,17 @@
 import {
   Injectable,
   NotFoundException,
-  BadRequestException,
   Logger,
 } from '@nestjs/common';
-import * as PDFDocument from 'pdfkit';
-import * as Handlebars from 'handlebars';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../../common/email/email.service';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
+import { formatLetterDate, renderLetterContent, renderLetterPdf } from './letter-render';
 
 /** Sentinel that can never match a real employee id. */
 const NO_EMPLOYEE = '__no-employee__';
 
-/**
- * Templates render here, not on the shared Handlebars singleton, so helpers
- * registered elsewhere in the process are unreachable from template content.
- * Nothing is registered on it deliberately: only the variables passed at render
- * time are in scope.
- */
-const LETTER_TEMPLATE_ENV = Handlebars.create();
 import {
   CreateLetterTemplateDto,
   UpdateLetterTemplateDto,
@@ -116,33 +107,16 @@ export class LettersService {
       department: employee.department?.name ?? '',
       branch: employee.branch?.name ?? '',
       email: employee.email,
-      joinDate: employee.joinDate ? new Date(employee.joinDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' }) : '',
-      exitDate: employee.exitDate ? new Date(employee.exitDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' }) : '',
+      joinDate: employee.joinDate ? formatLetterDate(employee.joinDate) : '',
+      exitDate: employee.exitDate ? formatLetterDate(employee.exitDate) : '',
       companyName: employee.tenant?.name ?? '',
       companyAddress,
-      currentDate: new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' }),
+      currentDate: formatLetterDate(new Date()),
       managerName: employee.manager ? `${employee.manager.firstName} ${employee.manager.lastName}` : '',
     };
 
-    let renderedContent: string;
-    try {
-      // Compile in an isolated environment. Letter templates are authored
-      // content, and compiling them on the shared Handlebars instance would
-      // hand every helper registered anywhere in the app to whoever can edit a
-      // template. The runtime flags additionally refuse prototype traversal,
-      // the usual route from template injection to code execution.
-      const compiled = LETTER_TEMPLATE_ENV.compile(template.content, {
-        // Unknown fields render empty rather than throwing, matching the
-        // previous behaviour for templates that reference a missing variable.
-        strict: false,
-      });
-      renderedContent = compiled(variables, {
-        allowProtoPropertiesByDefault: false,
-        allowProtoMethodsByDefault: false,
-      });
-    } catch {
-      throw new BadRequestException('Failed to render template — check template syntax');
-    }
+    // Isolated Handlebars environment, proto access refused (letter-render.ts).
+    const renderedContent = renderLetterContent(template.content, variables);
 
     const letter = await this.prisma.letterGenerated.create({
       data: {
@@ -262,92 +236,12 @@ export class LettersService {
   ): Promise<Buffer> {
     const letter = await this.getGeneratedLetter(tenantId, id, requester);
 
-    return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ margin: 60, size: 'A4' });
-      const chunks: Buffer[] = [];
-
-      doc.on('data', (chunk: Buffer) => chunks.push(chunk));
-      doc.on('end', () => resolve(Buffer.concat(chunks)));
-      doc.on('error', reject);
-
-      // Header line
-      doc
-        .rect(0, 0, doc.page.width, 6)
-        .fill('#1a56db');
-
-      // Letter type badge
-      const typeName = letter.template.type.replace(/_/g, ' ');
-      doc
-        .font('Helvetica-Bold')
-        .fontSize(11)
-        .fillColor('#6b7280')
-        .text(typeName, 60, 30, { align: 'right' });
-
-      // Date
-      doc
-        .font('Helvetica')
-        .fontSize(10)
-        .fillColor('#374151')
-        .text(`Date: ${new Date(letter.generatedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' })}`, 60, 50);
-
-      // Employee info
-      doc
-        .moveDown(0.5)
-        .font('Helvetica-Bold')
-        .fontSize(11)
-        .fillColor('#111827')
-        .text(`${letter.employee.firstName} ${letter.employee.lastName}`);
-
-      doc
-        .font('Helvetica')
-        .fontSize(9)
-        .fillColor('#6b7280')
-        .text(`${letter.employee.employeeCode} · ${letter.employee.department?.name ?? ''}`);
-
-      // Divider
-      const divY = doc.y + 12;
-      doc.moveTo(60, divY).lineTo(535, divY).strokeColor('#e5e7eb').lineWidth(1).stroke();
-
-      // Content — render the HTML as plain text (strip tags)
-      const plainContent = letter.content
-        .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<\/p>/gi, '\n\n')
-        .replace(/<[^>]+>/g, '')
-        .replace(/&nbsp;/g, ' ')
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .trim();
-
-      doc
-        .font('Helvetica')
-        .fontSize(10.5)
-        .fillColor('#111827')
-        .text(plainContent, 60, divY + 16, {
-          width: 475,
-          lineGap: 4,
-          paragraphGap: 8,
-        });
-
-      // Footer
-      const footY = doc.page.height - 60;
-      doc
-        .moveTo(60, footY)
-        .lineTo(535, footY)
-        .strokeColor('#e5e7eb')
-        .lineWidth(0.5)
-        .stroke();
-
-      doc
-        .font('Helvetica')
-        .fontSize(7.5)
-        .fillColor('#9ca3af')
-        .text('This is a computer-generated document.', 60, footY + 6, {
-          align: 'center',
-          width: 475,
-        });
-
-      doc.end();
+    return renderLetterPdf({
+      badge: letter.template.type.replace(/_/g, ' '),
+      date: letter.generatedAt,
+      recipientName: `${letter.employee.firstName} ${letter.employee.lastName}`,
+      recipientLine: `${letter.employee.employeeCode} · ${letter.employee.department?.name ?? ''}`,
+      content: letter.content,
     });
   }
 }
