@@ -280,21 +280,6 @@ describe('PayrollService — run mechanics (Keka wave C)', () => {
       expect(prisma.payslip.createMany.mock.calls[0][0].data).toHaveLength(1);
     });
 
-    it("refuses to pay salary again to someone the month's regular run already paid", async () => {
-      prisma.payrollRun.findFirst.mockResolvedValue({ ...offCycleDraft, includeSalary: true });
-      prisma.payslip.findMany.mockResolvedValue([{ employee: { employeeCode: 'E001' } }]);
-
-      await expect(service.processRun(tenantId, 'run-oc', makerId)).rejects.toThrow(/E001/);
-      expect(prisma.payslip.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: {
-            tenantId, employeeId: { in: ['emp-1', 'emp-2'] },
-            payrollRun: { month: 10, year: 2026, runType: 'REGULAR' },
-          },
-        }),
-      );
-    });
-
     const settlement = {
       id: 'set-1', employeeId: 'emp-1', status: 'APPROVED', netPayable: new Decimal(87000),
       lastWorkingDate: new Date('2026-10-10T12:00:00Z'), payrollRunId: 'run-oc',
@@ -320,6 +305,157 @@ describe('PayrollService — run mechanics (Keka wave C)', () => {
         { id: 'otp-1', employeeId: 'emp-1', kind: 'BONUS', name: 'Bonus', amount: new Decimal(1), taxable: true },
       ]);
       await expect(service.processRun(tenantId, 'run-oc', makerId)).rejects.toThrow(/own payslip/);
+    });
+  });
+
+  // ------------------------------------------ off-cycle salary (review C1)
+
+  describe('an off-cycle run paying salary', () => {
+    const salaryRun = { ...offCycleDraft, includeSalary: true };
+    const approvedRegular = { id: 'run-10', status: 'APPROVED' };
+    const actor = { userId: 'u-checker', tenantId, email: 'e', role: 'HR_ADMIN' } as any;
+    const createDto = { month: 10, year: 2026, reason: 'Joiners', includeSalary: true, employeeIds: ['emp-1', 'emp-2'] };
+    const elsewhereSelect = { employeeId: true, employee: { select: { employeeCode: true } } };
+
+    const elsewhereWhere = (excludeRunId: string | undefined, employeeIds: string[]) => ({
+      tenantId,
+      employeeId: { in: employeeIds },
+      ...(excludeRunId ? { payrollRunId: { not: excludeRunId } } : {}),
+      payrollRun: {
+        tenantId, month: 10, year: 2026,
+        OR: [{ runType: 'REGULAR' }, { runType: 'OFF_CYCLE', includeSalary: true }],
+      },
+    });
+
+    beforeEach(() => {
+      prisma.payrollRun.findUnique.mockResolvedValue(approvedRegular);
+      prisma.employee.findMany.mockResolvedValue([{ id: 'emp-1' }, { id: 'emp-2' }]);
+    });
+
+    it.each([
+      ['does not exist', null],
+      ['is DRAFT', { ...approvedRegular, status: 'DRAFT' }],
+      ['is COMPUTED', { ...approvedRegular, status: 'COMPUTED' }],
+    ])('cannot be created while the regular run %s', async (_label, regular) => {
+      prisma.payrollRun.findUnique.mockResolvedValue(regular);
+      await expect(service.createOffCycleRun(tenantId, createDto)).rejects.toThrow(
+        'Process and approve the regular run for this month first; off-cycle salary is for employees it did not pay',
+      );
+      expect(prisma.payrollRun.findUnique).toHaveBeenCalledWith({
+        where: {
+          tenantId_month_year_runType_sequence: { tenantId, month: 10, year: 2026, runType: 'REGULAR', sequence: 0 },
+        },
+        select: { id: true, status: true },
+      });
+      expect(prisma.payrollRun.create).not.toHaveBeenCalled();
+    });
+
+    it('cannot be created for someone another run already paid salary for the month', async () => {
+      prisma.payslip.findMany.mockResolvedValue([{ employeeId: 'emp-2', employee: { employeeCode: 'E002' } }]);
+      await expect(service.createOffCycleRun(tenantId, createDto)).rejects.toThrow(/E002/);
+      expect(prisma.payslip.findMany).toHaveBeenCalledWith({
+        where: elsewhereWhere(undefined, ['emp-1', 'emp-2']),
+        select: elsewhereSelect,
+      });
+      expect(prisma.payrollRun.create).not.toHaveBeenCalled();
+    });
+
+    it('is created once the regular run is approved and nobody in scope was paid', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(null);
+      prisma.payrollRun.create.mockImplementation(async ({ data }: any) => ({ id: 'run-oc', ...data }));
+      await expect(service.createOffCycleRun(tenantId, createDto)).resolves.toMatchObject({ includeSalary: true });
+    });
+
+    it('a bonus-only off-cycle run needs no regular run', async () => {
+      prisma.payrollRun.findUnique.mockResolvedValue(null);
+      prisma.payrollRun.findFirst.mockResolvedValue(null);
+      prisma.payrollRun.create.mockImplementation(async ({ data }: any) => ({ id: 'run-oc', ...data }));
+      await expect(
+        service.createOffCycleRun(tenantId, { ...createDto, includeSalary: false }),
+      ).resolves.toMatchObject({ includeSalary: false });
+    });
+
+    it('path 1: is not processed while the regular run is still DRAFT, so that run cannot pay them again', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(salaryRun);
+      prisma.payrollRun.findUnique.mockResolvedValue({ ...approvedRegular, status: 'DRAFT' });
+
+      await expect(service.processRun(tenantId, 'run-oc', makerId)).rejects.toThrow(
+        /Process and approve the regular run for this month first/,
+      );
+      expect(calc.calculateForEmployee).not.toHaveBeenCalled();
+      expect(prisma.payslip.createMany).not.toHaveBeenCalled();
+      expect(prisma.payrollRun.update).toHaveBeenLastCalledWith({
+        where: { id: 'run-oc' },
+        data: { status: PayrollRunStatus.DRAFT },
+      });
+    });
+
+    it('path 2: refuses to pay salary another off-cycle salary run already paid', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(salaryRun);
+      prisma.payslip.findMany.mockResolvedValue([{ employeeId: 'emp-1', employee: { employeeCode: 'E001' } }]);
+
+      await expect(service.processRun(tenantId, 'run-oc', makerId)).rejects.toThrow(/E001/);
+      expect(prisma.payslip.findMany).toHaveBeenCalledWith({
+        where: elsewhereWhere('run-oc', ['emp-1', 'emp-2']),
+        select: elsewhereSelect,
+      });
+      expect(calc.calculateForEmployee).not.toHaveBeenCalled();
+    });
+
+    it('checks again inside the write transaction (two runs computing at once)', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(salaryRun);
+      prisma.payslip.findMany
+        .mockResolvedValueOnce([]) // before computing
+        .mockResolvedValueOnce([{ employeeId: 'emp-1', employee: { employeeCode: 'E001' } }]); // in the tx
+
+      await expect(service.processRun(tenantId, 'run-oc', makerId)).rejects.toThrow(/E001/);
+      expect(prisma.payslip.findMany).toHaveBeenNthCalledWith(2, {
+        where: elsewhereWhere('run-oc', ['emp-1', 'emp-2']),
+        select: elsewhereSelect,
+      });
+      expect(engine.start).not.toHaveBeenCalled();
+    });
+
+    it('recompute applies the same rules', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({
+        ...salaryRun, status: 'COMPUTED', totalGross: zero(), totalDeductions: zero(), totalNet: zero(), processedCount: 2,
+      });
+      prisma.payrollRun.findUnique.mockResolvedValue({ ...approvedRegular, status: 'COMPUTED' });
+
+      await expect(service.recomputeRun(tenantId, 'run-oc', makerId)).rejects.toThrow(
+        /Process and approve the regular run for this month first/,
+      );
+      expect(calc.calculateForEmployee).not.toHaveBeenCalled();
+    });
+
+    it('checks again at approval, inside the approval transaction', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({ ...salaryRun, status: 'COMPUTED' });
+      prisma.payslip.findMany
+        .mockResolvedValueOnce([{ employeeId: 'emp-1' }]) // this run's payslips
+        .mockResolvedValueOnce([{ employeeId: 'emp-1', employee: { employeeCode: 'E001' } }]);
+
+      await expect(service.approveRun(tenantId, 'run-oc', actor)).rejects.toThrow(/E001/);
+      expect(prisma.payslip.findMany).toHaveBeenNthCalledWith(1, {
+        where: { tenantId, payrollRunId: 'run-oc' },
+        select: { employeeId: true },
+      });
+      expect(prisma.payslip.findMany).toHaveBeenNthCalledWith(2, {
+        where: elsewhereWhere('run-oc', ['emp-1']),
+        select: elsewhereSelect,
+      });
+      expect(prisma.payrollRun.update).not.toHaveBeenCalled();
+    });
+
+    it('approves when nobody it pays was paid elsewhere; a regular run skips the check', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue({ ...salaryRun, status: 'COMPUTED' });
+      prisma.payslip.findMany.mockResolvedValueOnce([{ employeeId: 'emp-1' }]).mockResolvedValueOnce([]);
+      prisma.payrollRun.update.mockResolvedValue({ id: 'run-oc', status: 'APPROVED' });
+      await expect(service.approveRun(tenantId, 'run-oc', actor)).resolves.toMatchObject({ status: 'APPROVED' });
+
+      prisma.payslip.findMany.mockClear();
+      prisma.payrollRun.findFirst.mockResolvedValue({ ...regularDraft, status: 'COMPUTED' });
+      await service.approveRun(tenantId, 'run-10', actor);
+      expect(prisma.payslip.findMany).not.toHaveBeenCalled();
     });
   });
 

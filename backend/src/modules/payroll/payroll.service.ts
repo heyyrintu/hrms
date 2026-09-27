@@ -109,6 +109,123 @@ function isOffCycle(run: { runType?: PayrollRunType | null }): boolean {
   return run.runType === PayrollRunType.OFF_CYCLE;
 }
 
+/** An off-cycle run that pays the month's salary, not only extras. */
+function paysOffCycleSalary(run: {
+  runType?: PayrollRunType | null;
+  includeSalary?: boolean | null;
+}): boolean {
+  return isOffCycle(run) && run.includeSalary === true;
+}
+
+/** Either client: `this.prisma` or a transaction's. */
+type PayrollDb = Pick<Prisma.TransactionClient, 'payslip' | 'payrollRun'>;
+
+export const REGULAR_RUN_FIRST =
+  'Process and approve the regular run for this month first; off-cycle salary is for employees it did not pay';
+
+/**
+ * Review C1: an off-cycle run paying salary is only for people the month's
+ * regular run did not pay, so that run must exist and be signed off first
+ * (APPROVED or PAID — neither can be recomputed, reset or deleted). While it
+ * is still DRAFT or COMPUTED it could yet pay the same people a second time.
+ */
+async function assertRegularRunSettled(
+  db: PayrollDb,
+  tenantId: string,
+  month: number,
+  year: number,
+): Promise<void> {
+  const regular = await db.payrollRun.findUnique({
+    where: {
+      tenantId_month_year_runType_sequence: {
+        tenantId,
+        month,
+        year,
+        runType: PayrollRunType.REGULAR,
+        sequence: 0,
+      },
+    },
+    select: { id: true, status: true },
+  });
+  if (
+    !regular ||
+    (regular.status !== PayrollRunStatus.APPROVED && regular.status !== PayrollRunStatus.PAID)
+  ) {
+    throw new BadRequestException(REGULAR_RUN_FIRST);
+  }
+}
+
+/**
+ * Review C1: which of these employees already have a payslip paying the
+ * month's salary in another run of this tenant — the regular run, or an
+ * off-cycle run with `includeSalary` — in whatever status (a COMPUTED run's
+ * payslips are about to be paid).
+ *
+ * Held salaries still count, whatever the hold's status: HELD is paid later
+ * by a release, RELEASED has been paid by one, and VOIDED is a decision not to
+ * pay that month's salary whose payslip still carries the month's tax, PF and
+ * ESI. Paying salary for the month again would pay twice or duplicate those
+ * statutory figures, so none of them frees the month up.
+ */
+export async function findEmployeesWithSalaryElsewhere(
+  db: PayrollDb,
+  tenantId: string,
+  month: number,
+  year: number,
+  employeeIds: string[],
+  excludeRunId?: string,
+): Promise<{ employeeId: string; employeeCode: string }[]> {
+  if (employeeIds.length === 0) return [];
+  const slips =
+    (await db.payslip.findMany({
+      where: {
+        tenantId,
+        employeeId: { in: employeeIds },
+        ...(excludeRunId ? { payrollRunId: { not: excludeRunId } } : {}),
+        payrollRun: {
+          tenantId,
+          month,
+          year,
+          OR: [
+            { runType: PayrollRunType.REGULAR },
+            { runType: PayrollRunType.OFF_CYCLE, includeSalary: true },
+          ],
+        },
+      },
+      select: { employeeId: true, employee: { select: { employeeCode: true } } },
+    })) ?? [];
+  const seen = new Map<string, string>();
+  for (const s of slips) seen.set(s.employeeId, s.employee.employeeCode);
+  return [...seen].map(([employeeId, employeeCode]) => ({ employeeId, employeeCode }));
+}
+
+/** Refuses (400, naming them) when anyone here was paid salary elsewhere. */
+async function assertNoSalaryElsewhere(
+  db: PayrollDb,
+  tenantId: string,
+  month: number,
+  year: number,
+  employeeIds: string[],
+  excludeRunId?: string,
+): Promise<void> {
+  const paid = await findEmployeesWithSalaryElsewhere(
+    db,
+    tenantId,
+    month,
+    year,
+    employeeIds,
+    excludeRunId,
+  );
+  if (paid.length > 0) {
+    throw new BadRequestException(
+      `Another payroll run already pays ${month}/${year} salary to ${paid
+        .map((p) => p.employeeCode)
+        .slice(0, 10)
+        .join(', ')}; an off-cycle run cannot pay their salary again`,
+    );
+  }
+}
+
 function dec(value: unknown): Decimal {
   return new Decimal((value ?? 0) as Decimal.Value);
 }
@@ -272,6 +389,13 @@ export class PayrollService {
       throw new BadRequestException(
         `Unknown employee id(s) for this tenant: ${unknown.slice(0, 10).join(', ')}`,
       );
+    }
+
+    // Review C1: refused early here, and checked again at process, recompute,
+    // the payslip write and approval.
+    if (dto.includeSalary === true) {
+      await assertRegularRunSettled(this.prisma, tenantId, dto.month, dto.year);
+      await assertNoSalaryElsewhere(this.prisma, tenantId, dto.month, dto.year, employeeIds);
     }
 
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -576,6 +700,22 @@ export class PayrollService {
   ): Promise<{ results: PayslipData[]; attachments: RunAttachments }> {
     const tenantId = run.tenantId;
     const offCycle = isOffCycle(run);
+
+    // An off-cycle run paying salary must not pay a month another run pays
+    // (review C1). Checked before anything is computed; writePayslips and
+    // approveRun check again inside their transactions.
+    if (paysOffCycleSalary(run)) {
+      await assertRegularRunSettled(this.prisma, tenantId, run.month, run.year);
+      await assertNoSalaryElsewhere(
+        this.prisma,
+        tenantId,
+        run.month,
+        run.year,
+        baseEmployeeIds,
+        run.id,
+      );
+    }
+
     const settings = await this.settings.get(tenantId);
 
     // Explicit inputs: one-time payments and released holds.
@@ -625,28 +765,6 @@ export class PayrollService {
       ) {
         throw new BadRequestException(
           `A settlement is paid on its own payslip; remove the other payments for ${s.employee.employeeCode} from this run`,
-        );
-      }
-    }
-
-    // An off-cycle run paying salary must not pay a month the regular run
-    // already paid.
-    if (offCycle && run.includeSalary && employeeIds.length > 0) {
-      const alreadyPaid =
-        (await this.prisma.payslip.findMany({
-          where: {
-            tenantId,
-            employeeId: { in: employeeIds },
-            payrollRun: { month: run.month, year: run.year, runType: PayrollRunType.REGULAR },
-          },
-          select: { employee: { select: { employeeCode: true } } },
-        })) ?? [];
-      if (alreadyPaid.length > 0) {
-        throw new BadRequestException(
-          `The month's regular run already has a payslip for ${alreadyPaid
-            .map((p) => p.employee.employeeCode)
-            .slice(0, 10)
-            .join(', ')}; an off-cycle run cannot pay their salary again`,
         );
       }
     }
@@ -781,6 +899,18 @@ export class PayrollService {
   ): Promise<ClosedLoan[]> {
     const tenantId = run.tenantId;
     const offCycle = isOffCycle(run);
+
+    // Review C1: again inside the transaction, for a run computed meanwhile.
+    if (paysOffCycleSalary(run)) {
+      await assertNoSalaryElsewhere(
+        tx,
+        tenantId,
+        run.month,
+        run.year,
+        results.map((r) => r.employeeId),
+        run.id,
+      );
+    }
 
     // Keyed by month: an off-cycle run would reverse the regular run's.
     if (!offCycle) {
@@ -1021,6 +1151,26 @@ export class PayrollService {
       decision: 'APPROVE',
       note,
       onFinal: async (tx) => {
+        // Review C1: two off-cycle salary runs can both sit COMPUTED, each
+        // written before the other committed. Neither is approved while the
+        // other still has payslips for the same people (deliberately strict:
+        // counting only approved runs would let two concurrent approvals
+        // each miss the other); deleting one of them unblocks the other.
+        if (paysOffCycleSalary(run)) {
+          const mine =
+            (await tx.payslip.findMany({
+              where: { tenantId, payrollRunId: id },
+              select: { employeeId: true },
+            })) ?? [];
+          await assertNoSalaryElsewhere(
+            tx,
+            tenantId,
+            run.month,
+            run.year,
+            mine.map((s) => s.employeeId),
+            id,
+          );
+        }
         // Conditional on the status just checked: two concurrent approvals
         // both pass the check above, but only one can move COMPUTED ->
         // APPROVED. The other matches no row (P2025) and gets a 409, which
