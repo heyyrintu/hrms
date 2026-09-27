@@ -46,8 +46,14 @@ by default. Birthdays and anniversaries appear in the feed by default.
 - Backend code lives in `backend/src/modules/engagement/<area>/`. One
   `EngagementModule` (`engagement/engagement.module.ts`) imports the five area
   modules. `FeedModule` exports `FeedService`.
-- Frontend API calls live in the new `frontend/src/lib/api-engagement.ts`
-  (one exported object per area). Types in `frontend/src/types/engagement.ts`.
+- Frontend API calls live in one new client file per area —
+  `frontend/src/lib/api-{surveys,polls,recognition,feed,one-on-ones}.ts` — each
+  exporting its API object and its response types, so parallel workstreams
+  never share a client file.
+- `EngagementSettingsService` (`engagement/settings/`) and the write side of the
+  feed (`FeedService.post` / `removeBySource`) plus the IST date helpers are
+  implemented in the scaffold, because several areas consume them. The feed's
+  read side is `FeedQueryService`.
 
 ---
 
@@ -566,8 +572,8 @@ OneOnOnePrivateNote
     failure does not fail the write.
   - Module wiring spec for `EngagementModule` with
     `.overrideProvider(PrismaService)` (CI has no `DATABASE_URL`).
-- Frontend: a page test per new page and a `PollWidget` test (mock
-  `api-engagement`), plus `api-engagement.test.ts` for URL/verb mapping.
+- Frontend: a page test per new page and a `PollWidget` test (mock the
+  `api-*` client), plus a client test per `api-*.ts` for URL/verb mapping.
 
 ## Out of scope
 
