@@ -7,14 +7,12 @@ import {
   WorkflowEntityHandler,
   WorkflowEntitySummary,
 } from '../workflow/workflow.types';
-import { RequisitionsService } from './requisitions.service';
+import { REQUISITIONS_LINK, RequisitionsService } from './requisitions.service';
 
 /**
- * JOB_REQUISITION approvals through the Wave B engine.
- * Scaffold (Keka wave D) — WS-D1 implements `describe` (title
- * `Requisition · <title> × <headcount>`, link `/recruitment/requisitions`) and
- * owns this file. approve / reject / getContext already delegate to the
- * service so there is one approval code path.
+ * JOB_REQUISITION approvals through the Wave B engine. approve / reject /
+ * getContext delegate to the service so there is one approval code path.
+ * Spec: docs/superpowers/specs/2026-09-27-keka-wave-c-d-design.md, D1.
  */
 @Injectable()
 export class RequisitionWorkflowHandler implements WorkflowEntityHandler, OnModuleInit {
@@ -35,10 +33,45 @@ export class RequisitionWorkflowHandler implements WorkflowEntityHandler, OnModu
   }
 
   async describe(tenantId: string, entityIds: string[]): Promise<WorkflowEntitySummary[]> {
-    void tenantId;
-    void entityIds;
-    // Scaffold: no JOB_REQUISITION instance can exist until WS-D1 ships submit.
-    return [];
+    if (entityIds.length === 0) return [];
+    const requisitions = await this.prisma.jobRequisition.findMany({
+      where: { tenantId, id: { in: entityIds } },
+      select: {
+        id: true,
+        title: true,
+        headcount: true,
+        submittedAt: true,
+        createdAt: true,
+        requestedById: true,
+      },
+    });
+
+    const userIds = [...new Set(requisitions.map((r) => r.requestedById))];
+    const users = userIds.length
+      ? await this.prisma.user.findMany({
+          where: { tenantId, id: { in: userIds } },
+          select: {
+            id: true,
+            email: true,
+            employee: { select: { firstName: true, lastName: true } },
+          },
+        })
+      : [];
+    const nameByUserId = new Map(
+      users.map((u) => [
+        u.id,
+        u.employee ? `${u.employee.firstName} ${u.employee.lastName}`.trim() : u.email,
+      ]),
+    );
+
+    return requisitions.map((r) => ({
+      entityId: r.id,
+      title: `Requisition · ${r.title} × ${r.headcount}`,
+      subtitle: null,
+      requesterName: nameByUserId.get(r.requestedById) ?? null,
+      link: REQUISITIONS_LINK,
+      submittedAt: (r.submittedAt ?? r.createdAt).toISOString(),
+    }));
   }
 
   approve(actor: AuthenticatedUser, entityId: string, note?: string | null): Promise<unknown> {
