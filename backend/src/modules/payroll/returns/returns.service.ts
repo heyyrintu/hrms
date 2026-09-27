@@ -40,6 +40,14 @@ const FILEABLE_STATUSES: PayrollRunStatus[] = [
   PayrollRunStatus.PAID,
 ];
 
+/**
+ * Statuses a bank transfer file may be generated from. Narrower than the
+ * returns: a salary hold can still be placed on a COMPUTED run, so a file
+ * downloaded before approval could pay a salary that is then held and paid
+ * again on release.
+ */
+const PAYABLE_STATUSES: PayrollRunStatus[] = [PayrollRunStatus.APPROVED, PayrollRunStatus.PAID];
+
 /** The EPFO ECR field separator. Not a comma, and not configurable. */
 const ECR_DELIMITER = '#~#';
 
@@ -474,6 +482,11 @@ export class ReturnsService {
     payrollRunId: string,
   ): Promise<GeneratedReturnFile> {
     const run = await this.loadFileableRun(tenantId, payrollRunId);
+    if (!PAYABLE_STATUSES.includes(run.status)) {
+      throw new BadRequestException(
+        `Cannot generate the bank transfer file from a ${run.status} payroll run; approve it first`,
+      );
+    }
     const payslips = await this.loadPayslips(tenantId, payrollRunId);
     const stamp = periodStamp(run.month, run.year);
 

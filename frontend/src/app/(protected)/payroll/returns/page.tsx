@@ -44,6 +44,11 @@ interface ReturnDefinition {
     caveat: string;
     /** Basename used when the file is fetched straight from the server. */
     slug: string;
+    /**
+     * Narrower than READY_STATUSES when set. The bank file waits for approval
+     * because a salary can still be held on a computed run.
+     */
+    requiredStatuses?: PayrollRunStatus[];
 }
 
 const RETURN_DEFINITIONS: ReturnDefinition[] = [
@@ -87,6 +92,7 @@ const RETURN_DEFINITIONS: ReturnDefinition[] = [
         kind: StatutoryReturnKind.BANK_TRANSFER,
         title: 'Bank transfer file',
         slug: 'bank-transfer',
+        requiredStatuses: [PayrollRunStatus.APPROVED, PayrollRunStatus.PAID],
         description:
             'A salary disbursement file listing each employee’s account number, IFSC code and net pay, for bulk upload to your bank.',
         caveat:
@@ -330,6 +336,10 @@ export default function StatutoryReturnsPage() {
                     const held = previews[def.kind];
                     const error = errors[def.kind];
                     const busy = busyKind === def.kind;
+                    const awaitingApproval =
+                        !!selectedRun &&
+                        !!def.requiredStatuses &&
+                        !def.requiredStatuses.includes(selectedRun.status);
                     return (
                         <Card key={def.kind}>
                             <CardContent className="py-4 space-y-3">
@@ -347,7 +357,7 @@ export default function StatutoryReturnsPage() {
                                         <Button
                                             variant="secondary"
                                             aria-label={`Preview ${def.title}`}
-                                            disabled={!selectedRunId || busy}
+                                            disabled={!selectedRunId || busy || awaitingApproval}
                                             onClick={() => handlePreview(def)}
                                         >
                                             <Eye className="w-4 h-4 mr-2" />
@@ -355,7 +365,7 @@ export default function StatutoryReturnsPage() {
                                         </Button>
                                         <Button
                                             aria-label={`Download ${def.title}`}
-                                            disabled={!selectedRunId || busy}
+                                            disabled={!selectedRunId || busy || awaitingApproval}
                                             onClick={() => handleDownload(def)}
                                         >
                                             <Download className="w-4 h-4 mr-2" />
@@ -363,6 +373,14 @@ export default function StatutoryReturnsPage() {
                                         </Button>
                                     </div>
                                 </div>
+
+                                {awaitingApproval && (
+                                    <p className="text-sm text-warm-600">
+                                        Approve the run before you generate the bank transfer
+                                        file. A salary can still be held until then, and a file
+                                        downloaded now would pay it.
+                                    </p>
+                                )}
 
                                 {/* Where this file can be wrong */}
                                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 flex gap-2">

@@ -556,7 +556,27 @@ describe('ReturnsService', () => {
 
   describe('bankTransferFile', () => {
     beforeEach(() => {
-      prisma.payrollRun.findFirst.mockResolvedValue(computedRun());
+      prisma.payrollRun.findFirst.mockResolvedValue(computedRun({ status: 'APPROVED' }));
+    });
+
+    it.each(['COMPUTED'])(
+      'refuses a %s run: salary holds can still be placed before approval',
+      async (status) => {
+        prisma.payrollRun.findFirst.mockResolvedValue(computedRun({ status }));
+
+        await expect(service.bankTransferFile(TENANT, RUN_ID)).rejects.toThrow(
+          `Cannot generate the bank transfer file from a ${status} payroll run; approve it first`,
+        );
+      },
+    );
+
+    it('pays from a PAID run', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(computedRun({ status: 'PAID' }));
+      prisma.payslip.findMany.mockResolvedValue([payslipA()]);
+
+      const file = await service.bankTransferFile(TENANT, RUN_ID);
+
+      expect(file.content.split('\n')).toHaveLength(2);
     });
 
     it('writes one payment instruction per employee', async () => {
