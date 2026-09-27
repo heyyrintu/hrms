@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import PayrollPage from './page';
 import { payrollApi } from '@/lib/api';
 
@@ -17,6 +17,7 @@ jest.mock('lucide-react', () =>
 );
 
 // Mock AuthContext
+const mockHasRole = jest.fn().mockReturnValue(true);
 jest.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
     user: { id: '1', email: 'admin@test.com', role: 'HR_ADMIN', tenantId: 't1' },
@@ -25,7 +26,7 @@ jest.mock('@/contexts/AuthContext', () => ({
     isManager: true,
     isAdmin: true,
     isSuperAdmin: false,
-    hasRole: jest.fn().mockReturnValue(true),
+    hasRole: (...roles: string[]) => mockHasRole(...roles),
     login: jest.fn(),
     logout: jest.fn(),
   }),
@@ -60,7 +61,13 @@ jest.mock('@/lib/api', () => ({
     markAsPaid: jest.fn(),
     deleteRun: jest.fn(),
   },
+  employeesApi: { getAll: jest.fn().mockResolvedValue({ data: { data: [] } }) },
 }));
+
+jest.mock('@/lib/api-payroll-depth', () => {
+  const actual = jest.requireActual('@/lib/api-payroll-depth');
+  return { ...actual, payrollDepthApi: { createOffCycleRun: jest.fn() } };
+});
 
 // Mock types
 jest.mock('@/types', () => ({
@@ -74,6 +81,10 @@ jest.mock('@/types', () => ({
 }));
 
 describe('PayrollPage', () => {
+  beforeEach(() => {
+    mockHasRole.mockReturnValue(true);
+  });
+
   it('renders the Payroll heading after loading', async () => {
     render(<PayrollPage />);
 
@@ -163,5 +174,62 @@ describe('PayrollPage', () => {
 
     const totalPaidOut = screen.getByText('Total Paid Out').nextElementSibling;
     expect(totalPaidOut).toHaveTextContent('₹79,48,159');
+  });
+
+  const run = (over: Record<string, unknown>) => ({
+    id: 'r1',
+    tenantId: 't1',
+    month: 3,
+    year: 2026,
+    status: 'DRAFT',
+    totalGross: '0.00',
+    totalDeductions: '0.00',
+    totalNet: '0.00',
+    processedCount: 0,
+    createdAt: '2026-03-01T12:00:00.000Z',
+    updatedAt: '2026-03-01T12:00:00.000Z',
+    ...over,
+  });
+
+  it('badges each run as regular or off-cycle with its sequence', async () => {
+    (payrollApi.getRuns as jest.Mock).mockResolvedValueOnce({
+      data: [
+        run({ id: 'r1', runType: 'REGULAR', sequence: 0 }),
+        run({ id: 'r2', runType: 'OFF_CYCLE', sequence: 2, offCycleReason: 'Missed joiner' }),
+        run({ id: 'r3', month: 2 }),
+      ],
+    });
+
+    render(<PayrollPage />);
+
+    expect(await screen.findByText('Off-cycle #2')).toBeInTheDocument();
+    // An old run without a type reads as regular.
+    expect(screen.getAllByText('Regular')).toHaveLength(2);
+    expect(screen.getByText('Missed joiner')).toBeInTheDocument();
+  });
+
+  it('flags runs whose inputs changed since they were computed', async () => {
+    (payrollApi.getRuns as jest.Mock).mockResolvedValueOnce({
+      data: [run({ id: 'r1', status: 'COMPUTED', needsRecompute: true })],
+    });
+
+    render(<PayrollPage />);
+
+    expect(await screen.findByText('Recompute needed')).toBeInTheDocument();
+  });
+
+  it('opens the off-cycle dialog for payroll admins', async () => {
+    render(<PayrollPage />);
+
+    fireEvent.click(await screen.findByText('New off-cycle run'));
+    expect(screen.getByRole('button', { name: 'Create off-cycle run' })).toBeInTheDocument();
+  });
+
+  it('hides the off-cycle button from other roles', async () => {
+    mockHasRole.mockReturnValue(false);
+    render(<PayrollPage />);
+
+    await screen.findByText('New Run');
+    expect(screen.queryByText('New off-cycle run')).not.toBeInTheDocument();
   });
 });

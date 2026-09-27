@@ -22,6 +22,13 @@ import {
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
+import { OffCycleRunDialog } from '@/components/payroll/adjustments/OffCycleRunDialog';
+import { RunTypeBadge } from '@/components/payroll/adjustments/RunTypeBadge';
+import { PAYROLL_ADMIN_ROLES, RunListItem } from '@/components/payroll/adjustments/shared';
+
+/** A run from the list endpoint, with the Keka wave C fields (absent on old rows). */
+type RunRow = PayrollRun &
+    Partial<Pick<RunListItem, 'runType' | 'sequence' | 'needsRecompute' | 'offCycleReason'>>;
 
 const monthNames = [
     '', 'January', 'February', 'March', 'April', 'May', 'June',
@@ -38,8 +45,10 @@ const statusColors: Record<PayrollRunStatus, string> = {
 
 export default function PayrollPage() {
     const router = useRouter();
-    const { isSuperAdmin } = useAuth();
-    const [runs, setRuns] = useState<PayrollRun[]>([]);
+    const { isSuperAdmin, hasRole } = useAuth();
+    const canManageOffCycle = hasRole(...PAYROLL_ADMIN_ROLES);
+    const [runs, setRuns] = useState<RunRow[]>([]);
+    const [showOffCycle, setShowOffCycle] = useState(false);
     const [loading, setLoading] = useState(true);
     const [showCreate, setShowCreate] = useState(false);
     const [creating, setCreating] = useState(false);
@@ -161,6 +170,12 @@ export default function PayrollPage() {
                             <Calculator className="w-4 h-4 mr-2" />
                             Salary Structures
                         </Button>
+                        {canManageOffCycle && (
+                            <Button variant="secondary" onClick={() => setShowOffCycle(true)}>
+                                <Plus className="w-4 h-4 mr-2" />
+                                New off-cycle run
+                            </Button>
+                        )}
                         <Button onClick={() => setShowCreate(true)}>
                             <Plus className="w-4 h-4 mr-2" />
                             New Run
@@ -243,9 +258,18 @@ export default function PayrollPage() {
                                     {runs.map((run) => (
                                         <tr key={run.id} className="hover:bg-warm-50">
                                             <td className="px-4 py-3">
-                                                <p className="font-medium text-warm-900">
-                                                    {monthNames[run.month]} {run.year}
-                                                </p>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <p className="font-medium text-warm-900">
+                                                        {monthNames[run.month]} {run.year}
+                                                    </p>
+                                                    <RunTypeBadge runType={run.runType} sequence={run.sequence} />
+                                                    {run.needsRecompute && (
+                                                        <Badge variant="warning">Recompute needed</Badge>
+                                                    )}
+                                                </div>
+                                                {run.offCycleReason && (
+                                                    <p className="text-xs text-warm-500">{run.offCycleReason}</p>
+                                                )}
                                                 {run.remarks && (
                                                     <p className="text-xs text-warm-500">{run.remarks}</p>
                                                 )}
@@ -323,6 +347,15 @@ export default function PayrollPage() {
                     </Card>
                 )}
             </div>
+
+            <OffCycleRunDialog
+                isOpen={showOffCycle}
+                onClose={() => setShowOffCycle(false)}
+                onCreated={() => {
+                    setShowOffCycle(false);
+                    loadRuns();
+                }}
+            />
 
             {/* Create Run Modal */}
             <Modal isOpen={showCreate} onClose={() => setShowCreate(false)} title="Create Payroll Run">
