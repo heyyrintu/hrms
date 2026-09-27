@@ -81,6 +81,66 @@ describe('AttendancePolicyService', () => {
       await expect(service.getOrCreate(tenantId)).resolves.toBe(storedPolicy);
       expect(prisma.attendancePolicy.findUnique).toHaveBeenCalledTimes(2);
     });
+
+    it('reads through the transaction client when one is given, not the module prisma', async () => {
+      const tx = {
+        attendancePolicy: {
+          findUnique: jest.fn().mockResolvedValue(storedPolicy),
+          create: jest.fn(),
+        },
+      } as any;
+
+      await expect(service.getOrCreate(tenantId, tx)).resolves.toBe(storedPolicy);
+
+      expect(tx.attendancePolicy.findUnique).toHaveBeenCalledWith({ where: { tenantId } });
+      expect(prisma.attendancePolicy.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('creates through the transaction client when one is given', async () => {
+      const tx = {
+        attendancePolicy: {
+          findUnique: jest.fn().mockResolvedValue(null),
+          create: jest.fn().mockResolvedValue(storedPolicy),
+        },
+      } as any;
+
+      await expect(service.getOrCreate(tenantId, tx)).resolves.toBe(storedPolicy);
+
+      expect(tx.attendancePolicy.create).toHaveBeenCalledWith({
+        data: {
+          tenantId,
+          defaultShiftStart: '09:00',
+          defaultGraceMinutes: 15,
+          lateMarksPerHalfDay: null,
+          autoMarkAbsent: false,
+          absentIsLop: true,
+          minHalfDayMinutes: 240,
+          minFullDayMinutes: 480,
+        },
+      });
+      expect(prisma.attendancePolicy.create).not.toHaveBeenCalled();
+    });
+
+    it('re-reads through the transaction client on a race, not the module prisma', async () => {
+      const tx = {
+        attendancePolicy: {
+          findUnique: jest
+            .fn()
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce(storedPolicy),
+          create: jest.fn().mockRejectedValue(
+            new Prisma.PrismaClientKnownRequestError('unique', {
+              code: 'P2002',
+              clientVersion: 'test',
+            }),
+          ),
+        },
+      } as any;
+
+      await expect(service.getOrCreate(tenantId, tx)).resolves.toBe(storedPolicy);
+      expect(tx.attendancePolicy.findUnique).toHaveBeenCalledTimes(2);
+      expect(prisma.attendancePolicy.findUnique).not.toHaveBeenCalled();
+    });
   });
 
   describe('update', () => {
