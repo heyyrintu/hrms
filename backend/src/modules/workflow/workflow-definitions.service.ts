@@ -1,10 +1,13 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { UserRole, WorkflowEntityType } from '@prisma/client';
+import { Prisma, UserRole, WorkflowEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AuditService } from '../audit/audit.service';
 import { WORKFLOW_DEFAULTS, WORKFLOW_ENTITY_TYPES } from './workflow.defaults';
 import { WorkflowDefinitionView, WorkflowStepConfig } from './workflow.types';
 import { toNumber } from './workflow.utils';
 import { MAX_WORKFLOW_STEPS, UpsertWorkflowDto } from './dto/upsert-workflow.dto';
+
+type Db = Prisma.TransactionClient | PrismaService;
 
 type DefinitionWithSteps = {
   id: string;
@@ -30,7 +33,10 @@ type DefinitionWithSteps = {
  */
 @Injectable()
 export class WorkflowDefinitionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async list(tenantId: string): Promise<WorkflowDefinitionView[]> {
     const definitions = (await this.prisma.workflowDefinition.findMany({
@@ -61,6 +67,7 @@ export class WorkflowDefinitionsService {
     tenantId: string,
     entityType: WorkflowEntityType,
     dto: UpsertWorkflowDto,
+    actorUserId?: string,
   ): Promise<WorkflowDefinitionView> {
     const steps = dto.steps ?? [];
     if (steps.length < 1 || steps.length > MAX_WORKFLOW_STEPS) {
@@ -121,6 +128,18 @@ export class WorkflowDefinitionsService {
       allowSelfApproval: dto.allowSelfApproval ?? fallback.allowSelfApproval,
     };
 
+    // Read the row (if any) before the write, so the audit entry can carry
+    // the exact chain that is about to be replaced.
+    const existingDefinition = (await this.prisma.workflowDefinition.findUnique({
+      where: { tenantId_entityType: { tenantId, entityType } },
+      include: { steps: { orderBy: { stepOrder: 'asc' } } },
+    })) as DefinitionWithSteps | null;
+    const beforeNames = await this.userNames(
+      tenantId,
+      existingDefinition?.steps.map((s) => s.approverUserId) ?? [],
+    );
+    const before = this.toView(entityType, existingDefinition ?? undefined, beforeNames);
+
     await this.prisma.$transaction(async (tx) => {
       const definition = await tx.workflowDefinition.upsert({
         where: { tenantId_entityType: { tenantId, entityType } },
@@ -128,27 +147,90 @@ export class WorkflowDefinitionsService {
         update: fields,
       });
       await tx.workflowStep.deleteMany({ where: { definitionId: definition.id } });
-      await tx.workflowStep.createMany({
-        data: steps.map((step, index) => ({
-          definitionId: definition.id,
-          stepOrder: index + 1,
-          name: step.name.trim(),
-          approverType: step.approverType,
-          approverUserId: step.approverType === 'SPECIFIC_USER' ? step.approverUserId! : null,
-          approverRole: step.approverType === 'ROLE' ? step.approverRole! : null,
-          minAmount: step.minAmount ?? null,
-          minDays: step.minDays ?? null,
-        })),
-      });
+      const stepRows = steps.map((step, index) => ({
+        definitionId: definition.id,
+        stepOrder: index + 1,
+        name: step.name.trim(),
+        approverType: step.approverType,
+        approverUserId: step.approverType === 'SPECIFIC_USER' ? step.approverUserId! : null,
+        approverRole: step.approverType === 'ROLE' ? step.approverRole! : null,
+        minAmount: step.minAmount ?? null,
+        minDays: step.minDays ?? null,
+      }));
+      await tx.workflowStep.createMany({ data: stepRows });
+
+      const afterNames = await this.userNames(
+        tenantId,
+        stepRows.map((s) => s.approverUserId),
+        tx,
+      );
+      const after = this.toView(
+        entityType,
+        {
+          id: definition.id,
+          entityType,
+          name: fields.name,
+          adminOverride: fields.adminOverride,
+          allowSelfApproval: fields.allowSelfApproval,
+          steps: stepRows,
+        },
+        afterNames,
+      );
+
+      await this.audit.log(
+        {
+          tenantId,
+          userId: actorUserId,
+          action: existingDefinition ? 'UPDATE' : 'CREATE',
+          entityType: 'WorkflowDefinition',
+          entityId: definition.id,
+          oldValues: { entityType, view: before },
+          newValues: { entityType, view: after },
+        },
+        tx,
+      );
     });
 
     return this.get(tenantId, entityType);
   }
 
   /** Drop the tenant's chain for a type; the built-in default applies again. */
-  async reset(tenantId: string, entityType: WorkflowEntityType): Promise<WorkflowDefinitionView> {
-    await this.prisma.workflowDefinition.deleteMany({ where: { tenantId, entityType } });
-    return this.toView(entityType, undefined, new Map());
+  async reset(
+    tenantId: string,
+    entityType: WorkflowEntityType,
+    actorUserId?: string,
+  ): Promise<WorkflowDefinitionView> {
+    const existingDefinition = (await this.prisma.workflowDefinition.findUnique({
+      where: { tenantId_entityType: { tenantId, entityType } },
+      include: { steps: { orderBy: { stepOrder: 'asc' } } },
+    })) as DefinitionWithSteps | null;
+    const after = this.toView(entityType, undefined, new Map());
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.workflowDefinition.deleteMany({ where: { tenantId, entityType } });
+      if (!existingDefinition) return;
+
+      const beforeNames = await this.userNames(
+        tenantId,
+        existingDefinition.steps.map((s) => s.approverUserId),
+        tx,
+      );
+      const before = this.toView(entityType, existingDefinition, beforeNames);
+      await this.audit.log(
+        {
+          tenantId,
+          userId: actorUserId,
+          action: 'DELETE',
+          entityType: 'WorkflowDefinition',
+          entityId: existingDefinition.id,
+          oldValues: { entityType, view: before },
+          newValues: { entityType, view: after },
+        },
+        tx,
+      );
+    });
+
+    return after;
   }
 
   private toView(
@@ -198,10 +280,11 @@ export class WorkflowDefinitionsService {
   private async userNames(
     tenantId: string,
     ids: Array<string | null>,
+    db: Db = this.prisma,
   ): Promise<Map<string, string>> {
     const unique = [...new Set(ids.filter((id): id is string => !!id))];
     if (unique.length === 0) return new Map();
-    const users = await this.prisma.user.findMany({
+    const users = await db.user.findMany({
       where: { tenantId, id: { in: unique } },
       select: {
         id: true,

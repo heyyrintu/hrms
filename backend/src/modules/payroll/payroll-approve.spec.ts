@@ -15,6 +15,7 @@ import { createMockPrismaService } from '../../test/helpers';
 import { LoansService } from '../loans/loans.service';
 import { WebhookDispatcherService } from '../webhooks/webhook-dispatcher.service';
 import { ApprovalEngineService } from '../workflow/approval-engine.service';
+import { createRunInputMocks } from './adjustments/run-inputs.testing';
 
 /**
  * approveRun's side effects: payslip emails and the `payroll.approved`
@@ -78,6 +79,8 @@ describe('PayrollService.approveRun side effects', () => {
         { provide: PayslipEmailService, useValue: payslipEmail },
         { provide: WebhookDispatcherService, useValue: webhooks },
         { provide: ApprovalEngineService, useValue: engine },
+        // Keka wave C collaborators: nothing attached to any run.
+        ...createRunInputMocks().providers,
       ],
     }).compile();
 

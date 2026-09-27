@@ -1474,3 +1474,260 @@ describe('StatutoryService.getDeclaration - the ceilings that actually apply to 
     expect(prisma.incomeTaxConfig.findUnique).not.toHaveBeenCalled();
   });
 });
+
+describe('StatutoryService.compute — non-recurring income (Keka wave C, C.T)', () => {
+  let service: StatutoryService;
+  let prisma: any;
+
+  /** New regime, no declaration: tax is a function of gross alone. */
+  function tdsConfig(overrides: Record<string, unknown> = {}) {
+    return {
+      pfEnabled: false,
+      pfEmployeeRate: new Decimal(12), pfEmployerRate: new Decimal(12),
+      epsRate: new Decimal(8.33), pfWageCeiling: new Decimal(15000),
+      applyPfCeiling: true, edliRate: new Decimal(0.5), pfAdminRate: new Decimal(0.5),
+      esiEnabled: false, esiEmployeeRate: new Decimal(0.75),
+      esiEmployerRate: new Decimal(3.25), esiWageLimit: new Decimal(21000),
+      ptEnabled: false, ptState: null,
+      lwfEnabled: false, lwfEmployeeAmount: new Decimal(0),
+      lwfEmployerAmount: new Decimal(0), lwfMonths: [],
+      tdsEnabled: true,
+      defaultTaxRegime: 'NEW',
+      proofVerificationRequired: false,
+      proofCutoffMonth: 1,
+      ...overrides,
+    };
+  }
+
+  const taxRow = {
+    standardDeduction: new Decimal(50000),
+    rebateIncomeLimit: new Decimal(500000),
+    rebateMaxAmount: new Decimal(12500),
+    cessRate: new Decimal(4),
+    surchargeSlabs: [],
+    marginalReliefEnabled: false,
+    slabs: [
+      { fromAmount: new Decimal(0), toAmount: new Decimal(250000), rate: new Decimal(0) },
+      { fromAmount: new Decimal(250000), toAmount: new Decimal(500000), rate: new Decimal(5) },
+      { fromAmount: new Decimal(500000), toAmount: new Decimal(1000000), rate: new Decimal(20) },
+      { fromAmount: new Decimal(1000000), toAmount: null, rate: new Decimal(30) },
+    ],
+  };
+
+  /** October 2026: six months (Oct–Mar) left in FY 2026-27. */
+  const october = {
+    tenantId: 'tenant-1',
+    employeeId: 'emp-1',
+    month: 10,
+    year: 2026,
+    pfWages: new Decimal(0),
+    grossPay: new Decimal(100000),
+    pfOptOut: true,
+    gender: null,
+    employeeRegime: 'NEW' as const,
+  };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        StatutoryService,
+        { provide: PrismaService, useValue: createMockPrismaService() },
+      ],
+    }).compile();
+    service = module.get(StatutoryService);
+    prisma = module.get(PrismaService);
+
+    prisma.statutoryConfig.findUnique.mockResolvedValue(tdsConfig());
+    prisma.payslip.findFirst.mockResolvedValue(null);
+    prisma.payslip.findMany.mockResolvedValue([]);
+    prisma.employeeTaxDeclaration.findUnique.mockResolvedValue(null);
+    prisma.incomeTaxConfig.findUnique.mockResolvedValue(taxRow);
+    prisma.investmentProof.findMany.mockResolvedValue([]);
+  });
+
+  it('projects a 1,00,000 October bonus once, not across the remaining months', async () => {
+    const r = await service.compute({
+      ...october,
+      grossPay: new Decimal(200000),
+      nonRecurringTaxable: new Decimal(100000),
+    });
+
+    // 1,00,000 regular x 6 + the bonus once. The old projection would have
+    // said 2,00,000 x 6 = 12,00,000.
+    expect((r.taxComputation as any).projectedAnnualGross).toBe('700000.00');
+    expect((r.taxComputation as any).nonRecurringTaxable).toBe('100000.00');
+  });
+
+  it('deducts the whole tax on the bonus in October and spreads only the recurring part', async () => {
+    const withBonus = await service.compute({
+      ...october,
+      grossPay: new Decimal(200000),
+      nonRecurringTaxable: new Decimal(100000),
+    });
+    const withoutBonus = await service.compute(october);
+
+    // Tax on 6,00,000 - 50,000 = 5,50,000: 12,500 + 10,000 = 22,500 + 4% cess.
+    expect((withoutBonus.taxComputation as any).annualTax).toBe('23400.00');
+    expect(withoutBonus.tds.toString()).toBe('3900'); // 23,400 over six months
+    // Tax on 7,00,000 - 50,000 = 6,50,000: 12,500 + 30,000 = 42,500 + 4% cess.
+    expect((withBonus.taxComputation as any).annualTax).toBe('44200.00');
+    expect((withBonus.taxComputation as any).taxOnNonRecurring).toBe('20800.00');
+    // The recurring instalment is unchanged; all 20,800 on the bonus is taken now.
+    expect(withBonus.tds.toString()).toBe('24700');
+  });
+
+  it('is byte-for-byte the old computation when there is no non-recurring income', async () => {
+    const a = await service.compute(october);
+    const b = await service.compute({ ...october, nonRecurringTaxable: new Decimal(0) });
+    expect(b.tds.toString()).toBe(a.tds.toString());
+    expect(b.taxComputation).toEqual(a.taxComputation);
+    expect(a.taxComputation).not.toHaveProperty('nonRecurringTaxable');
+  });
+
+  it('computes ESI and professional tax on the regular part of the gross only', async () => {
+    prisma.statutoryConfig.findUnique.mockResolvedValue(
+      tdsConfig({ tdsEnabled: false, esiEnabled: true, ptEnabled: true, ptState: 'Karnataka' }),
+    );
+    prisma.professionalTaxSlab.findMany.mockResolvedValue([
+      { fromAmount: new Decimal(0), toAmount: new Decimal(24999), amount: new Decimal(0), februaryAmount: null, gender: null },
+      { fromAmount: new Decimal(25000), toAmount: null, amount: new Decimal(200), februaryAmount: null, gender: null },
+    ]);
+
+    const r = await service.compute({
+      ...october,
+      grossPay: new Decimal(30000),
+      nonRecurringTaxable: new Decimal(10000),
+    });
+
+    // 20,000 regular is under the 21,000 ESI limit and under the PT slab.
+    expect(r.esiWages.toString()).toBe('20000');
+    expect(r.esiEmployee.toString()).toBe('150');
+    expect(r.professionalTax.toString()).toBe('0');
+  });
+
+  it('charges no professional tax or LWF when monthly statutory charges are off (off-cycle)', async () => {
+    prisma.statutoryConfig.findUnique.mockResolvedValue(
+      tdsConfig({
+        tdsEnabled: false, ptEnabled: true, ptState: 'Karnataka',
+        lwfEnabled: true, lwfEmployeeAmount: new Decimal(20), lwfEmployerAmount: new Decimal(40), lwfMonths: [10],
+      }),
+    );
+    prisma.professionalTaxSlab.findMany.mockResolvedValue([
+      { fromAmount: new Decimal(0), toAmount: null, amount: new Decimal(200), februaryAmount: null, gender: null },
+    ]);
+
+    const r = await service.compute({ ...october, chargeMonthlyStatutory: false });
+
+    expect(r.professionalTax.toString()).toBe('0');
+    expect(r.lwfEmployee.toString()).toBe('0');
+    expect(r.lwfEmployer.toString()).toBe('0');
+    expect(prisma.professionalTaxSlab.findMany).not.toHaveBeenCalled();
+  });
+
+  it("leaves the run's own earlier payslips out of the year to date", async () => {
+    await service.compute({ ...october, excludePayrollRunId: 'run-9' });
+    expect(prisma.payslip.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          payrollRun: expect.objectContaining({ id: { not: 'run-9' } }),
+        }),
+      }),
+    );
+  });
+
+  it('takes only the tax on the non-recurring part in an off-cycle run, projecting the regular salary', async () => {
+    // Off-cycle, no salary: the month's regular run (1,00,000) is already in
+    // the year to date along with April-September; five months are still to come.
+    prisma.payslip.findMany.mockResolvedValue([
+      { grossPay: new Decimal(700000), professionalTax: new Decimal(0), tds: new Decimal(27300), taxComputation: null },
+    ]);
+
+    const r = await service.compute({
+      ...october,
+      grossPay: new Decimal(100000),
+      nonRecurringTaxable: new Decimal(100000),
+      chargeMonthlyStatutory: false,
+      offCycleProjection: { regularMonthlyGross: new Decimal(100000), monthsAhead: 5 },
+    });
+
+    // 7,00,000 so far + 1,00,000 x 5 = 12,00,000 without; 13,00,000 with.
+    expect((r.taxComputation as any).projectedAnnualGross).toBe('1300000.00');
+    // Without: 11,50,000 taxable -> 12,500 + 1,00,000 + 45,000 = 1,57,500 + 4% = 1,63,800.
+    // With: 12,50,000 -> 1,87,500 + 4% = 1,95,000. Only the 31,200 difference is taken.
+    expect(r.tds.toString()).toBe('31200');
+  });
+
+  describe('section 89 relief on prior-year arrears', () => {
+    // April-September paid 2,00,000; 50,000 a month from here makes 5,00,000,
+    // exactly the rebate limit before arrears. 1,00,000 of FY 2025-26 arrears
+    // arrive in October.
+    const withArrears = {
+      ...october,
+      grossPay: new Decimal(150000),
+      nonRecurringTaxable: new Decimal(100000),
+      priorYearArrears: { amount: new Decimal(100000), financialYears: [2025] },
+    };
+
+    beforeEach(() => {
+      prisma.payslip.findMany.mockResolvedValue([
+        { grossPay: new Decimal(200000), professionalTax: new Decimal(0), tds: new Decimal(0), taxComputation: null },
+      ]);
+    });
+
+    it('is not given without Form 10E, and says so', async () => {
+      prisma.employeeTaxDeclaration.findUnique.mockResolvedValue({
+        regime: 'NEW', form10EFurnished: false,
+      });
+
+      const r = await service.compute(withArrears);
+
+      // 6,00,000 - 50,000 = 5,50,000 -> 23,400; without the arrears the rebate
+      // wipes the tax out. The whole 23,400 is deducted now.
+      expect(r.tds.toString()).toBe('23400');
+      expect((r.taxComputation as any).section89.relief).toBe('0.00');
+      expect((r.taxComputation as any).section89.ineligibleReason).toBe(
+        'SECTION_89_FORM_10E_NOT_FURNISHED',
+      );
+    });
+
+    it('reduces this month’s TDS by the relief when Form 10E is furnished', async () => {
+      prisma.employeeTaxDeclaration.findUnique.mockResolvedValue({
+        regime: 'NEW', form10EFurnished: true,
+      });
+
+      const r = await service.compute(withArrears);
+
+      // Spread back, each year's slice keeps income at the rebate limit, so
+      // the whole 23,400 of bunching is relieved.
+      expect((r.taxComputation as any).section89.relief).toBe('23400.00');
+      expect(r.tds.toString()).toBe('0');
+      // The earlier year's slabs were looked up.
+      expect(prisma.incomeTaxConfig.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            tenantId_financialYear_regime_ageBand: expect.objectContaining({ financialYear: 2025 }),
+          },
+        }),
+      );
+    });
+
+    it('does not claw the relief back in later months', async () => {
+      prisma.employeeTaxDeclaration.findUnique.mockResolvedValue({
+        regime: 'NEW', form10EFurnished: true,
+      });
+      // November: October's payslip carried the arrears and the relief.
+      prisma.payslip.findMany.mockResolvedValue([
+        { grossPay: new Decimal(200000), professionalTax: new Decimal(0), tds: new Decimal(0), taxComputation: null },
+        {
+          grossPay: new Decimal(150000), professionalTax: new Decimal(0), tds: new Decimal(0),
+          taxComputation: { section89: { relief: '23400.00' } },
+        },
+      ]);
+
+      const r = await service.compute({ ...october, month: 11, grossPay: new Decimal(50000) });
+
+      // Annual 6,00,000 -> 23,400, less the 23,400 already relieved: nothing to spread.
+      expect(r.tds.toString()).toBe('0');
+    });
+  });
+});

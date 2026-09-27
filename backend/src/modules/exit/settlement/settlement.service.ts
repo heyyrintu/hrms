@@ -843,15 +843,29 @@ export class SettlementService {
     return approved;
   }
 
-  /** APPROVED -> PAID. Paying an unapproved settlement is the failure this guards. */
+  /**
+   * APPROVED -> PAID. Paying an unapproved settlement is the failure this guards.
+   *
+   * A settlement carried by an off-cycle payroll run (Keka wave C, spec C5) is
+   * paid by that run and marked PAID when the run is; paying it here as well
+   * would pay the leaver twice, so it is refused — and the write is guarded on
+   * it not being carried, in case a run takes it between the read and here.
+   */
   async markPaid(tenantId: string, id: string) {
-    await this.assertStatus(tenantId, id, SettlementStatus.APPROVED, 'paid');
+    const settlement = await this.assertStatus(tenantId, id, SettlementStatus.APPROVED, 'paid');
+    if (settlement.payrollRunId) {
+      throw new BadRequestException(
+        `This settlement is being paid through payroll run ${settlement.payrollRunId}; it is marked paid when that run is paid`,
+      );
+    }
 
     return this.transition(
       id,
       SettlementStatus.APPROVED,
       { status: SettlementStatus.PAID, paidAt: new Date() },
-      'Settlement is no longer approved',
+      'Settlement is no longer approved, or a payroll run is now paying it',
+      this.prisma,
+      { payrollRunId: null },
     );
   }
 
@@ -875,6 +889,8 @@ export class SettlementService {
         employeeId: true,
         lastWorkingDate: true,
         breakdown: true,
+        // Keka wave C: a settlement carried by a payroll run is paid by it.
+        payrollRunId: true,
       },
     });
     if (!settlement) throw new NotFoundException('Settlement not found');
@@ -896,10 +912,12 @@ export class SettlementService {
     data: Prisma.SettlementUpdateInput,
     conflictMessage: string,
     client: Prisma.TransactionClient = this.prisma,
+    /** Further conditions the row must still meet (e.g. not carried by a run). */
+    alsoWhere: { payrollRunId?: string | null } = {},
   ) {
     try {
       return await client.settlement.update({
-        where: { id, status: from },
+        where: { id, status: from, ...alsoWhere },
         data,
         include: this.include,
       });

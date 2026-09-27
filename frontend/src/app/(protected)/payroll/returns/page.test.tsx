@@ -174,6 +174,28 @@ describe('StatutoryReturnsPage', () => {
     expect(preview).not.toHaveBeenCalled();
   });
 
+  it('holds back the bank transfer file until the run is approved', async () => {
+    render(<StatutoryReturnsPage />);
+
+    await screen.findByText(/approve the run before you generate the bank transfer file/i);
+    expect(screen.getByLabelText('Preview Bank transfer file')).toBeDisabled();
+    expect(screen.getByLabelText('Download Bank transfer file')).toBeDisabled();
+    expect(screen.getByLabelText('Preview EPFO ECR')).not.toBeDisabled();
+  });
+
+  it('offers the bank transfer file for an approved run', async () => {
+    getRuns.mockResolvedValue({ data: [{ ...computedRun, status: 'APPROVED' }] });
+    render(<StatutoryReturnsPage />);
+
+    await screen.findByText('Bank transfer file');
+    await waitFor(() =>
+      expect(screen.getByLabelText('Download Bank transfer file')).not.toBeDisabled(),
+    );
+    expect(
+      screen.queryByText(/approve the run before you generate the bank transfer file/i),
+    ).not.toBeInTheDocument();
+  });
+
   it('shows the net pay of the selected run formatted as Indian rupees', async () => {
     render(<StatutoryReturnsPage />);
 

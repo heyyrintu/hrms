@@ -107,7 +107,7 @@ describe('WorkflowBuilderPage', () => {
     workflowApi.searchUsers.mockResolvedValue({ data: [] });
   });
 
-  it('shows six entity tabs and marks the built-in chain as Default', async () => {
+  it('shows every entity tab and marks the built-in chain as Default', async () => {
     await renderLoaded();
     const tabs = screen.getAllByRole('tab');
     expect(tabs.map((t) => t.textContent)).toEqual([
@@ -117,6 +117,8 @@ describe('WorkflowBuilderPage', () => {
       'Comp-Off',
       'Regularization',
       'Payroll Run',
+      'Job Requisition',
+      'Job Offer',
     ]);
     expect(screen.getByText('Default')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Reset to default/ })).toBeDisabled();

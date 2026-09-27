@@ -71,7 +71,7 @@ export class WorkflowsController {
     @Param('entityType', new ParseEnumPipe(WorkflowEntityType)) entityType: WorkflowEntityType,
     @Body() dto: UpsertWorkflowDto,
   ) {
-    return this.definitions.upsert(user.tenantId, entityType, dto);
+    return this.definitions.upsert(user.tenantId, entityType, dto, user.userId);
   }
 
   /**
@@ -87,6 +87,6 @@ export class WorkflowsController {
     @CurrentUser() user: AuthenticatedUser,
     @Param('entityType', new ParseEnumPipe(WorkflowEntityType)) entityType: WorkflowEntityType,
   ) {
-    return this.definitions.reset(user.tenantId, entityType);
+    return this.definitions.reset(user.tenantId, entityType, user.userId);
   }
 }

@@ -33,20 +33,26 @@ export class AttendancePolicyService {
    * Read the tenant's policy, creating it with defaults the first time anyone
    * asks. Two simultaneous first reads race on the `tenantId` unique key; the
    * loser re-reads rather than failing, because both callers want the same row.
+   * Pass `tx` to keep the read (and any create/re-read) on the caller's
+   * transaction connection instead of a separate one.
    */
-  async getOrCreate(tenantId: string): Promise<AttendancePolicy> {
-    const existing = await this.prisma.attendancePolicy.findUnique({
+  async getOrCreate(
+    tenantId: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<AttendancePolicy> {
+    const db = tx ?? this.prisma;
+    const existing = await db.attendancePolicy.findUnique({
       where: { tenantId },
     });
     if (existing) return existing;
 
     try {
-      return await this.prisma.attendancePolicy.create({
+      return await db.attendancePolicy.create({
         data: { tenantId, ...ATTENDANCE_POLICY_DEFAULTS },
       });
     } catch (err) {
       if (isPrismaError(err, PRISMA_UNIQUE_VIOLATION)) {
-        const raced = await this.prisma.attendancePolicy.findUnique({
+        const raced = await db.attendancePolicy.findUnique({
           where: { tenantId },
         });
         if (raced) return raced;

@@ -5,6 +5,7 @@ import {
   ForbiddenException,
   ConflictException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { ExpensesService } from './expenses.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -750,14 +751,39 @@ describe('ExpensesService', () => {
 
       const result = await service.markReimbursed('tenant-1', 'claim-1');
 
+      // Guarded: still APPROVED and not being paid by a payroll run.
       expect(prisma.expenseClaim.update).toHaveBeenCalledWith({
-        where: { id: 'claim-1' },
+        where: { id: 'claim-1', status: 'APPROVED', payrollRunId: null },
         data: {
           status: 'REIMBURSED',
           reimbursedAt: expect.any(Date),
         },
       });
       expect(result).toEqual(updated);
+    });
+
+    it('refuses (409) a claim a payroll run is reimbursing', async () => {
+      prisma.expenseClaim.findFirst.mockResolvedValue({
+        id: 'claim-1', employeeId: 'emp-1', status: 'APPROVED', amount: 200, payrollRunId: 'run-10',
+      });
+
+      await expect(service.markReimbursed('tenant-1', 'claim-1')).rejects.toThrow(
+        'This claim is being reimbursed through payroll run run-10',
+      );
+      expect(prisma.expenseClaim.update).not.toHaveBeenCalled();
+      expect(notifications.notifyEmployee).not.toHaveBeenCalled();
+    });
+
+    it('answers 409 when a run took the claim between the read and the write', async () => {
+      prisma.expenseClaim.findFirst.mockResolvedValue({
+        id: 'claim-1', employeeId: 'emp-1', status: 'APPROVED', amount: 200, payrollRunId: null,
+      });
+      prisma.expenseClaim.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('nf', { code: 'P2025', clientVersion: 't' }),
+      );
+
+      await expect(service.markReimbursed('tenant-1', 'claim-1')).rejects.toBeInstanceOf(ConflictException);
+      expect(notifications.notifyEmployee).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException when claim not approved', async () => {

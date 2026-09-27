@@ -91,6 +91,27 @@ const prismaModels = [
   'approvalInstance',
   'approvalAction',
   'approvalDelegation',
+  // Keka wave C
+  'payrollOneTimePayment',
+  'salaryArrear',
+  'salaryHold',
+  'payrollSettings',
+  'payrollGlMapping',
+  'payrollAccountingConfig',
+  // Keka wave D
+  'recruitmentSettings',
+  'jobRequisition',
+  'jobOpening',
+  'pipelineStage',
+  'candidate',
+  'jobApplication',
+  'jobApplicationStageEvent',
+  'interview',
+  'interviewPanelist',
+  'interviewFeedback',
+  'jobOffer',
+  'preOnboardingInvite',
+  'preOnboardingDocument',
 ];
 
 function createModelMock() {

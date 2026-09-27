@@ -9,6 +9,11 @@ import {
   ValidateNested,
   Min,
   Max,
+  MaxLength,
+  IsNotEmpty,
+  ArrayMinSize,
+  ArrayMaxSize,
+  ArrayUnique,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
@@ -124,6 +129,41 @@ export class CreatePayrollRunDto {
   @IsOptional()
   @IsString()
   remarks?: string;
+}
+
+/** Keka wave C (spec C5): a run limited to some employees. */
+export class CreateOffCycleRunDto {
+  @ApiProperty({ description: 'Month (1-12)' })
+  @IsNumber()
+  @Min(1)
+  @Max(12)
+  month: number;
+
+  @ApiProperty({ description: 'Year (e.g., 2026)' })
+  @IsNumber()
+  @Min(2020)
+  year: number;
+
+  @ApiProperty({ description: 'Why the run is needed', maxLength: 500 })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  reason: string;
+
+  @ApiProperty({
+    description:
+      "Also pay the month's full salary (e.g. a missed joiner). Refused for anyone the regular run already paid.",
+  })
+  @IsBoolean()
+  includeSalary: boolean;
+
+  @ApiProperty({ type: [String], description: '1-500 ACTIVE or INACTIVE employees' })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(500)
+  @ArrayUnique()
+  @IsString({ each: true })
+  employeeIds: string[];
 }
 
 // ============================================

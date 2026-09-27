@@ -29,10 +29,19 @@ describe('WorkflowsController', () => {
 
     const dto = { steps: [{ name: 'HR', approverType: 'HR_ADMIN' as const }] };
     await controller.upsert(mockHrAdmin, 'EXPENSE', dto);
-    expect(definitions.upsert).toHaveBeenCalledWith(mockHrAdmin.tenantId, 'EXPENSE', dto);
+    expect(definitions.upsert).toHaveBeenCalledWith(
+      mockHrAdmin.tenantId,
+      'EXPENSE',
+      dto,
+      mockHrAdmin.userId,
+    );
 
     await controller.reset(mockHrAdmin, 'LOAN');
-    expect(definitions.reset).toHaveBeenCalledWith(mockHrAdmin.tenantId, 'LOAN');
+    expect(definitions.reset).toHaveBeenCalledWith(
+      mockHrAdmin.tenantId,
+      'LOAN',
+      mockHrAdmin.userId,
+    );
   });
 
   it('validates :entityType with ParseEnumPipe', async () => {

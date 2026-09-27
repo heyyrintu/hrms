@@ -1,13 +1,15 @@
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe, Logger, RequestMethod } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { WINSTON_MODULE_NEST_PROVIDER } from 'nest-winston';
 import helmet from 'helmet';
 import * as express from 'express';
 import { AppModule } from './app.module';
+import { parseTrustProxy } from './config/trust-proxy';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
   });
 
@@ -15,6 +17,16 @@ async function bootstrap() {
   app.useLogger(app.get(WINSTON_MODULE_NEST_PROVIDER));
 
   const logger = new Logger('Bootstrap');
+
+  // req.ip keys the throttler (public careers / offers / pre-onboarding) and
+  // the biometric allowlist. Off unless TRUST_PROXY says how many proxy hops
+  // (or which proxy addresses) to trust; trusting X-Forwarded-For with no
+  // proxy in front would let a client choose its own IP. Validated at startup.
+  const trustProxy = parseTrustProxy(process.env.TRUST_PROXY);
+  if (trustProxy !== false) {
+    app.set('trust proxy', trustProxy);
+    logger.log(`Express trust proxy: ${String(trustProxy)}`);
+  }
 
   // Raw text body parser for ESSL/ZKTeco ICLOCK device push endpoints.
   // Must be registered before helmet/JSON parsers so the device payload is available as req.body.

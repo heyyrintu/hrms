@@ -30,6 +30,7 @@ import {
   ApprovalStepSnapshot,
   ApprovalTrailView,
   InboxItem,
+  PendingApprover,
   StartApprovalInput,
   TrailStepState,
   UserRef,
@@ -62,6 +63,8 @@ const TYPE_LABELS: Record<WorkflowEntityType, string> = {
   COMP_OFF: 'Comp-off request',
   REGULARIZATION: 'Attendance regularization',
   PAYROLL_RUN: 'Payroll run',
+  JOB_REQUISITION: 'Job requisition',
+  OFFER: 'Job offer',
 };
 
 type Db = Prisma.TransactionClient | PrismaService;
@@ -132,30 +135,9 @@ export class ApprovalEngineService {
     entityId: string,
   ): Promise<void> {
     try {
-      const instance = await this.findInstance(tenantId, entityType, entityId);
-      if (!instance || instance.status !== 'PENDING') return;
-      const step = parseSteps(instance.steps).find(
-        (s) => s.order === instance.currentStepOrder,
-      );
-      if (!step) return;
-
-      const dir = await this.resolver.loadDirectory(tenantId, [instance.requesterEmployeeId]);
-      const resolution = this.resolver.resolve(dir, instance, step);
-      const recipients = new Set<string>([
-        ...resolution.approvers,
-        ...resolution.onBehalf.keys(),
-      ]);
-      // Never ask the requester to approve their own request.
-      for (const userId of [...recipients]) {
-        const user = dir.usersById.get(userId);
-        if (
-          userId === instance.requesterUserId ||
-          (!!instance.requesterEmployeeId && user?.employeeId === instance.requesterEmployeeId)
-        ) {
-          recipients.delete(userId);
-        }
-      }
-      if (recipients.size === 0) return;
+      const resolved = await this.resolveCurrentStepRecipients(tenantId, entityType, entityId);
+      if (!resolved || resolved.recipients.size === 0) return;
+      const { step, recipients } = resolved;
 
       const title = await this.describeTitle(tenantId, entityType, entityId);
       await this.notifications.createMany(
@@ -173,6 +155,75 @@ export class ApprovalEngineService {
         `Could not notify approvers of ${entityType} ${entityId}: ${(error as Error).message}`,
       );
     }
+  }
+
+  /**
+   * Users who may act on an entity's current step right now (Keka wave C/D
+   * follow-up B2), resolved exactly as `notifyPending` resolves its
+   * recipients: approvers and on-behalf actors, requester excluded, active
+   * users only. Never throws; `[]` when there is no PENDING instance, no
+   * resolvable step, or any resolution error.
+   */
+  async getPendingApprovers(
+    tenantId: string,
+    entityType: WorkflowEntityType,
+    entityId: string,
+  ): Promise<PendingApprover[]> {
+    try {
+      const resolved = await this.resolveCurrentStepRecipients(tenantId, entityType, entityId);
+      if (!resolved) return [];
+      const { dir, recipients } = resolved;
+      const approvers: PendingApprover[] = [];
+      for (const userId of recipients) {
+        const user = dir.usersById.get(userId);
+        if (user) approvers.push({ userId: user.id, email: user.email, name: user.name });
+      }
+      return approvers;
+    } catch (error) {
+      this.logger.warn(
+        `Could not resolve pending approvers of ${entityType} ${entityId}: ${(error as Error).message}`,
+      );
+      return [];
+    }
+  }
+
+  /**
+   * The current step's eligible recipients (approvers + on-behalf actors,
+   * requester excluded), shared by `notifyPending` and `getPendingApprovers`.
+   * `null` when there is no PENDING instance or its current step cannot be
+   * resolved.
+   */
+  private async resolveCurrentStepRecipients(
+    tenantId: string,
+    entityType: WorkflowEntityType,
+    entityId: string,
+  ): Promise<{
+    dir: ApproverDirectory;
+    step: ApprovalStepSnapshot;
+    recipients: Set<string>;
+  } | null> {
+    const instance = await this.findInstance(tenantId, entityType, entityId);
+    if (!instance || instance.status !== 'PENDING') return null;
+    const step = parseSteps(instance.steps).find((s) => s.order === instance.currentStepOrder);
+    if (!step) return null;
+
+    const dir = await this.resolver.loadDirectory(tenantId, [instance.requesterEmployeeId]);
+    const resolution = this.resolver.resolve(dir, instance, step);
+    const recipients = new Set<string>([
+      ...resolution.approvers,
+      ...resolution.onBehalf.keys(),
+    ]);
+    // Never ask the requester to approve their own request.
+    for (const userId of [...recipients]) {
+      const user = dir.usersById.get(userId);
+      if (
+        userId === instance.requesterUserId ||
+        (!!instance.requesterEmployeeId && user?.employeeId === instance.requesterEmployeeId)
+      ) {
+        recipients.delete(userId);
+      }
+    }
+    return { dir, step, recipients };
   }
 
   /** Authorize the actor for the current step, record the action, advance or finish. */

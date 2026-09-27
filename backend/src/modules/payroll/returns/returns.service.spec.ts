@@ -556,7 +556,27 @@ describe('ReturnsService', () => {
 
   describe('bankTransferFile', () => {
     beforeEach(() => {
-      prisma.payrollRun.findFirst.mockResolvedValue(computedRun());
+      prisma.payrollRun.findFirst.mockResolvedValue(computedRun({ status: 'APPROVED' }));
+    });
+
+    it.each(['COMPUTED'])(
+      'refuses a %s run: salary holds can still be placed before approval',
+      async (status) => {
+        prisma.payrollRun.findFirst.mockResolvedValue(computedRun({ status }));
+
+        await expect(service.bankTransferFile(TENANT, RUN_ID)).rejects.toThrow(
+          `Cannot generate the bank transfer file from a ${status} payroll run; approve it first`,
+        );
+      },
+    );
+
+    it('pays from a PAID run', async () => {
+      prisma.payrollRun.findFirst.mockResolvedValue(computedRun({ status: 'PAID' }));
+      prisma.payslip.findMany.mockResolvedValue([payslipA()]);
+
+      const file = await service.bankTransferFile(TENANT, RUN_ID);
+
+      expect(file.content.split('\n')).toHaveLength(2);
     });
 
     it('writes one payment instruction per employee', async () => {
@@ -593,6 +613,26 @@ describe('ReturnsService', () => {
       expect(file.content.split('\n')).toHaveLength(1);
       expect(file.warnings).toEqual([
         'E001 (Asha Rao): skipped from the bank transfer file, net pay is not positive',
+      ]);
+    });
+
+    it('leaves out an employee whose salary is held in the run, whatever became of the hold', async () => {
+      // HELD: not paid yet. VOIDED: never paid. RELEASED: paid by another run.
+      prisma.payslip.findMany.mockResolvedValue([payslipA(), payslipB()]);
+      prisma.salaryHold.findMany.mockResolvedValue([{ employeeId: 'emp-b', status: 'RELEASED' }]);
+
+      const file = await service.bankTransferFile(TENANT, RUN_ID);
+
+      expect(prisma.salaryHold.findMany).toHaveBeenCalledWith({
+        where: { tenantId: TENANT, payrollRunId: RUN_ID },
+        select: { employeeId: true, status: true },
+      });
+      expect(file.content.split('\n')).toEqual([
+        'Beneficiary Name,Account Number,IFSC,Amount,Reference',
+        'Asha Rao,000123456789,HDFC0000123,27300.00,SAL-052026-E001',
+      ]);
+      expect(file.warnings).toEqual([
+        'E002 (Bo, Jr Singh): skipped from the bank transfer file, salary is held (RELEASED)',
       ]);
     });
   });

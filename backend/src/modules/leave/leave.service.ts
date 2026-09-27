@@ -228,38 +228,60 @@ export class LeaveService {
     // The instance committed with the request; tell step-1 approvers now.
     void this.workflow.notifyPending(tenantId, WorkflowEntityType.LEAVE, request.id);
 
-    // Email the manager about new leave request (fire and forget)
-    const employee = await this.prisma.employee.findUnique({
-      where: { id: employeeId },
-      select: { managerId: true, firstName: true, lastName: true },
-    });
-    if (employee?.managerId) {
-      const manager = await this.prisma.employee.findUnique({
-        where: { id: employee.managerId },
-        select: { email: true, firstName: true },
-      });
-      if (manager?.email) {
-        const fmt = (d: Date) => d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-        this.emailService.sendEmail({
-          to: manager.email,
-          subject: `Leave Request from ${employee.firstName} ${employee.lastName}`,
-          template: 'leave-request',
-          context: {
-            approverName: manager.firstName,
-            employeeName: `${employee.firstName} ${employee.lastName}`,
-            leaveType: request.leaveType.name,
-            startDate: fmt(startDate),
-            endDate: fmt(endDate),
-            totalDays,
-            reason: dto.reason,
-          },
-        }).catch((err) => {
-          this.logger.error(`Failed to send leave request email: ${err}`);
-        });
-      }
-    }
+    // Email every engine-resolved step-1 approver (fire and forget; the
+    // engine's own routing decides who that is, not the reporting manager
+    // directly, since a tenant's LEAVE chain may start with someone else).
+    void this.emailPendingApprovers(tenantId, request, startDate, endDate, totalDays, dto.reason);
 
     return request;
+  }
+
+  /**
+   * Email every user `ApprovalEngineService.getPendingApprovers` returns for
+   * this leave request. Fire-and-forget: resolution and send failures are
+   * logged, never thrown, so they can never fail the create.
+   */
+  private async emailPendingApprovers(
+    tenantId: string,
+    request: { id: string; leaveType: { name: string }; employee: { firstName: string; lastName: string } },
+    startDate: Date,
+    endDate: Date,
+    totalDays: number,
+    reason: string | undefined,
+  ): Promise<void> {
+    try {
+      const approvers = await this.workflow.getPendingApprovers(
+        tenantId,
+        WorkflowEntityType.LEAVE,
+        request.id,
+      );
+      if (approvers.length === 0) return;
+
+      const employeeName = `${request.employee.firstName} ${request.employee.lastName}`.trim();
+      const fmt = (d: Date) => d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+      for (const approver of approvers) {
+        this.emailService
+          .sendEmail({
+            to: approver.email,
+            subject: `Leave Request from ${employeeName}`,
+            template: 'leave-request',
+            context: {
+              approverName: approver.name,
+              employeeName,
+              leaveType: request.leaveType.name,
+              startDate: fmt(startDate),
+              endDate: fmt(endDate),
+              totalDays,
+              reason,
+            },
+          })
+          .catch((err) => {
+            this.logger.error(`Failed to send leave request email to ${approver.email}: ${err}`);
+          });
+      }
+    } catch (err) {
+      this.logger.error(`Failed to resolve leave request approvers for email: ${err}`);
+    }
   }
 
   /**

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #0f766e; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+    .content { padding: 20px; background: #f9fafb; border: 1px solid #e5e7eb; }
+    .footer { padding: 15px; text-align: center; font-size: 12px; color: #6b7280; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>{{heading}}</h1>
+    </div>
+    <div class="content">
+      <p>Hi {{panelistName}},</p>
+      <p>You are on the interview panel for the following interview:</p>
+      <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+        <tr><td style="padding: 8px; font-weight: bold;">Candidate:</td><td style="padding: 8px;">{{candidateName}}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">Position:</td><td style="padding: 8px;">{{jobTitle}}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">Round:</td><td style="padding: 8px;">{{roundName}}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">When:</td><td style="padding: 8px;">{{when}}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">Mode:</td><td style="padding: 8px;">{{mode}}</td></tr>
+        {{#if location}}<tr><td style="padding: 8px; font-weight: bold;">Location:</td><td style="padding: 8px;">{{location}}</td></tr>{{/if}}
+        {{#if meetingLink}}<tr><td style="padding: 8px; font-weight: bold;">Meeting link:</td><td style="padding: 8px; word-break: break-all;">{{meetingLink}}</td></tr>{{/if}}
+      </table>
+      <p>After the interview, please submit your scorecard under <a href="{{link}}">My interviews</a> in the HRMS portal.</p>
+      <p>Thank you,<br>HR Team</p>
+    </div>
+    <div class="footer">
+      <p>This is an automated message from HRMS.</p>
+    </div>
+  </div>
+</body>
+</html>

@@ -191,6 +191,18 @@ export interface DelegationView {
   isCurrent: boolean;
 }
 
+/**
+ * A user who may act on a request's current step (Keka wave C/D follow-up B2).
+ * Returned by ApprovalEngineService.getPendingApprovers, resolved exactly as
+ * notifyPending resolves its recipients (requester excluded, active users only).
+ */
+export interface PendingApprover {
+  userId: string;
+  email: string;
+  /** Linked employee's full name, else the email. */
+  name: string;
+}
+
 export interface ApproverCandidate {
   id: string;
   name: string;

@@ -1158,3 +1158,400 @@ describe('PayrollCalculationService - loan and salary advance recovery', () => {
     expect(Number(result!.netPay)).toBe(20000);
   });
 });
+
+// ============================================================================
+// Keka wave C (spec C.0, C1-C5): the payslip line contract and run extras.
+// ============================================================================
+
+describe('PayrollCalculationService — run extras and the line contract (Keka wave C)', () => {
+  let service: PayrollCalculationService;
+  let prisma: any;
+  let statutory: { compute: jest.Mock };
+  let loans: { getPayrollDeductions: jest.Mock };
+
+  const tenantId = 'tenant-1';
+  const employeeId = 'emp-1';
+  // October 2026 has 22 weekdays; with no attendance rows the employee is
+  // treated as present only for what the records say, so give every weekday.
+  const month = 10;
+  const year = 2026;
+
+  const salaryRow = {
+    id: 'es-1',
+    tenantId,
+    employeeId,
+    basePay: 40000,
+    isActive: true,
+    salaryStructure: {
+      id: 'ss-1',
+      components: [
+        { name: 'HRA', type: 'earning', calcType: 'percentage', value: 50, pfApplicable: false },
+        { name: 'DA', type: 'earning', calcType: 'fixed', value: 5000, pfApplicable: true },
+        { name: 'Canteen', type: 'deduction', calcType: 'fixed', value: 500 },
+      ],
+    },
+    employee: {
+      otMultiplier: 1.5, payType: 'MONTHLY', hourlyRate: null, gender: null,
+      dateOfBirth: null, pfOptOut: false, taxRegime: null,
+    },
+  };
+
+  /** Every weekday of October 2026 attended. */
+  function fullMonthAttendance() {
+    const rows = [];
+    for (let d = 1; d <= 31; d++) {
+      const date = new Date(Date.UTC(2026, 9, d, 12));
+      const day = date.getUTCDay();
+      if (day === 0 || day === 6) continue;
+      rows.push({ date, status: 'PRESENT', otMinutesApproved: 0, otMinutesCalculated: 0 });
+    }
+    return rows;
+  }
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        PayrollCalculationService,
+        { provide: PrismaService, useValue: createMockPrismaService() },
+        { provide: StatutoryService, useValue: { compute: jest.fn().mockResolvedValue(noStatutory()) } },
+        {
+          provide: LoansService,
+          useValue: { getPayrollDeductions: jest.fn().mockResolvedValue({ total: 0, lines: [] }) },
+        },
+      ],
+    }).compile();
+
+    service = module.get(PayrollCalculationService);
+    prisma = module.get(PrismaService);
+    statutory = module.get(StatutoryService);
+    loans = module.get(LoansService);
+
+    prisma.employeeSalary.findFirst.mockResolvedValue(salaryRow);
+    prisma.holiday.findMany.mockResolvedValue([]);
+    prisma.leaveRequest.findMany.mockResolvedValue([]);
+    prisma.attendanceRecord.findMany.mockResolvedValue(fullMonthAttendance());
+    prisma.employee.findFirst.mockResolvedValue(salaryRow.employee);
+  });
+
+  it('writes a kind on every line: components, statutory and loans', async () => {
+    statutory.compute.mockResolvedValue({
+      ...noStatutory(),
+      pfEmployee: new Decimal(1800),
+      tds: new Decimal(1000),
+      totalEmployeeDeductions: new Decimal(2800),
+    });
+    loans.getPayrollDeductions.mockResolvedValue({
+      total: 2000,
+      lines: [{ loanId: 'loan-1', type: 'PERSONAL', amount: 2000 }],
+    });
+
+    const r = await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+    expect(r!.earnings.map((e) => [e.name, e.kind])).toEqual([
+      ['HRA', 'COMPONENT'],
+      ['DA', 'COMPONENT'],
+    ]);
+    expect(r!.deductions.map((d) => [d.name, d.kind])).toEqual([
+      ['Canteen', 'COMPONENT'],
+      ['Provident Fund', 'STATUTORY'],
+      ['TDS', 'STATUTORY'],
+      ['Loan EMI', 'LOAN'],
+    ]);
+    // No extras: the new figures are all nought and net is unchanged.
+    expect(r!.nonRecurringTaxable.toString()).toBe('0');
+    expect(r!.nonTaxableEarnings.toString()).toBe('0');
+    expect(r!.netPay.toString()).toBe(
+      r!.grossPay.sub(r!.totalDeductions).toString(),
+    );
+  });
+
+  it('pays net positive arrears as one taxable, non-recurring earning with its PF wages', async () => {
+    const r = await service.calculateForEmployee(tenantId, employeeId, month, year, {
+      extras: {
+        arrears: [
+          { id: 'ar-1', amount: new Decimal(3000), pfWagesDelta: new Decimal(2000), financialYear: 2026 },
+          { id: 'ar-2', amount: new Decimal(2000), pfWagesDelta: new Decimal(1000), financialYear: 2026 },
+        ],
+      },
+    });
+
+    const arrears = r!.earnings.find((e) => e.kind === 'ARREAR')!;
+    expect(arrears).toMatchObject({ name: 'Arrears', taxable: true });
+    expect(arrears.amount.toString()).toBe('5000');
+    // 40,000 + 20,000 HRA + 5,000 DA + 5,000 arrears.
+    expect(r!.grossPay.toString()).toBe('70000');
+    expect(r!.arrearsAmount.toString()).toBe('5000');
+    expect(r!.nonRecurringTaxable.toString()).toBe('5000');
+
+    const input = statutory.compute.mock.calls[0][0];
+    expect(input.nonRecurringTaxable.toString()).toBe('5000');
+    // Basic 40,000 + DA 5,000 + 3,000 of arrears PF wages.
+    expect(input.pfWages.toString()).toBe('48000');
+    expect(input.priorYearArrears).toBeUndefined();
+  });
+
+  it('recovers net negative arrears after tax without touching the gross', async () => {
+    const r = await service.calculateForEmployee(tenantId, employeeId, month, year, {
+      extras: {
+        arrears: [{ id: 'ar-1', amount: new Decimal(-1500), pfWagesDelta: new Decimal(-1500), financialYear: 2026 }],
+      },
+    });
+
+    expect(r!.grossPay.toString()).toBe('65000');
+    expect(r!.arrearsAmount.toString()).toBe('0');
+    const recovery = r!.deductions.find((d) => d.kind === 'ARREAR')!;
+    expect(recovery.name).toBe('Arrears recovery');
+    expect(recovery.amount.toString()).toBe('1500');
+    // 65,000 - 500 canteen - 1,500 recovery.
+    expect(r!.netPay.toString()).toBe('63000');
+    expect(statutory.compute.mock.calls[0][0].pfWages.toString()).toBe('45000');
+  });
+
+  it('flags arrears of an earlier financial year for section 89', async () => {
+    await service.calculateForEmployee(tenantId, employeeId, month, year, {
+      extras: {
+        arrears: [
+          { id: 'ar-1', amount: new Decimal(4000), pfWagesDelta: new Decimal(0), financialYear: 2025 },
+          { id: 'ar-2', amount: new Decimal(1000), pfWagesDelta: new Decimal(0), financialYear: 2026 },
+        ],
+      },
+    });
+
+    const input = statutory.compute.mock.calls[0][0];
+    expect(input.priorYearArrears.amount.toString()).toBe('4000');
+    expect(input.priorYearArrears.financialYears).toEqual([2025]);
+  });
+
+  it('pays one-time earnings and deductions per their taxability', async () => {
+    const r = await service.calculateForEmployee(tenantId, employeeId, month, year, {
+      extras: {
+        oneTimePayments: [
+          { id: 'otp-1', kind: 'BONUS', name: 'Diwali bonus', amount: new Decimal(10000), taxable: true },
+          { id: 'otp-2', kind: 'OTHER_EARNING', name: 'Relocation', amount: new Decimal(3000), taxable: false },
+          { id: 'otp-3', kind: 'RECOVERY', name: 'Laptop damage', amount: new Decimal(2000), taxable: false },
+        ],
+      },
+    });
+
+    expect(r!.earnings.filter((e) => e.kind === 'ONE_TIME')).toEqual([
+      expect.objectContaining({ name: 'Diwali bonus', taxable: true, refId: 'otp-1' }),
+      expect.objectContaining({ name: 'Relocation', taxable: false, refId: 'otp-2' }),
+    ]);
+    expect(r!.deductions.filter((d) => d.kind === 'ONE_TIME')).toEqual([
+      expect.objectContaining({ name: 'Laptop damage', refId: 'otp-3' }),
+    ]);
+    expect(r!.grossPay.toString()).toBe('75000'); // 65,000 + taxable bonus
+    expect(r!.nonRecurringTaxable.toString()).toBe('10000');
+    expect(r!.nonTaxableEarnings.toString()).toBe('3000');
+    // 75,000 + 3,000 - 500 canteen - 2,000 recovery.
+    expect(r!.netPay.toString()).toBe('75500');
+    expect(r!.totalDeductions.toString()).toBe('2500');
+  });
+
+  it('pays reimbursements and released held salary on top of the gross, untaxed', async () => {
+    const r = await service.calculateForEmployee(tenantId, employeeId, month, year, {
+      extras: {
+        reimbursements: [
+          { id: 'cl-1', amount: new Decimal(1200) },
+          { id: 'cl-2', amount: new Decimal(800) },
+        ],
+        holdReleases: [{ id: 'hold-1', amount: new Decimal(52000), heldMonth: 3, heldYear: 2026 }],
+      },
+    });
+
+    expect(r!.earnings.find((e) => e.kind === 'REIMBURSEMENT')).toMatchObject({
+      name: 'Reimbursements', taxable: false,
+    });
+    expect(r!.earnings.find((e) => e.kind === 'HOLD_RELEASE')).toMatchObject({
+      name: 'Held salary release (Mar 2026)', taxable: false, refId: 'hold-1',
+    });
+    expect(r!.grossPay.toString()).toBe('65000');
+    expect(r!.reimbursementAmount.toString()).toBe('2000');
+    expect(r!.nonTaxableEarnings.toString()).toBe('54000');
+    expect(r!.netPay.toString()).toBe('118500'); // 65,000 + 54,000 - 500
+    expect(statutory.compute.mock.calls[0][0].grossPay.toString()).toBe('65000');
+  });
+
+  it('lets loan instalments eat into the untaxed earnings before clamping', async () => {
+    loans.getPayrollDeductions.mockResolvedValue({
+      total: 70000,
+      lines: [{ loanId: 'loan-1', type: 'PERSONAL', amount: 70000 }],
+    });
+
+    const r = await service.calculateForEmployee(tenantId, employeeId, month, year, {
+      extras: { reimbursements: [{ id: 'cl-1', amount: new Decimal(1000) }] },
+    });
+
+    // 65,000 + 1,000 - 500 leaves 65,500 for the loan.
+    expect(r!.loanRepayments).toEqual([{ loanId: 'loan-1', amount: 65500 }]);
+    expect(r!.netPay.toString()).toBe('0');
+  });
+
+  it('does not ask for loan instalments when loans are not deducted (off-cycle)', async () => {
+    await service.calculateForEmployee(tenantId, employeeId, month, year, {
+      deductLoans: false,
+      chargeMonthlyStatutory: false,
+      payrollRunId: 'run-oc',
+    });
+
+    expect(loans.getPayrollDeductions).not.toHaveBeenCalled();
+    const input = statutory.compute.mock.calls[0][0];
+    expect(input.chargeMonthlyStatutory).toBe(false);
+    expect(input.excludePayrollRunId).toBe('run-oc');
+  });
+
+  describe('without salary (off-cycle, includeSalary false)', () => {
+    it('returns no payslip when there is nothing to pay', async () => {
+      const r = await service.calculateForEmployee(tenantId, employeeId, month, year, {
+        includeSalary: false,
+        deductLoans: false,
+        chargeMonthlyStatutory: false,
+      });
+      expect(r).toBeNull();
+      expect(prisma.employeeSalary.findFirst).not.toHaveBeenCalled();
+      expect(prisma.attendanceRecord.findMany).not.toHaveBeenCalled();
+    });
+
+    it('pays only the extras, with no base pay, components or attendance', async () => {
+      const r = await service.calculateForEmployee(tenantId, employeeId, month, year, {
+        includeSalary: false,
+        deductLoans: false,
+        chargeMonthlyStatutory: false,
+        extras: {
+          oneTimePayments: [
+            { id: 'otp-1', kind: 'INCENTIVE', name: 'Q3 incentive', amount: new Decimal(8000), taxable: true },
+          ],
+        },
+      });
+
+      expect(r!.basePay.toString()).toBe('0');
+      expect(r!.workingDays).toBe(0);
+      expect(r!.earnings.map((e) => e.name)).toEqual(['Q3 incentive']);
+      expect(r!.grossPay.toString()).toBe('8000');
+      expect(r!.netPay.toString()).toBe('8000');
+      expect(prisma.attendanceRecord.findMany).not.toHaveBeenCalled();
+      // The employee's statutory attributes still come from the record.
+      expect(prisma.employee.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: employeeId, tenantId } }),
+      );
+    });
+
+    it('projects the regular salary for TDS on the non-recurring amount', async () => {
+      // The month's regular run has already paid October.
+      prisma.payslip.findFirst.mockResolvedValue({ id: 'slip-regular' });
+
+      await service.calculateForEmployee(tenantId, employeeId, month, year, {
+        includeSalary: false,
+        deductLoans: false,
+        chargeMonthlyStatutory: false,
+        offCycle: true,
+        extras: {
+          oneTimePayments: [
+            { id: 'otp-1', kind: 'BONUS', name: 'Bonus', amount: new Decimal(8000), taxable: true },
+          ],
+        },
+      });
+
+      const input = statutory.compute.mock.calls[0][0];
+      // 40,000 + 20,000 HRA + 5,000 DA, prorated over a full month.
+      expect(input.offCycleProjection.regularMonthlyGross.toString()).toBe('65000');
+      // October paid already: November to March still to come.
+      expect(input.offCycleProjection.monthsAhead).toBe(5);
+      expect(input.nonRecurringTaxable.toString()).toBe('8000');
+    });
+  });
+
+  describe('a settlement carried by an off-cycle run', () => {
+    const settlement = {
+      id: 'set-1',
+      proRataSalary: new Decimal(20000),
+      leaveEncashment: new Decimal(30000),
+      leaveEncashmentExempt: new Decimal(10000),
+      gratuity: new Decimal(50000),
+      gratuityExempt: new Decimal(50000),
+      otherEarnings: new Decimal(0),
+      noticeRecovery: new Decimal(5000),
+      otherRecoveries: new Decimal(1000),
+      totalRecoveries: new Decimal(9000), // includes 3,000 of loan recovery
+      tds: new Decimal(4000),
+      netPayable: new Decimal(87000),
+    };
+
+    it('copies the settlement verbatim, with no recalculation', async () => {
+      const r = await service.calculateForEmployee(tenantId, employeeId, month, year, {
+        includeSalary: false,
+        deductLoans: false,
+        chargeMonthlyStatutory: false,
+        extras: { settlement },
+      });
+
+      expect(statutory.compute).not.toHaveBeenCalled();
+      expect(prisma.employeeSalary.findFirst).not.toHaveBeenCalled();
+      expect(r!.earnings.every((e) => e.kind === 'SETTLEMENT' && e.refId === 'set-1')).toBe(true);
+      // Taxable: 20,000 + 20,000 encashment; exempt: 10,000 + 50,000.
+      expect(r!.grossPay.toString()).toBe('40000');
+      expect(r!.nonTaxableEarnings.toString()).toBe('60000');
+      expect(r!.statutory.tds.toString()).toBe('4000');
+      expect(r!.deductions.map((d) => [d.name, d.kind, d.amount.toString()])).toEqual([
+        ['Notice pay recovery', 'SETTLEMENT', '5000'],
+        ['Other recoveries', 'SETTLEMENT', '1000'],
+        ['Loan recovery', 'LOAN', '3000'],
+        ['TDS', 'STATUTORY', '4000'],
+      ]);
+      expect(r!.netPay.toString()).toBe('87000');
+      expect(r!.loanRepayments).toEqual([]);
+    });
+
+    it('refuses when the payslip would not pay exactly the settlement', async () => {
+      await expect(
+        service.calculateForEmployee(tenantId, employeeId, month, year, {
+          includeSalary: false,
+          extras: { settlement: { ...settlement, netPayable: new Decimal(90000) } },
+        }),
+      ).rejects.toThrow(/does not match/);
+    });
+  });
+
+  describe('calculateRegularEarnings', () => {
+    it("values a month's regular earnings with a given salary row, prorated, without statutory", async () => {
+      prisma.employeeSalary.findFirst.mockResolvedValue({ ...salaryRow, id: 'es-2', basePay: 50000 });
+
+      const r = await service.calculateRegularEarnings(tenantId, employeeId, month, year, 'es-2');
+
+      expect(prisma.employeeSalary.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: 'es-2', tenantId, employeeId } }),
+      );
+      expect(r!.basePay.toString()).toBe('50000');
+      expect(r!.earnings.map((e) => [e.name, e.amount.toString()])).toEqual([
+        ['HRA', '25000'],
+        ['DA', '5000'],
+      ]);
+      expect(r!.total.toString()).toBe('80000');
+      expect(r!.pfWages.toString()).toBe('55000');
+      expect(r!.pfApplicableNames).toEqual(['DA']);
+      expect(statutory.compute).not.toHaveBeenCalled();
+      expect(loans.getPayrollDeductions).not.toHaveBeenCalled();
+    });
+
+    it('prorates for loss of pay the same way the payslip does', async () => {
+      // Two ABSENT weekdays out of 22 are loss of pay under the default policy.
+      const rows = fullMonthAttendance();
+      rows[0].status = 'ABSENT';
+      rows[1].status = 'ABSENT';
+      prisma.attendanceRecord.findMany.mockResolvedValue(rows);
+      prisma.attendancePolicy.findUnique.mockResolvedValue(null);
+
+      const r = await service.calculateRegularEarnings(tenantId, employeeId, month, year, 'es-1');
+
+      // 40,000 x 20/22.
+      expect(r!.basePay.toString()).toBe('36363.64');
+    });
+
+    it('returns null for a salary row of another employee or tenant', async () => {
+      prisma.employeeSalary.findFirst.mockResolvedValue(null);
+      await expect(
+        service.calculateRegularEarnings(tenantId, employeeId, month, year, 'es-x'),
+      ).resolves.toBeNull();
+    });
+  });
+});

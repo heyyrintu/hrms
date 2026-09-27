@@ -457,7 +457,7 @@ export class RegularizationService {
     // so regularizing a two-hour day cannot turn it into a paid full day. The
     // approval itself asserts presence, so the base is PRESENT (or WFH, when
     // the day was already a work-from-home day) whatever the row said before.
-    const policy = await this.policyService.getOrCreate(tenantId);
+    const policy = await this.policyService.getOrCreate(tenantId, tx);
     const baseStatus: AttendanceStatus =
       existingAttendance?.status === AttendanceStatus.WFH
         ? AttendanceStatus.WFH

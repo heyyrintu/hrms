@@ -6,6 +6,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isPrismaError, PRISMA_RECORD_NOT_FOUND } from '../../common/utils/prisma-errors';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   CreateExpenseCategoryDto,
@@ -444,14 +445,33 @@ export class ExpensesService {
     if (!claim) {
       throw new NotFoundException('Expense claim not found or not in APPROVED status');
     }
+    // Keka wave C (spec C4): a claim a payroll run is paying becomes
+    // REIMBURSED when that run is paid; paying it by hand too would pay twice.
+    if (claim.payrollRunId) {
+      throw new ConflictException(
+        `This claim is being reimbursed through payroll run ${claim.payrollRunId}`,
+      );
+    }
 
-    const updated = await this.prisma.expenseClaim.update({
-      where: { id: claimId },
-      data: {
-        status: ExpenseClaimStatus.REIMBURSED,
-        reimbursedAt: new Date(),
-      },
-    });
+    // Guarded on what was just checked, so a run attaching the claim
+    // meanwhile (or a concurrent call) makes this a 409, not a double payment.
+    let updated;
+    try {
+      updated = await this.prisma.expenseClaim.update({
+        where: { id: claimId, status: ExpenseClaimStatus.APPROVED, payrollRunId: null },
+        data: {
+          status: ExpenseClaimStatus.REIMBURSED,
+          reimbursedAt: new Date(),
+        },
+      });
+    } catch (err) {
+      if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
+        throw new ConflictException(
+          'This claim was reimbursed or taken into a payroll run meanwhile',
+        );
+      }
+      throw err;
+    }
 
     this.notificationsService
       .notifyEmployee(

@@ -8,6 +8,7 @@ import {
   MinLength,
   validateSync,
 } from 'class-validator';
+import { TRUST_PROXY_PATTERN } from './trust-proxy';
 
 enum Environment {
   Development = 'development',
@@ -121,6 +122,18 @@ class EnvironmentVariables {
   @IsString()
   @IsOptional()
   WEBHOOK_ALLOW_PRIVATE_TARGETS?: string;
+
+  // Express `trust proxy`: hop count, true/false, or an address/subnet list.
+  // Off by default. Set it behind a reverse proxy so req.ip (per-IP throttling,
+  // biometric allowlist, offer-answer evidence) is the client, not the proxy.
+  // See src/config/trust-proxy.ts.
+  @IsString()
+  @IsOptional()
+  @Matches(TRUST_PROXY_PATTERN, {
+    message:
+      'TRUST_PROXY must be a hop count, true/false, or a comma-separated list of addresses, subnets or loopback/linklocal/uniquelocal',
+  })
+  TRUST_PROXY?: string;
 
   // Publishes /api/docs. Defaults to on only in development; set explicitly
   // rather than relying on NODE_ENV being present in every deployment.

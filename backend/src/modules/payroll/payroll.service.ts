@@ -6,13 +6,27 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PayrollCalculationService, PayslipData } from './payroll-calculation.service';
 import {
+  CalculationOptions,
+  PayrollCalculationService,
+  PayslipData,
+  PayslipExtras,
+} from './payroll-calculation.service';
+import {
+  CreateOffCycleRunDto,
   CreatePayrollRunDto,
   PayrollRunQueryDto,
   PayslipQueryDto,
 } from './dto/payroll.dto';
-import { PayrollRun, PayrollRunStatus, Prisma, UserRole } from '@prisma/client';
+import {
+  EmployeeStatus,
+  PayrollRun,
+  PayrollRunStatus,
+  PayrollRunType,
+  Prisma,
+  SettlementStatus,
+  UserRole,
+} from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { isPrismaError, PRISMA_RECORD_NOT_FOUND } from '../../common/utils/prisma-errors';
 import {
@@ -34,6 +48,222 @@ import { PayslipEmailService } from './payslip-email.service';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { ApprovalEngineService } from '../workflow/approval-engine.service';
 import { WorkflowEntityContext } from '../workflow/workflow.types';
+import { SalaryArrearsService } from './adjustments/salary-arrears.service';
+import { OneTimePaymentsService } from './adjustments/one-time-payments.service';
+import { SalaryHoldsService } from './adjustments/salary-holds.service';
+import {
+  PayrollReimbursementsService,
+  SettledClaim,
+} from './adjustments/payroll-reimbursements.service';
+import { PayrollSettingsService } from './adjustments/payroll-settings.service';
+import { EMPLOYEE_REF_SELECT, iso, num, toEmployeeRef } from './adjustments/views';
+import { EmployeeRef } from './payroll-depth.types';
+
+/** A settlement row as a run's settlements tab shows it. */
+export interface RunSettlementRow {
+  id: string;
+  employee: EmployeeRef;
+  status: SettlementStatus;
+  netPayable: number;
+  lastWorkingDate: string;
+  payrollRunId: string | null;
+}
+
+/** The run fields the compute path needs. */
+type ComputableRun = Pick<
+  PayrollRun,
+  'id' | 'tenantId' | 'month' | 'year' | 'status'
+> & {
+  runType?: PayrollRunType | null;
+  includeSalary?: boolean | null;
+  scopeEmployeeIds?: string[] | null;
+};
+
+/** What the write transaction attaches to the run besides its payslips. */
+interface RunAttachments {
+  arrearIds: string[];
+  claimIds: string[];
+}
+
+const SETTLEMENT_SELECT = {
+  id: true,
+  employeeId: true,
+  status: true,
+  netPayable: true,
+  lastWorkingDate: true,
+  payrollRunId: true,
+  proRataSalary: true,
+  leaveEncashment: true,
+  leaveEncashmentExempt: true,
+  gratuity: true,
+  gratuityExempt: true,
+  otherEarnings: true,
+  noticeRecovery: true,
+  otherRecoveries: true,
+  totalRecoveries: true,
+  tds: true,
+  employee: { select: EMPLOYEE_REF_SELECT },
+} as const;
+
+function isOffCycle(run: { runType?: PayrollRunType | null }): boolean {
+  return run.runType === PayrollRunType.OFF_CYCLE;
+}
+
+/** An off-cycle run that pays the month's salary, not only extras. */
+function paysOffCycleSalary(run: {
+  runType?: PayrollRunType | null;
+  includeSalary?: boolean | null;
+}): boolean {
+  return isOffCycle(run) && run.includeSalary === true;
+}
+
+/** Either client: `this.prisma` or a transaction's. */
+type PayrollDb = Pick<Prisma.TransactionClient, 'payslip' | 'payrollRun'>;
+
+export const REGULAR_RUN_FIRST =
+  'Process and approve the regular run for this month first; off-cycle salary is for employees it did not pay';
+
+/**
+ * Review C1: an off-cycle run paying salary is only for people the month's
+ * regular run did not pay, so that run must exist and be signed off first
+ * (APPROVED or PAID — neither can be recomputed, reset or deleted). While it
+ * is still DRAFT or COMPUTED it could yet pay the same people a second time.
+ */
+async function assertRegularRunSettled(
+  db: PayrollDb,
+  tenantId: string,
+  month: number,
+  year: number,
+): Promise<void> {
+  const regular = await db.payrollRun.findUnique({
+    where: {
+      tenantId_month_year_runType_sequence: {
+        tenantId,
+        month,
+        year,
+        runType: PayrollRunType.REGULAR,
+        sequence: 0,
+      },
+    },
+    select: { id: true, status: true },
+  });
+  if (
+    !regular ||
+    (regular.status !== PayrollRunStatus.APPROVED && regular.status !== PayrollRunStatus.PAID)
+  ) {
+    throw new BadRequestException(REGULAR_RUN_FIRST);
+  }
+}
+
+/**
+ * Review C1: which of these employees already have a payslip paying the
+ * month's salary in another run of this tenant — the regular run, or an
+ * off-cycle run with `includeSalary` — in whatever status (a COMPUTED run's
+ * payslips are about to be paid).
+ *
+ * Held salaries still count, whatever the hold's status: HELD is paid later
+ * by a release, RELEASED has been paid by one, and VOIDED is a decision not to
+ * pay that month's salary whose payslip still carries the month's tax, PF and
+ * ESI. Paying salary for the month again would pay twice or duplicate those
+ * statutory figures, so none of them frees the month up.
+ */
+export async function findEmployeesWithSalaryElsewhere(
+  db: PayrollDb,
+  tenantId: string,
+  month: number,
+  year: number,
+  employeeIds: string[],
+  excludeRunId?: string,
+): Promise<{ employeeId: string; employeeCode: string }[]> {
+  if (employeeIds.length === 0) return [];
+  const slips =
+    (await db.payslip.findMany({
+      where: {
+        tenantId,
+        employeeId: { in: employeeIds },
+        ...(excludeRunId ? { payrollRunId: { not: excludeRunId } } : {}),
+        payrollRun: {
+          tenantId,
+          month,
+          year,
+          OR: [
+            { runType: PayrollRunType.REGULAR },
+            { runType: PayrollRunType.OFF_CYCLE, includeSalary: true },
+          ],
+        },
+      },
+      select: { employeeId: true, employee: { select: { employeeCode: true } } },
+    })) ?? [];
+  const seen = new Map<string, string>();
+  for (const s of slips) seen.set(s.employeeId, s.employee.employeeCode);
+  return [...seen].map(([employeeId, employeeCode]) => ({ employeeId, employeeCode }));
+}
+
+/** Refuses (400, naming them) when anyone here was paid salary elsewhere. */
+async function assertNoSalaryElsewhere(
+  db: PayrollDb,
+  tenantId: string,
+  month: number,
+  year: number,
+  employeeIds: string[],
+  excludeRunId?: string,
+): Promise<void> {
+  const paid = await findEmployeesWithSalaryElsewhere(
+    db,
+    tenantId,
+    month,
+    year,
+    employeeIds,
+    excludeRunId,
+  );
+  if (paid.length > 0) {
+    throw new BadRequestException(
+      `Another payroll run already pays ${month}/${year} salary to ${paid
+        .map((p) => p.employeeCode)
+        .slice(0, 10)
+        .join(', ')}; an off-cycle run cannot pay their salary again`,
+    );
+  }
+}
+
+function dec(value: unknown): Decimal {
+  return new Decimal((value ?? 0) as Decimal.Value);
+}
+
+/** A payslip line as stored in the JSON column (payroll-lines.types.ts). */
+function toJsonLine(line: {
+  name: string;
+  amount: Decimal | number;
+  kind?: string;
+  taxable?: boolean;
+  refId?: string | null;
+}) {
+  return {
+    name: line.name,
+    amount: new Decimal(line.amount as Decimal.Value).toNumber(),
+    ...(line.kind ? { kind: line.kind } : {}),
+    ...(line.taxable !== undefined ? { taxable: line.taxable } : {}),
+    ...(line.refId ? { refId: line.refId } : {}),
+  };
+}
+
+function toSettlementRow(s: {
+  id: string;
+  status: SettlementStatus;
+  netPayable: unknown;
+  lastWorkingDate: Date;
+  payrollRunId: string | null;
+  employee: { id: string; employeeCode: string; firstName: string; lastName: string };
+}): RunSettlementRow {
+  return {
+    id: s.id,
+    employee: toEmployeeRef(s.employee),
+    status: s.status,
+    netPayable: num(s.netPayable),
+    lastWorkingDate: iso(s.lastWorkingDate) as string,
+    payrollRunId: s.payrollRunId,
+  };
+}
 
 @Injectable()
 export class PayrollService {
@@ -46,6 +276,11 @@ export class PayrollService {
     private payslipEmailService: PayslipEmailService,
     private webhookDispatcher: WebhookDispatcherService,
     private workflow: ApprovalEngineService,
+    private arrears: SalaryArrearsService,
+    private oneTimePayments: OneTimePaymentsService,
+    private holds: SalaryHoldsService,
+    private reimbursements: PayrollReimbursementsService,
+    private settings: PayrollSettingsService,
   ) {}
 
   // ============================================
@@ -57,9 +292,11 @@ export class PayrollService {
     if (query.year) where.year = parseInt(query.year);
     if (query.status) where.status = query.status;
 
+    // runType, sequence, needsRecompute etc. are scalar columns and come back
+    // with every run; the month's regular run (sequence 0) sorts first.
     return this.prisma.payrollRun.findMany({
       where,
-      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      orderBy: [{ year: 'desc' }, { month: 'desc' }, { sequence: 'asc' }],
       include: {
         _count: { select: { payslips: true } },
       },
@@ -95,10 +332,14 @@ export class PayrollService {
     // Check for duplicate
     const existing = await this.prisma.payrollRun.findUnique({
       where: {
-        tenantId_month_year: {
+        // The month's REGULAR run is always sequence 0; off-cycle runs
+        // (Keka wave C) share the month with higher sequences.
+        tenantId_month_year_runType_sequence: {
           tenantId,
           month: dto.month,
           year: dto.year,
+          runType: 'REGULAR',
+          sequence: 0,
         },
       },
     });
@@ -116,6 +357,78 @@ export class PayrollService {
         remarks: dto.remarks,
       },
     });
+  }
+
+  /**
+   * An off-cycle run (spec C5): a DRAFT run for a limited set of employees,
+   * numbered after the month's other off-cycle runs. A concurrent create that
+   * takes the same sequence makes the unique key refuse one of them; that one
+   * retries once with the next number, then answers 409.
+   */
+  async createOffCycleRun(tenantId: string, dto: CreateOffCycleRunDto) {
+    const employeeIds = [...new Set(dto.employeeIds ?? [])];
+    if (employeeIds.length < 1 || employeeIds.length > 500) {
+      throw new BadRequestException('An off-cycle run covers 1 to 500 employees');
+    }
+    const reason = (dto.reason ?? '').trim();
+    if (reason.length < 1 || reason.length > 500) {
+      throw new BadRequestException('A reason of 1 to 500 characters is required');
+    }
+
+    const found = await this.prisma.employee.findMany({
+      where: {
+        tenantId,
+        id: { in: employeeIds },
+        status: { in: [EmployeeStatus.ACTIVE, EmployeeStatus.INACTIVE] },
+      },
+      select: { id: true },
+    });
+    const known = new Set((found ?? []).map((e) => e.id));
+    const unknown = employeeIds.filter((id) => !known.has(id));
+    if (unknown.length > 0) {
+      throw new BadRequestException(
+        `Unknown employee id(s) for this tenant: ${unknown.slice(0, 10).join(', ')}`,
+      );
+    }
+
+    // Review C1: refused early here, and checked again at process, recompute,
+    // the payslip write and approval.
+    if (dto.includeSalary === true) {
+      await assertRegularRunSettled(this.prisma, tenantId, dto.month, dto.year);
+      await assertNoSalaryElsewhere(this.prisma, tenantId, dto.month, dto.year, employeeIds);
+    }
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const last = await this.prisma.payrollRun.findFirst({
+        where: { tenantId, month: dto.month, year: dto.year, runType: PayrollRunType.OFF_CYCLE },
+        orderBy: { sequence: 'desc' },
+        select: { sequence: true },
+      });
+      try {
+        return await this.prisma.payrollRun.create({
+          data: {
+            tenantId,
+            month: dto.month,
+            year: dto.year,
+            runType: PayrollRunType.OFF_CYCLE,
+            sequence: (last?.sequence ?? 0) + 1,
+            offCycleReason: reason,
+            includeSalary: dto.includeSalary === true,
+            scopeEmployeeIds: employeeIds,
+          },
+        });
+      } catch (err) {
+        if (isPrismaError(err, 'P2002') && attempt === 0) continue;
+        if (isPrismaError(err, 'P2002')) {
+          throw new ConflictException(
+            'Another off-cycle run for this month was created at the same time; try again',
+          );
+        }
+        throw err;
+      }
+    }
+    // Unreachable: the loop returns or throws.
+    throw new ConflictException('Could not allocate an off-cycle run number; try again');
   }
 
   /**
@@ -154,39 +467,22 @@ export class PayrollService {
       // calculation reads loan balances as if they already were
       // (`getPayrollDeductions`), so it proposes the right EMI either way.
 
-      // Get all active employees with salary assignments
-      const employees = await this.prisma.employee.findMany({
-        where: { tenantId, status: 'ACTIVE' },
-        select: { id: true },
-      });
+      // A regular run pays every active employee with a salary assignment;
+      // an off-cycle run exactly its scope.
+      const employeeIds = isOffCycle(run)
+        ? [...(run.scopeEmployeeIds ?? [])]
+        : ((await this.prisma.employee.findMany({
+            where: { tenantId, status: 'ACTIVE' },
+            select: { id: true },
+          })) ?? []).map((e) => e.id);
 
       // Compute every payslip first (reads only), so the write transaction
       // below stays short and cannot time out mid-run on a large tenant.
-      const results: PayslipData[] = [];
-      for (const emp of employees) {
-        const result = await this.calculationService.calculateForEmployee(
-          tenantId,
-          emp.id,
-          run.month,
-          run.year,
-        );
-        if (result) results.push(result); // No salary assigned, skip
-      }
+      const { results, attachments } = await this.computePayslips(run, employeeIds, 'process');
 
       // Totals are summed as exact decimals, so they always match the sum of
       // the payslip line items rather than drifting by fractions of a paisa.
-      const totalGross = results.reduce(
-        (sum, r) => sum.add(r.grossPay),
-        new Decimal(0),
-      );
-      const totalDeductions = results.reduce(
-        (sum, r) => sum.add(r.totalDeductions),
-        new Decimal(0),
-      );
-      const totalNet = results.reduce(
-        (sum, r) => sum.add(r.netPay),
-        new Decimal(0),
-      );
+      const { totalGross, totalDeductions, totalNet } = this.totals(results);
 
       // Reverse any earlier attempt's loan instalments, replace the payslips,
       // re-record the instalments against them and publish the totals — all
@@ -194,67 +490,7 @@ export class PayrollService {
       // half-generated run, or loan balances reversed but not re-recorded.
       let closedLoans: ClosedLoan[] = [];
       const publishedRun = await this.prisma.$transaction(async (tx) => {
-        await this.loansService.clearPayrollRepayments(
-          tenantId,
-          run.month,
-          run.year,
-          tx,
-        );
-
-        await tx.payslip.deleteMany({ where: { payrollRunId: id } });
-
-        if (results.length > 0) {
-          await tx.payslip.createMany({
-            data: results.map((result) => ({
-              tenantId,
-              payrollRunId: id,
-              employeeId: result.employeeId,
-              workingDays: result.workingDays,
-              presentDays: result.presentDays,
-              leaveDays: result.leaveDays,
-              lopDays: result.lopDays,
-              otHours: result.otHours,
-              basePay: result.basePay,
-              // JSON columns cannot hold Decimal; these are already rounded to
-              // paise, so a number round-trips exactly at this magnitude.
-              earnings: result.earnings.map((e) => ({
-                name: e.name,
-                amount: e.amount.toNumber(),
-              })) as any,
-              deductions: result.deductions.map((d) => ({
-                name: d.name,
-                amount: d.amount.toNumber(),
-              })) as any,
-              grossPay: result.grossPay,
-              totalDeductions: result.totalDeductions,
-              netPay: result.netPay,
-              otPay: result.otPay,
-              pfWages: result.statutory.pfWages,
-              pfEmployee: result.statutory.pfEmployee,
-              pfEmployer: result.statutory.pfEmployer,
-              epsEmployer: result.statutory.epsEmployer,
-              edliEmployer: result.statutory.edliEmployer,
-              pfAdminEmployer: result.statutory.pfAdminEmployer,
-              esiWages: result.statutory.esiWages,
-              esiEmployee: result.statutory.esiEmployee,
-              esiEmployer: result.statutory.esiEmployer,
-              professionalTax: result.statutory.professionalTax,
-              lwfEmployee: result.statutory.lwfEmployee,
-              lwfEmployer: result.statutory.lwfEmployer,
-              tds: result.statutory.tds,
-              taxComputation: (result.statutory.taxComputation ?? undefined) as any,
-            })),
-          });
-        }
-
-        closedLoans = await this.recordLoanRepayments(
-          tx,
-          tenantId,
-          id,
-          run.month,
-          run.year,
-          results,
-        );
+        closedLoans = await this.writePayslips(tx, run, results, attachments);
 
         const computed = await tx.payrollRun.update({
           where: { id },
@@ -266,6 +502,8 @@ export class PayrollService {
             processedCount: results.length,
             processedAt: new Date(),
             processedById: userId,
+            // Everything attached so far is in these figures.
+            needsRecompute: false,
           },
           include: {
             _count: { select: { payslips: true } },
@@ -350,17 +588,18 @@ export class PayrollService {
     }
 
     try {
-      // Get all active employees with salary assignments
       // The employees this run already covers, not whoever is active today. A
       // run computed in April and recomputed in June must still cover somebody
       // who left in May: taking the current active list would delete their
       // payslip and quietly shrink a run that may already have been reported
       // on. Anyone hired since belongs in their own run, not retrofitted here.
-      const covered = await this.prisma.payslip.findMany({
-        where: { payrollRunId: id, tenantId },
-        select: { employeeId: true },
-      });
-      const employees = covered.map((slip) => ({ id: slip.employeeId }));
+      // (An off-cycle run always covers its scope.)
+      const employeeIds = isOffCycle(run)
+        ? [...(run.scopeEmployeeIds ?? [])]
+        : ((await this.prisma.payslip.findMany({
+            where: { payrollRunId: id, tenantId },
+            select: { employeeId: true },
+          })) ?? []).map((slip) => slip.employeeId);
 
       // The instalments the previous compute recorded belong to payslips that
       // are about to be deleted, so they are reversed — but inside the write
@@ -372,29 +611,9 @@ export class PayrollService {
 
       // Compute every payslip first (reads only), so the write transaction
       // below stays short and cannot time out mid-run on a large tenant.
-      const results: PayslipData[] = [];
-      for (const emp of employees) {
-        const result = await this.calculationService.calculateForEmployee(
-          tenantId,
-          emp.id,
-          run.month,
-          run.year,
-        );
-        if (result) results.push(result); // No salary assigned, skip
-      }
+      const { results, attachments } = await this.computePayslips(run, employeeIds, 'recompute');
 
-      const totalGross = results.reduce(
-        (sum, r) => sum.add(r.grossPay),
-        new Decimal(0),
-      );
-      const totalDeductions = results.reduce(
-        (sum, r) => sum.add(r.totalDeductions),
-        new Decimal(0),
-      );
-      const totalNet = results.reduce(
-        (sum, r) => sum.add(r.netPay),
-        new Decimal(0),
-      );
+      const { totalGross, totalDeductions, totalNet } = this.totals(results);
 
       // Reverse the previous instalments, replace the payslips, re-record the
       // instalments and publish the totals atomically: a failure part way
@@ -402,65 +621,7 @@ export class PayrollService {
       // nor loan balances reversed with nothing re-recorded.
       let closedLoans: ClosedLoan[] = [];
       const updatedRun = await this.prisma.$transaction(async (tx) => {
-        await this.loansService.clearPayrollRepayments(
-          tenantId,
-          run.month,
-          run.year,
-          tx,
-        );
-
-        await tx.payslip.deleteMany({ where: { payrollRunId: id } });
-
-        if (results.length > 0) {
-          await tx.payslip.createMany({
-            data: results.map((result) => ({
-              tenantId,
-              payrollRunId: id,
-              employeeId: result.employeeId,
-              workingDays: result.workingDays,
-              presentDays: result.presentDays,
-              leaveDays: result.leaveDays,
-              lopDays: result.lopDays,
-              otHours: result.otHours,
-              basePay: result.basePay,
-              earnings: result.earnings.map((e) => ({
-                name: e.name,
-                amount: e.amount.toNumber(),
-              })) as any,
-              deductions: result.deductions.map((d) => ({
-                name: d.name,
-                amount: d.amount.toNumber(),
-              })) as any,
-              grossPay: result.grossPay,
-              totalDeductions: result.totalDeductions,
-              netPay: result.netPay,
-              otPay: result.otPay,
-              pfWages: result.statutory.pfWages,
-              pfEmployee: result.statutory.pfEmployee,
-              pfEmployer: result.statutory.pfEmployer,
-              epsEmployer: result.statutory.epsEmployer,
-              edliEmployer: result.statutory.edliEmployer,
-              pfAdminEmployer: result.statutory.pfAdminEmployer,
-              esiWages: result.statutory.esiWages,
-              esiEmployee: result.statutory.esiEmployee,
-              esiEmployer: result.statutory.esiEmployer,
-              professionalTax: result.statutory.professionalTax,
-              lwfEmployee: result.statutory.lwfEmployee,
-              lwfEmployer: result.statutory.lwfEmployer,
-              tds: result.statutory.tds,
-              taxComputation: (result.statutory.taxComputation ?? undefined) as any,
-            })),
-          });
-        }
-
-        closedLoans = await this.recordLoanRepayments(
-          tx,
-          tenantId,
-          id,
-          run.month,
-          run.year,
-          results,
-        );
+        closedLoans = await this.writePayslips(tx, run, results, attachments);
 
         // Guarded on the claim this recompute still holds. A reset can move
         // the run back to DRAFT and clear its payslips while this was still
@@ -477,6 +638,7 @@ export class PayrollService {
             processedCount: results.length,
             processedAt: new Date(),
             processedById: userId,
+            needsRecompute: false,
           },
           include: {
             _count: { select: { payslips: true } },
@@ -525,6 +687,292 @@ export class PayrollService {
   }
 
   /**
+   * Keka wave C: gather what is attached to the run (arrears, one-time
+   * payments, released holds, reimbursements, settlements), then compute
+   * every payslip (reads only). Returns the results and the ids the write
+   * transaction must attach, so that only what a payslip actually pays is
+   * marked as paid by this run.
+   */
+  private async computePayslips(
+    run: ComputableRun,
+    baseEmployeeIds: string[],
+    mode: 'process' | 'recompute',
+  ): Promise<{ results: PayslipData[]; attachments: RunAttachments }> {
+    const tenantId = run.tenantId;
+    const offCycle = isOffCycle(run);
+
+    // An off-cycle run paying salary must not pay a month another run pays
+    // (review C1). Checked before anything is computed; writePayslips and
+    // approveRun check again inside their transactions.
+    if (paysOffCycleSalary(run)) {
+      await assertRegularRunSettled(this.prisma, tenantId, run.month, run.year);
+      await assertNoSalaryElsewhere(
+        this.prisma,
+        tenantId,
+        run.month,
+        run.year,
+        baseEmployeeIds,
+        run.id,
+      );
+    }
+
+    const settings = await this.settings.get(tenantId);
+
+    // Explicit inputs: one-time payments and released holds.
+    const payments = (await this.oneTimePayments.forRun(tenantId, run.id)) ?? [];
+    const releases = (await this.holds.releasesForRun(tenantId, run.id)) ?? [];
+
+    let employeeIds = [...baseEmployeeIds];
+    if (!offCycle) {
+      const explicit = [
+        ...new Set([...payments.map((p) => p.employeeId), ...releases.map((r) => r.employeeId)]),
+      ].filter((id) => !employeeIds.includes(id));
+      if (explicit.length > 0 && mode === 'process') {
+        // Validated ACTIVE when added; somebody who has left since is not in
+        // a regular run and must not be paid a month's salary to carry them.
+        throw new BadRequestException(
+          `One-time payments or held-salary releases in this run belong to employees who are no longer active (${explicit
+            .slice(0, 10)
+            .join(', ')}); remove them or pay them through an off-cycle run`,
+        );
+      }
+      // A recompute also covers whoever an input was added for since.
+      employeeIds = [...employeeIds, ...explicit];
+    }
+
+    // Settlements travel only in off-cycle runs, verbatim and alone.
+    const settlements = offCycle
+      ? ((await this.prisma.settlement.findMany({
+          where: { tenantId, payrollRunId: run.id },
+          select: SETTLEMENT_SELECT,
+        })) ?? [])
+      : [];
+    const settled = new Set(settlements.map((s) => s.employeeId));
+    for (const s of settlements) {
+      if (s.status !== SettlementStatus.APPROVED) {
+        throw new BadRequestException(
+          `Settlement ${s.id} is ${s.status}; only an APPROVED settlement can be paid by a run`,
+        );
+      }
+      if (run.includeSalary) {
+        throw new BadRequestException(
+          'A settlement already pays the pro-rata salary; carry it in an off-cycle run that does not include salary',
+        );
+      }
+      if (
+        payments.some((p) => p.employeeId === s.employeeId) ||
+        releases.some((r) => r.employeeId === s.employeeId)
+      ) {
+        throw new BadRequestException(
+          `A settlement is paid on its own payslip; remove the other payments for ${s.employee.employeeCode} from this run`,
+        );
+      }
+    }
+
+    // Arrears for backdated revisions are detected for a regular run's
+    // employees before it computes (spec C1), when the tenant has it on.
+    if (!offCycle && settings.autoArrears) {
+      for (const employeeId of employeeIds) {
+        await this.arrears.detectForEmployee(tenantId, employeeId);
+      }
+    }
+
+    // Automatic inputs: never for a settlement's employee (paid alone).
+    const auto = employeeIds.filter((id) => !settled.has(id));
+    const arrears = (await this.arrears.pendingForRun(tenantId, run, auto)) ?? [];
+    const claims = settings.reimburseExpensesViaPayroll
+      ? ((await this.reimbursements.claimsForRun(tenantId, run.id, auto)) ?? [])
+      : [];
+
+    const extras = new Map<string, PayslipExtras>();
+    const extrasOf = (employeeId: string): PayslipExtras => {
+      let e = extras.get(employeeId);
+      if (!e) {
+        e = {};
+        extras.set(employeeId, e);
+      }
+      return e;
+    };
+    for (const a of arrears) {
+      (extrasOf(a.employeeId).arrears ??= []).push({
+        id: a.id,
+        amount: dec(a.amount),
+        pfWagesDelta: dec(a.pfWagesDelta),
+        financialYear: a.financialYear,
+      });
+    }
+    for (const p of payments) {
+      (extrasOf(p.employeeId).oneTimePayments ??= []).push({
+        id: p.id,
+        kind: p.kind,
+        name: p.name,
+        amount: dec(p.amount),
+        taxable: p.taxable,
+      });
+    }
+    for (const c of claims) {
+      (extrasOf(c.employeeId).reimbursements ??= []).push({ id: c.id, amount: dec(c.amount) });
+    }
+    for (const r of releases) {
+      (extrasOf(r.employeeId).holdReleases ??= []).push({
+        id: r.id,
+        amount: dec(r.heldAmount),
+        heldMonth: r.payrollRun.month,
+        heldYear: r.payrollRun.year,
+      });
+    }
+    for (const s of settlements) {
+      extrasOf(s.employeeId).settlement = {
+        id: s.id,
+        proRataSalary: dec(s.proRataSalary),
+        leaveEncashment: dec(s.leaveEncashment),
+        leaveEncashmentExempt: dec(s.leaveEncashmentExempt),
+        gratuity: dec(s.gratuity),
+        gratuityExempt: dec(s.gratuityExempt),
+        otherEarnings: dec(s.otherEarnings),
+        noticeRecovery: dec(s.noticeRecovery),
+        otherRecoveries: dec(s.otherRecoveries),
+        totalRecoveries: dec(s.totalRecoveries),
+        tds: dec(s.tds),
+        netPayable: dec(s.netPayable),
+      };
+    }
+
+    const results: PayslipData[] = [];
+    for (const employeeId of employeeIds) {
+      const employeeExtras = extras.get(employeeId);
+      const options: CalculationOptions = offCycle
+        ? {
+            payrollRunId: run.id,
+            offCycle: true,
+            includeSalary: run.includeSalary === true,
+            // Off-cycle runs never deduct loan instalments: clearing them is
+            // keyed by month and would reverse the regular run's.
+            deductLoans: false,
+            chargeMonthlyStatutory: false,
+            ...(employeeExtras ? { extras: employeeExtras } : {}),
+          }
+        : {
+            payrollRunId: run.id,
+            ...(employeeExtras ? { extras: employeeExtras } : {}),
+          };
+      const result = await this.calculationService.calculateForEmployee(
+        tenantId,
+        employeeId,
+        run.month,
+        run.year,
+        options,
+      );
+      if (result) results.push(result); // Nothing to pay, skip
+    }
+
+    // Attach only what a written payslip pays.
+    const paid = new Set(results.map((r) => r.employeeId));
+    return {
+      results,
+      attachments: {
+        arrearIds: arrears.filter((a) => paid.has(a.employeeId)).map((a) => a.id),
+        claimIds: claims.filter((c) => paid.has(c.employeeId)).map((c) => c.id),
+      },
+    };
+  }
+
+  private totals(results: PayslipData[]) {
+    return {
+      totalGross: results.reduce((sum, r) => sum.add(r.grossPay), new Decimal(0)),
+      totalDeductions: results.reduce((sum, r) => sum.add(r.totalDeductions), new Decimal(0)),
+      totalNet: results.reduce((sum, r) => sum.add(r.netPay), new Decimal(0)),
+    };
+  }
+
+  /**
+   * The payslip half of the run's write transaction: reverse the month's
+   * loan instalments (regular runs only), detach what an earlier compute
+   * attached, replace the payslips, attach what these payslips pay (guarded:
+   * a 409 rolls everything back) and re-record the loan instalments.
+   */
+  private async writePayslips(
+    tx: Prisma.TransactionClient,
+    run: ComputableRun,
+    results: PayslipData[],
+    attachments: RunAttachments,
+  ): Promise<ClosedLoan[]> {
+    const tenantId = run.tenantId;
+    const offCycle = isOffCycle(run);
+
+    // Review C1: again inside the transaction, for a run computed meanwhile.
+    if (paysOffCycleSalary(run)) {
+      await assertNoSalaryElsewhere(
+        tx,
+        tenantId,
+        run.month,
+        run.year,
+        results.map((r) => r.employeeId),
+        run.id,
+      );
+    }
+
+    // Keyed by month: an off-cycle run would reverse the regular run's.
+    if (!offCycle) {
+      await this.loansService.clearPayrollRepayments(tenantId, run.month, run.year, tx);
+    }
+
+    await this.arrears.detachFromRun(tx, tenantId, run.id);
+    await this.reimbursements.detachFromRun(tx, tenantId, run.id);
+
+    await tx.payslip.deleteMany({ where: { payrollRunId: run.id } });
+
+    if (results.length > 0) {
+      await tx.payslip.createMany({
+        data: results.map((result) => ({
+          tenantId,
+          payrollRunId: run.id,
+          employeeId: result.employeeId,
+          workingDays: result.workingDays,
+          presentDays: result.presentDays,
+          leaveDays: result.leaveDays,
+          lopDays: result.lopDays,
+          otHours: result.otHours,
+          basePay: result.basePay,
+          // JSON columns cannot hold Decimal; these are already rounded to
+          // paise, so a number round-trips exactly at this magnitude. Lines
+          // follow the contract in payroll-lines.types.ts.
+          earnings: result.earnings.map(toJsonLine) as any,
+          deductions: result.deductions.map(toJsonLine) as any,
+          grossPay: result.grossPay,
+          totalDeductions: result.totalDeductions,
+          netPay: result.netPay,
+          otPay: result.otPay,
+          nonRecurringTaxable: result.nonRecurringTaxable ?? 0,
+          nonTaxableEarnings: result.nonTaxableEarnings ?? 0,
+          arrearsAmount: result.arrearsAmount ?? 0,
+          reimbursementAmount: result.reimbursementAmount ?? 0,
+          pfWages: result.statutory.pfWages,
+          pfEmployee: result.statutory.pfEmployee,
+          pfEmployer: result.statutory.pfEmployer,
+          epsEmployer: result.statutory.epsEmployer,
+          edliEmployer: result.statutory.edliEmployer,
+          pfAdminEmployer: result.statutory.pfAdminEmployer,
+          esiWages: result.statutory.esiWages,
+          esiEmployee: result.statutory.esiEmployee,
+          esiEmployer: result.statutory.esiEmployer,
+          professionalTax: result.statutory.professionalTax,
+          lwfEmployee: result.statutory.lwfEmployee,
+          lwfEmployer: result.statutory.lwfEmployer,
+          tds: result.statutory.tds,
+          taxComputation: (result.statutory.taxComputation ?? undefined) as any,
+        })),
+      });
+    }
+
+    await this.arrears.attachToRun(tx, tenantId, run.id, attachments.arrearIds);
+    await this.reimbursements.attachToRun(tx, tenantId, run.id, attachments.claimIds);
+
+    if (offCycle) return [];
+    return this.recordLoanRepayments(tx, tenantId, run.id, run.month, run.year, results);
+  }
+
+  /**
    * Release a run that is stuck in PROCESSING.
    *
    * The claim that moves DRAFT -> PROCESSING is deliberately outside the write
@@ -536,6 +984,9 @@ export class PayrollService {
    * `clearPayrollRepayments`) when a loan this month's payroll repaid has
    * since been recovered by a final settlement: reversing the instalment
    * would reopen a leaver's loan with a balance nothing collects.
+   *
+   * Keka wave C: arrears, expense claims, released holds and settlements
+   * the run carried are detached; one-time payments are kept.
    */
   async resetRun(tenantId: string, id: string) {
     const run = await this.prisma.payrollRun.findFirst({
@@ -557,13 +1008,17 @@ export class PayrollService {
       // Loan instalments the abandoned attempt managed to record are reversed
       // too, in the same transaction that discards their payslips. A
       // repayment with no payslip behind it is money taken off a loan that
-      // nobody was ever charged for.
-      await this.loansService.clearPayrollRepayments(
-        tenantId,
-        run.month,
-        run.year,
-        tx,
-      );
+      // nobody was ever charged for. (Off-cycle runs record none.)
+      if (!isOffCycle(run)) {
+        await this.loansService.clearPayrollRepayments(
+          tenantId,
+          run.month,
+          run.year,
+          tx,
+        );
+      }
+
+      await this.detachCarried(tx, tenantId, id);
 
       // Any payslips from the abandoned attempt are discarded so the rerun
       // starts clean.
@@ -576,6 +1031,17 @@ export class PayrollService {
           processedAt: null,
         },
       });
+    });
+  }
+
+  /** Arrears, claims, released holds and settlements the run carries. */
+  private async detachCarried(tx: Prisma.TransactionClient, tenantId: string, runId: string) {
+    await this.arrears.detachFromRun(tx, tenantId, runId);
+    await this.reimbursements.detachFromRun(tx, tenantId, runId);
+    await this.holds.detachReleases(tx, tenantId, runId);
+    await tx.settlement.updateMany({
+      where: { tenantId, payrollRunId: runId, status: SettlementStatus.APPROVED },
+      data: { payrollRunId: null },
     });
   }
 
@@ -667,6 +1133,13 @@ export class PayrollService {
         `Cannot approve run in ${run.status} status. Only COMPUTED runs can be approved.`,
       );
     }
+    // A one-time payment, released hold or settlement changed after the
+    // figures were computed: they no longer say what the run would pay.
+    if (run.needsRecompute) {
+      throw new BadRequestException(
+        'Inputs changed since this run was computed; recompute it before approval',
+      );
+    }
 
     // Assigned inside onFinal; the cast stops TS narrowing it to null here.
     let approved = null as PayrollRun | null;
@@ -678,6 +1151,26 @@ export class PayrollService {
       decision: 'APPROVE',
       note,
       onFinal: async (tx) => {
+        // Review C1: two off-cycle salary runs can both sit COMPUTED, each
+        // written before the other committed. Neither is approved while the
+        // other still has payslips for the same people (deliberately strict:
+        // counting only approved runs would let two concurrent approvals
+        // each miss the other); deleting one of them unblocks the other.
+        if (paysOffCycleSalary(run)) {
+          const mine =
+            (await tx.payslip.findMany({
+              where: { tenantId, payrollRunId: id },
+              select: { employeeId: true },
+            })) ?? [];
+          await assertNoSalaryElsewhere(
+            tx,
+            tenantId,
+            run.month,
+            run.year,
+            mine.map((s) => s.employeeId),
+            id,
+          );
+        }
         // Conditional on the status just checked: two concurrent approvals
         // both pass the check above, but only one can move COMPUTED ->
         // APPROVED. The other matches no row (P2025) and gets a 409, which
@@ -800,6 +1293,12 @@ export class PayrollService {
     );
   }
 
+  /**
+   * APPROVED -> PAID, stamping `paidAt`. What the run carried is settled in
+   * the same transaction (spec C6): its arrears become PAID, its expense
+   * claims REIMBURSED and its settlements PAID, as of this payment — that is
+   * when the money moves. Claimants are told after the commit.
+   */
   async markAsPaid(tenantId: string, id: string) {
     const run = await this.prisma.payrollRun.findFirst({
       where: { id, tenantId },
@@ -811,10 +1310,32 @@ export class PayrollService {
       );
     }
 
-    return this.prisma.payrollRun.update({
-      where: { id },
-      data: { status: PayrollRunStatus.PAID },
+    const paidAt = new Date();
+    let settledClaims: SettledClaim[] = [];
+    const paid = await this.prisma.$transaction(async (tx) => {
+      let updated: PayrollRun;
+      try {
+        updated = await tx.payrollRun.update({
+          where: { id, status: PayrollRunStatus.APPROVED },
+          data: { status: PayrollRunStatus.PAID, paidAt },
+        });
+      } catch (err) {
+        if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
+          throw new ConflictException('Payroll run is already being marked as paid');
+        }
+        throw err;
+      }
+      await this.arrears.markPaidForRun(tx, tenantId, id);
+      settledClaims = (await this.reimbursements.settleForRun(tx, tenantId, id, paidAt)) ?? [];
+      await tx.settlement.updateMany({
+        where: { tenantId, payrollRunId: id, status: SettlementStatus.APPROVED },
+        data: { status: SettlementStatus.PAID, paidAt },
+      });
+      return updated;
     });
+
+    this.reimbursements.notifyReimbursed(tenantId, settledClaims);
+    return paid;
   }
 
   async deleteRun(tenantId: string, id: string, userRole?: UserRole) {
@@ -848,15 +1369,143 @@ export class PayrollService {
     await this.prisma.$transaction(async (tx) => {
       // Approval instance first: approve locks it before the run.
       await this.workflow.cancel(tenantId, 'PAYROLL_RUN', id, tx);
-      await this.loansService.clearPayrollRepayments(
-        tenantId,
-        run.month,
-        run.year,
-        tx,
-      );
+      // Keyed by month: an off-cycle run recorded none, and clearing would
+      // reverse the regular run's instalments.
+      if (!isOffCycle(run)) {
+        await this.loansService.clearPayrollRepayments(
+          tenantId,
+          run.month,
+          run.year,
+          tx,
+        );
+      }
+      // Arrears, claims, released holds and settlements go back to where
+      // they were; one-time payments and holds in this run go with it.
+      await this.detachCarried(tx, tenantId, id);
       await tx.payslip.deleteMany({ where: { payrollRunId: id } });
       await tx.payrollRun.delete({ where: { id } });
     });
+  }
+
+  // ============================================
+  // Settlements carried by an off-cycle run (spec C5)
+  // ============================================
+
+  /** Carried by the run, and (while it is open) the ones it could carry. */
+  async listRunSettlements(
+    tenantId: string,
+    runId: string,
+  ): Promise<{ attached: RunSettlementRow[]; eligible: RunSettlementRow[] }> {
+    const run = await this.findRunOrThrow(tenantId, runId);
+    const attached =
+      (await this.prisma.settlement.findMany({
+        where: { tenantId, payrollRunId: runId },
+        select: SETTLEMENT_SELECT,
+      })) ?? [];
+    const open =
+      isOffCycle(run) &&
+      (run.status === PayrollRunStatus.DRAFT || run.status === PayrollRunStatus.COMPUTED);
+    const eligible = open
+      ? ((await this.prisma.settlement.findMany({
+          where: {
+            tenantId,
+            status: SettlementStatus.APPROVED,
+            payrollRunId: null,
+            employeeId: { in: run.scopeEmployeeIds ?? [] },
+          },
+          select: SETTLEMENT_SELECT,
+        })) ?? [])
+      : [];
+    return { attached: attached.map(toSettlementRow), eligible: eligible.map(toSettlementRow) };
+  }
+
+  async attachSettlement(tenantId: string, runId: string, settlementId: string) {
+    const run = await this.findRunOrThrow(tenantId, runId);
+    this.assertCarriesSettlements(run);
+    if (run.includeSalary) {
+      throw new BadRequestException(
+        'A settlement already pays the pro-rata salary; carry it in an off-cycle run that does not include salary',
+      );
+    }
+
+    const settlement = await this.prisma.settlement.findFirst({
+      where: { id: settlementId, tenantId },
+      select: { id: true, status: true, employeeId: true, payrollRunId: true },
+    });
+    if (!settlement) throw new NotFoundException('Settlement not found');
+    if (settlement.payrollRunId) {
+      throw new ConflictException('The settlement is already carried by a payroll run');
+    }
+    if (settlement.status !== SettlementStatus.APPROVED) {
+      throw new BadRequestException(
+        `Only an APPROVED settlement can be paid through payroll; this one is ${settlement.status}`,
+      );
+    }
+    if (!(run.scopeEmployeeIds ?? []).includes(settlement.employeeId)) {
+      throw new BadRequestException("The settlement's employee is not in the scope of this run");
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      const res = await tx.settlement.updateMany({
+        where: { id: settlementId, tenantId, status: SettlementStatus.APPROVED, payrollRunId: null },
+        data: { payrollRunId: runId },
+      });
+      if (!res || res.count !== 1) {
+        throw new ConflictException('The settlement changed meanwhile; reload and try again');
+      }
+      await this.touchRun(tx, tenantId, run);
+    });
+    return this.listRunSettlements(tenantId, runId);
+  }
+
+  async detachSettlement(tenantId: string, runId: string, settlementId: string) {
+    const run = await this.findRunOrThrow(tenantId, runId);
+    this.assertCarriesSettlements(run);
+    const settlement = await this.prisma.settlement.findFirst({
+      where: { id: settlementId, tenantId, payrollRunId: runId },
+      select: { id: true },
+    });
+    if (!settlement) throw new NotFoundException('The run does not carry this settlement');
+
+    await this.prisma.$transaction(async (tx) => {
+      const res = await tx.settlement.updateMany({
+        where: { id: settlementId, tenantId, payrollRunId: runId, status: SettlementStatus.APPROVED },
+        data: { payrollRunId: null },
+      });
+      if (!res || res.count !== 1) {
+        throw new ConflictException('The settlement changed meanwhile; reload and try again');
+      }
+      await this.touchRun(tx, tenantId, run);
+    });
+    return this.listRunSettlements(tenantId, runId);
+  }
+
+  private async findRunOrThrow(tenantId: string, runId: string) {
+    const run = await this.prisma.payrollRun.findFirst({ where: { id: runId, tenantId } });
+    if (!run) throw new NotFoundException('Payroll run not found');
+    return run;
+  }
+
+  private assertCarriesSettlements(run: ComputableRun) {
+    if (!isOffCycle(run)) {
+      throw new BadRequestException('Settlements are paid through an off-cycle run');
+    }
+    if (run.status !== PayrollRunStatus.DRAFT && run.status !== PayrollRunStatus.COMPUTED) {
+      throw new BadRequestException(
+        `Settlements can change on a DRAFT or COMPUTED run; this run is ${run.status}`,
+      );
+    }
+  }
+
+  /** Guarded on the status read; a COMPUTED run must be recomputed. */
+  private async touchRun(tx: Prisma.TransactionClient, tenantId: string, run: ComputableRun) {
+    const res = await tx.payrollRun.updateMany({
+      where: { id: run.id, tenantId, status: run.status },
+      data: { needsRecompute: run.status === PayrollRunStatus.COMPUTED },
+    });
+    if (!res || res.count !== 1) {
+      throw new ConflictException('The payroll run changed meanwhile; reload it and try again');
+    }
   }
 
   // ============================================

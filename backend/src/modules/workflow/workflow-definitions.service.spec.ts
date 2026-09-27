@@ -7,16 +7,18 @@ const TENANT = 'tenant-1';
 
 describe('WorkflowDefinitionsService', () => {
   let db: any;
+  let audit: { log: jest.Mock };
   let service: WorkflowDefinitionsService;
 
   beforeEach(() => {
     db = createMockPrismaService();
-    service = new WorkflowDefinitionsService(db);
+    audit = { log: jest.fn().mockResolvedValue(undefined) };
+    service = new WorkflowDefinitionsService(db, audit as any);
     db.user.findMany.mockResolvedValue([]);
   });
 
   describe('list / get', () => {
-    it('returns all six types, the default view where there is no row', async () => {
+    it('returns every type, the default view where there is no row', async () => {
       db.workflowDefinition.findMany.mockResolvedValue([
         {
           id: 'def-1',
@@ -37,7 +39,16 @@ describe('WorkflowDefinitionsService', () => {
       const views = await service.list(TENANT);
 
       expect(views.map((v) => v.entityType).sort()).toEqual(
-        ['COMP_OFF', 'EXPENSE', 'LEAVE', 'LOAN', 'PAYROLL_RUN', 'REGULARIZATION'],
+        [
+          'COMP_OFF',
+          'EXPENSE',
+          'JOB_REQUISITION',
+          'LEAVE',
+          'LOAN',
+          'OFFER',
+          'PAYROLL_RUN',
+          'REGULARIZATION',
+        ],
       );
       const expense = views.find((v) => v.entityType === 'EXPENSE')!;
       expect(expense.isCustom).toBe(true);
@@ -150,6 +161,59 @@ describe('WorkflowDefinitionsService', () => {
         select: { id: true },
       });
     });
+
+    it('audits a CREATE with the default view as old, inside the transaction, when no row existed', async () => {
+      db.user.findMany.mockResolvedValue([{ id: 'u-cfo', email: 'cfo@x.com', employee: null }]);
+
+      await service.upsert(TENANT, 'LEAVE', valid(), 'actor-1');
+
+      expect(audit.log).toHaveBeenCalledTimes(1);
+      const [input, tx] = audit.log.mock.calls[0];
+      expect(tx).toBe(db); // the mock's $transaction hands the callback `db` itself
+      expect(input).toEqual({
+        tenantId: TENANT,
+        userId: 'actor-1',
+        action: 'CREATE',
+        entityType: 'WorkflowDefinition',
+        entityId: 'def-1',
+        oldValues: { entityType: 'LEAVE', view: expect.objectContaining({ isCustom: false }) },
+        newValues: {
+          entityType: 'LEAVE',
+          view: expect.objectContaining({ isCustom: true, name: 'Leave chain' }),
+        },
+      });
+    });
+
+    it('audits an UPDATE with the previous custom view as old when a row already existed', async () => {
+      db.workflowDefinition.findUnique.mockResolvedValue({
+        id: 'def-1',
+        entityType: 'LEAVE',
+        name: 'Old chain',
+        adminOverride: true,
+        allowSelfApproval: false,
+        steps: [
+          {
+            stepOrder: 1,
+            name: 'Old step',
+            approverType: 'HR_ADMIN',
+            approverUserId: null,
+            approverRole: null,
+            minAmount: null,
+            minDays: null,
+          },
+        ],
+      });
+      db.user.findMany.mockResolvedValue([{ id: 'u-cfo', email: 'cfo@x.com', employee: null }]);
+
+      await service.upsert(TENANT, 'LEAVE', valid(), 'actor-1');
+
+      const [input] = audit.log.mock.calls[0];
+      expect(input.action).toBe('UPDATE');
+      expect(input.oldValues).toEqual({
+        entityType: 'LEAVE',
+        view: expect.objectContaining({ isCustom: true, name: 'Old chain' }),
+      });
+    });
   });
 
   describe('reset', () => {
@@ -161,6 +225,56 @@ describe('WorkflowDefinitionsService', () => {
       });
       expect(view).toEqual(expect.objectContaining({ entityType: 'LOAN', isCustom: false }));
       expect(view.steps[0].approverType).toBe('HR_ADMIN');
+    });
+
+    it('audits a DELETE with the custom view as old, inside the transaction, when a custom row exists', async () => {
+      db.workflowDefinition.findUnique.mockResolvedValue({
+        id: 'def-9',
+        entityType: 'LOAN',
+        name: 'Custom loan chain',
+        adminOverride: false,
+        allowSelfApproval: true,
+        steps: [
+          {
+            stepOrder: 1,
+            name: 'Manager',
+            approverType: 'REPORTING_MANAGER',
+            approverUserId: null,
+            approverRole: null,
+            minAmount: null,
+            minDays: null,
+          },
+        ],
+      });
+      db.workflowDefinition.deleteMany.mockResolvedValue({ count: 1 });
+
+      const view = await service.reset(TENANT, 'LOAN', 'actor-2');
+
+      expect(audit.log).toHaveBeenCalledTimes(1);
+      const [input, tx] = audit.log.mock.calls[0];
+      expect(tx).toBe(db);
+      expect(input).toEqual({
+        tenantId: TENANT,
+        userId: 'actor-2',
+        action: 'DELETE',
+        entityType: 'WorkflowDefinition',
+        entityId: 'def-9',
+        oldValues: {
+          entityType: 'LOAN',
+          view: expect.objectContaining({ isCustom: true, name: 'Custom loan chain' }),
+        },
+        newValues: { entityType: 'LOAN', view: expect.objectContaining({ isCustom: false }) },
+      });
+      expect(view).toEqual(expect.objectContaining({ isCustom: false }));
+    });
+
+    it('writes no audit log when resetting a type with no custom row', async () => {
+      db.workflowDefinition.findUnique.mockResolvedValue(null);
+      db.workflowDefinition.deleteMany.mockResolvedValue({ count: 0 });
+
+      await service.reset(TENANT, 'LOAN', 'actor-2');
+
+      expect(audit.log).not.toHaveBeenCalled();
     });
   });
 });

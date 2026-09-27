@@ -351,7 +351,10 @@ describe('RegularizationService', () => {
 
         await service.approve(managerActor, 'reg-1', {});
 
-        expect(policyService.getOrCreate).toHaveBeenCalledWith(tenantId);
+        // The mock prisma's $transaction hands the callback the mock itself
+        // as `tx`, so this asserts the policy read used the transaction
+        // client the approval was running in, not a fresh connection.
+        expect(policyService.getOrCreate).toHaveBeenCalledWith(tenantId, prisma);
         expect(statusWritten()).toBe('PRESENT');
       });
 

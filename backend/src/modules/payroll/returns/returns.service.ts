@@ -40,6 +40,14 @@ const FILEABLE_STATUSES: PayrollRunStatus[] = [
   PayrollRunStatus.PAID,
 ];
 
+/**
+ * Statuses a bank transfer file may be generated from. Narrower than the
+ * returns: a salary hold can still be placed on a COMPUTED run, so a file
+ * downloaded before approval could pay a salary that is then held and paid
+ * again on release.
+ */
+const PAYABLE_STATUSES: PayrollRunStatus[] = [PayrollRunStatus.APPROVED, PayrollRunStatus.PAID];
+
 /** The EPFO ECR field separator. Not a comma, and not configurable. */
 const ECR_DELIMITER = '#~#';
 
@@ -109,6 +117,8 @@ function periodStamp(month: number, year: number): string {
 
 /** The shape this service needs off a payslip; Prisma gives more. */
 type PayslipWithEmployee = {
+  /** Optional in the type only because older test fixtures omit it. */
+  employeeId?: string;
   workingDays: number;
   lopDays: number;
   grossPay: Decimal;
@@ -472,8 +482,22 @@ export class ReturnsService {
     payrollRunId: string,
   ): Promise<GeneratedReturnFile> {
     const run = await this.loadFileableRun(tenantId, payrollRunId);
+    if (!PAYABLE_STATUSES.includes(run.status)) {
+      throw new BadRequestException(
+        `Cannot generate the bank transfer file from a ${run.status} payroll run; approve it first`,
+      );
+    }
     const payslips = await this.loadPayslips(tenantId, payrollRunId);
     const stamp = periodStamp(run.month, run.year);
+
+    // Keka wave C (spec C3): a salary held in this run is not paid by it —
+    // HELD waits, VOIDED is never paid, RELEASED is paid by another run.
+    const holds =
+      (await this.prisma.salaryHold.findMany({
+        where: { tenantId, payrollRunId },
+        select: { employeeId: true, status: true },
+      })) ?? [];
+    const heldStatus = new Map(holds.map((h) => [h.employeeId, h.status]));
 
     const warnings: string[] = [];
     const rows: string[] = [
@@ -481,6 +505,14 @@ export class ReturnsService {
     ];
 
     for (const slip of payslips) {
+      const held = slip.employeeId ? heldStatus.get(slip.employeeId) : undefined;
+      if (held) {
+        warnings.push(
+          `${identify(slip.employee)}: skipped from the bank transfer file, salary is held (${held})`,
+        );
+        continue;
+      }
+
       const missing: string[] = [];
       if (!slip.employee.bankAccountNumber) missing.push('no bank account number');
       if (!slip.employee.bankIfsc) missing.push('no IFSC');
