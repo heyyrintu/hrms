@@ -112,6 +112,24 @@ const prismaModels = [
   'jobOffer',
   'preOnboardingInvite',
   'preOnboardingDocument',
+  // Wave E engagement
+  'survey',
+  'surveyQuestion',
+  'surveyParticipant',
+  'surveyResponse',
+  'surveyAnswer',
+  'poll',
+  'pollOption',
+  'pollVoter',
+  'badge',
+  'recognition',
+  'recognitionRecipient',
+  'engagementSettings',
+  'feedItem',
+  'feedReaction',
+  'oneOnOneMeeting',
+  'oneOnOneActionItem',
+  'oneOnOnePrivateNote',
 ];
 
 function createModelMock() {
@@ -143,6 +161,8 @@ export function createMockPrismaService(): jest.Mocked<PrismaService> {
 
   mock.$connect = jest.fn();
   mock.$disconnect = jest.fn();
+  mock.$executeRaw = jest.fn().mockResolvedValue(0);
+  mock.$queryRaw = jest.fn().mockResolvedValue([]);
 
   return mock as unknown as jest.Mocked<PrismaService>;
 }

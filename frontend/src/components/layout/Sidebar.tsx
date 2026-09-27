@@ -68,6 +68,10 @@ import {
   History,
   ListOrdered,
   Globe,
+  Newspaper,
+  Award,
+  MessagesSquare,
+  Vote,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -125,6 +129,17 @@ const sections: NavSection[] = [
       { name: 'HR Helpdesk', href: '/helpdesk', icon: <LifeBuoy className="h-[18px] w-[18px]" /> },
       // Keka wave D: any employee can sit on an interview panel.
       { name: 'My Interviews', href: '/recruitment/interviews', icon: <CalendarSearch className="h-[18px] w-[18px]" /> },
+    ],
+  },
+  // Keka wave E: engagement
+  {
+    label: 'ENGAGEMENT',
+    items: [
+      { name: 'Feed', href: '/engagement/feed', icon: <Newspaper className="h-[18px] w-[18px]" /> },
+      { name: 'Recognition', href: '/engagement/recognition', icon: <Award className="h-[18px] w-[18px]" /> },
+      { name: 'Surveys', href: '/engagement/surveys', icon: <ClipboardCheck className="h-[18px] w-[18px]" /> },
+      { name: 'One-on-ones', href: '/one-on-ones', icon: <MessagesSquare className="h-[18px] w-[18px]" /> },
+      { name: 'Polls', href: '/engagement/polls', icon: <Vote className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
     ],
   },
   {
