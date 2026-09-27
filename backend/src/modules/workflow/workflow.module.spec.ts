@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AuditService } from '../audit/audit.service';
 import { createMockNotificationsService, createMockPrismaService } from '../../test/helpers';
 import { WorkflowModule } from './workflow.module';
 import { ApprovalEngineService } from './approval-engine.service';
@@ -14,8 +15,11 @@ import { WorkflowsController } from './workflows.controller';
   providers: [
     { provide: PrismaService, useValue: createMockPrismaService() },
     { provide: NotificationsService, useValue: createMockNotificationsService() },
+    // AuditModule is @Global() in the real app; stub it here too, since this
+    // isolated test imports only WorkflowModule.
+    { provide: AuditService, useValue: { log: jest.fn().mockResolvedValue(undefined) } },
   ],
-  exports: [PrismaService, NotificationsService],
+  exports: [PrismaService, NotificationsService, AuditService],
 })
 class GlobalStubsModule {}
 
