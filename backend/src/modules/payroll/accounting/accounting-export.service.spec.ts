@@ -108,6 +108,19 @@ describe('AccountingExportService', () => {
       expect(result.narration).toBe('Salary for September 2026');
     });
 
+    it('treats HELD, VOIDED and RELEASED holds as held, like the bank transfer file', async () => {
+      (prisma.payrollRun.findFirst as jest.Mock).mockResolvedValue(mockRun({ status: 'APPROVED' }));
+      (prisma.payslip.findMany as jest.Mock).mockResolvedValue([basePayslip]);
+      (prisma.salaryHold.findMany as jest.Mock).mockResolvedValue([]);
+
+      await service.preview('tenant-1', 'run-1', false);
+
+      expect(prisma.salaryHold.findMany).toHaveBeenCalledWith({
+        where: { tenantId: 'tenant-1', payrollRunId: 'run-1', status: { in: ['HELD', 'VOIDED', 'RELEASED'] } },
+        select: { employeeId: true },
+      });
+    });
+
     it('marks an APPROVED run as exportable', async () => {
       (prisma.payrollRun.findFirst as jest.Mock).mockResolvedValue(mockRun({ status: 'APPROVED' }));
       (prisma.payslip.findMany as jest.Mock).mockResolvedValue([basePayslip]);

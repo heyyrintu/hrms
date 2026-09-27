@@ -128,7 +128,7 @@ export interface JournalPayslipInput {
   pfAdminEmployer: Decimal | number;
   esiEmployer: Decimal | number;
   lwfEmployer: Decimal | number;
-  /** True when a HELD or VOIDED SalaryHold exists for this employee in this run. */
+  /** True when a SalaryHold (HELD, VOIDED or RELEASED) exists for this employee in this run. */
   held: boolean;
 }
 

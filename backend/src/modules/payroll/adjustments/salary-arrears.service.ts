@@ -10,6 +10,7 @@ import {
   PayrollRunType,
   Prisma,
   SalaryArrearStatus,
+  SalaryHoldStatus,
 } from '@prisma/client';
 import { Decimal } from '@prisma/client/runtime/library';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -107,7 +108,8 @@ function appliesTo(
  * WS-C1 (Keka wave C, spec C1): arrears from backdated salary revisions.
  *
  * A revision is an active EmployeeSalary row that applies to a month already
- * paid by an APPROVED or PAID regular run **and was entered (or changed) after
+ * paid by an APPROVED or PAID run (regular, or off-cycle with salary; not a voided
+ * hold) **and was entered (or changed) after
  * that month's payslip was computed** — a payslip computed after the row
  * existed already used it. For each such month the month's regular earnings
  * are revalued with the row (`calculateRegularEarnings`, prorated with that
@@ -155,9 +157,17 @@ export class SalaryArrearsService {
         where: {
           tenantId,
           employeeId,
+          // Every month whose salary was paid: by the regular run, or by an
+          // off-cycle run with salary (a joiner the regular run missed). A
+          // salary held and then voided was never paid, so nothing is owed
+          // on it; one still HELD or RELEASED is paid (later) and counts.
           payrollRun: {
-            runType: PayrollRunType.REGULAR,
             status: { in: [PayrollRunStatus.APPROVED, PayrollRunStatus.PAID] },
+            OR: [
+              { runType: PayrollRunType.REGULAR },
+              { runType: PayrollRunType.OFF_CYCLE, includeSalary: true },
+            ],
+            holds: { none: { employeeId, status: SalaryHoldStatus.VOIDED } },
           },
         },
         select: {

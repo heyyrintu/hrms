@@ -108,16 +108,22 @@ describe('SalaryArrearsService', () => {
       );
     });
 
-    it('only looks at payslips of approved or paid regular runs of this tenant', async () => {
+    it('looks at salary payslips of approved or paid runs of this tenant, not voided ones', async () => {
       prisma.payslip.findMany.mockResolvedValue([paid(8, 40000, 16000)]);
       calc.calculateRegularEarnings.mockResolvedValue(revised(40000, 16000));
       await service.detectForEmployee(tenantId, employeeId);
+      // Review (minor): a month paid by an off-cycle run with salary counts;
+      // a month whose salary was held and then voided was never paid.
       expect(prisma.payslip.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
             tenantId,
             employeeId,
-            payrollRun: { runType: 'REGULAR', status: { in: ['APPROVED', 'PAID'] } },
+            payrollRun: {
+              status: { in: ['APPROVED', 'PAID'] },
+              OR: [{ runType: 'REGULAR' }, { runType: 'OFF_CYCLE', includeSalary: true }],
+              holds: { none: { employeeId, status: 'VOIDED' } },
+            },
           },
         }),
       );

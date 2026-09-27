@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { AuditAction, PayrollRunStatus } from '@prisma/client';
+import { AuditAction, PayrollRunStatus, SalaryHoldStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditService } from '../../audit/audit.service';
 import { AuthenticatedUser } from '../../../common/types/jwt-payload.type';
@@ -68,8 +68,16 @@ export class AccountingExportService {
         where: { tenantId, payrollRunId: runId },
         include: { employee: { include: { department: true, branch: true } } },
       }),
+      // Review I2: every hold the bank transfer file leaves out of this run.
+      // HELD waits, VOIDED is never paid and RELEASED is paid by another run
+      // (whose HOLD_RELEASE line clears HELD_SALARY), so none of their net is
+      // paid by this run's transfer.
       this.prisma.salaryHold.findMany({
-        where: { tenantId, payrollRunId: runId, status: { in: ['HELD', 'VOIDED'] } },
+        where: {
+          tenantId,
+          payrollRunId: runId,
+          status: { in: [SalaryHoldStatus.HELD, SalaryHoldStatus.VOIDED, SalaryHoldStatus.RELEASED] },
+        },
         select: { employeeId: true },
       }),
       this.config.get(tenantId),
