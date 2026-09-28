@@ -161,6 +161,68 @@ describe('SurveysService', () => {
       expect(prisma.surveyQuestion.createMany).toHaveBeenCalled();
     });
 
+    it('persists audienceIds sent alone against the existing DEPARTMENT/BRANCH type', async () => {
+      prisma.survey.findFirst.mockResolvedValue({
+        id: surveyId,
+        tenantId,
+        status: SurveyStatus.DRAFT,
+        audienceType: EngagementAudience.DEPARTMENT,
+        audienceIds: ['dept-old'],
+        questions: [],
+      });
+      prisma.department.count.mockResolvedValue(1);
+
+      await service.update(tenantId, surveyId, { audienceIds: ['dept-new'] });
+
+      expect(prisma.department.count).toHaveBeenCalledWith({
+        where: { tenantId, id: { in: ['dept-new'] } },
+      });
+      expect(prisma.survey.update).toHaveBeenCalledWith({
+        where: { id: surveyId },
+        data: expect.objectContaining({
+          audienceType: EngagementAudience.DEPARTMENT,
+          audienceIds: ['dept-new'],
+        }),
+      });
+    });
+
+    it('clears audienceIds when audienceType ALL is sent alone', async () => {
+      prisma.survey.findFirst.mockResolvedValue({
+        id: surveyId,
+        tenantId,
+        status: SurveyStatus.DRAFT,
+        audienceType: EngagementAudience.DEPARTMENT,
+        audienceIds: ['dept-old'],
+        questions: [],
+      });
+
+      await service.update(tenantId, surveyId, { audienceType: EngagementAudience.ALL });
+
+      expect(prisma.survey.update).toHaveBeenCalledWith({
+        where: { id: surveyId },
+        data: expect.objectContaining({
+          audienceType: EngagementAudience.ALL,
+          audienceIds: [],
+        }),
+      });
+    });
+
+    it('rejects audienceIds sent alone when the current audience is ALL', async () => {
+      prisma.survey.findFirst.mockResolvedValue({
+        id: surveyId,
+        tenantId,
+        status: SurveyStatus.DRAFT,
+        audienceType: EngagementAudience.ALL,
+        audienceIds: [],
+        questions: [],
+      });
+
+      await expect(
+        service.update(tenantId, surveyId, { audienceIds: ['dept-1'] }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.survey.update).not.toHaveBeenCalled();
+    });
+
     it('rejects deleting a non-DRAFT survey', async () => {
       prisma.survey.findFirst.mockResolvedValue({
         id: surveyId,

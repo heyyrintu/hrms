@@ -143,9 +143,28 @@ export class SurveysService {
       throw new BadRequestException('Only a draft survey can be edited');
     }
 
+    // The effective audience after this update: a caller may send only
+    // `audienceType` (keep the old ids, or clear them for ALL), only
+    // `audienceIds` (keep the old type), or both. Whichever fields are
+    // supplied, `audienceType` and `audienceIds` below are always the pair
+    // that gets validated AND the pair that gets written — never a mix of
+    // the new value for one and the stale value for the other.
+    const audienceChanged = dto.audienceType !== undefined || dto.audienceIds !== undefined;
     const audienceType = dto.audienceType ?? survey.audienceType;
-    const audienceIds = dto.audienceIds ?? survey.audienceIds;
-    if (dto.audienceType !== undefined || dto.audienceIds !== undefined) {
+    if (
+      dto.audienceType === undefined &&
+      dto.audienceIds !== undefined &&
+      survey.audienceType === EngagementAudience.ALL
+    ) {
+      throw new BadRequestException(
+        'audienceType is required to set audienceIds when the current audience is ALL',
+      );
+    }
+    const audienceIds =
+      audienceType === EngagementAudience.ALL
+        ? []
+        : dto.audienceIds ?? survey.audienceIds;
+    if (audienceChanged) {
       await this.validateAudience(tenantId, audienceType, audienceIds);
     }
     if (dto.closesAt && new Date(dto.closesAt) <= new Date()) {
@@ -161,13 +180,8 @@ export class SurveysService {
           title: dto.title,
           description: dto.description,
           isAnonymous: dto.isAnonymous,
-          audienceType: dto.audienceType,
-          audienceIds:
-            dto.audienceType === undefined
-              ? undefined
-              : dto.audienceType === EngagementAudience.ALL
-                ? []
-                : dto.audienceIds,
+          audienceType: audienceChanged ? audienceType : undefined,
+          audienceIds: audienceChanged ? audienceIds : undefined,
           closesAt:
             dto.closesAt === undefined ? undefined : dto.closesAt ? new Date(dto.closesAt) : null,
         },
