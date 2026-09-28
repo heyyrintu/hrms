@@ -6,12 +6,36 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { UserRole } from '@prisma/client';
+import { User, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto, RegisterDto, AuthResponseDto } from './dto/auth.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { AuthenticatedUser, JwtPayload } from '../../common/types/jwt-payload.type';
+import { isPermission } from '../../common/permissions/permissions';
+import { LoginResult, SessionResponse } from './auth.types';
+import { StepTokenService } from './two-factor/step-token.service';
+
+/** How long a password-verified login waits for its second factor. */
+const MFA_CHALLENGE_TTL_MS = 5 * 60_000;
+
+/** Rows of UserCustomRole with the role's permissions, as loaded for a session. */
+type CustomRoleGrant = { customRole: { permissions: string[] } };
+
+/**
+ * Union of the permissions granted by a user's custom roles, deduplicated.
+ * Keys that are no longer in the catalogue are dropped, so removing a
+ * permission from the code revokes it everywhere without a data migration.
+ */
+function permissionsFrom(grants: CustomRoleGrant[] | undefined | null): string[] {
+  const keys = new Set<string>();
+  for (const grant of grants ?? []) {
+    for (const key of grant.customRole?.permissions ?? []) {
+      if (isPermission(key)) keys.add(key);
+    }
+  }
+  return [...keys].sort();
+}
 
 @Injectable()
 export class AuthService {
@@ -19,6 +43,7 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private stepTokenService: StepTokenService,
   ) {}
 
   /**
@@ -99,21 +124,37 @@ export class AuthService {
   }
 
   /**
-   * Login with email and password
+   * Login with email and password.
+   *
+   * Ends in one of four shapes, evaluated in this order once the password is
+   * confirmed (Keka wave H1): SSO-only refusal (SUPER_ADMIN always exempt as
+   * break-glass), a second-factor challenge for an enrolled account, forced
+   * enrolment for a role that requires 2FA, or a normal session.
    */
-  async login(dto: LoginDto): Promise<AuthResponseDto> {
-    // Determine tenant ID - use provided tenantId or default
-    const tenantId = dto.tenantId || this.configService.get<string>('DEFAULT_TENANT_ID');
-
-    if (!tenantId) {
-      throw new UnauthorizedException('Tenant ID is required');
+  async login(dto: LoginDto): Promise<LoginResult> {
+    // `tenantId` is a deprecated pre-H1 field, still accepted so an old
+    // client isn't rejected by forbidNonWhitelisted; it wins over
+    // `tenantCode` when both are sent, matching the pre-H1 behaviour.
+    // resolveTenantId's own 401 (unknown/inactive code, or no default tenant
+    // configured) must never reach an unauthenticated caller with its real
+    // message — it is normalised to the same "Invalid credentials" a wrong
+    // password gets.
+    let tenantId: string;
+    if (dto.tenantId) {
+      tenantId = dto.tenantId;
+    } else {
+      try {
+        tenantId = await this.resolveTenantId(dto.tenantCode);
+      } catch {
+        throw new UnauthorizedException('Invalid credentials');
+      }
     }
 
     // Find user by email and tenantId for proper tenant isolation
     const user = await this.prisma.user.findFirst({
       where: {
         email: dto.email,
-        tenantId: tenantId,
+        tenantId,
         isActive: true,
       },
     });
@@ -122,20 +163,68 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    // Verify password
+    // Verify password before reading any security settings, so a wrong
+    // password never reveals whether the tenant requires SSO or 2FA.
     const isPasswordValid = await bcrypt.compare(dto.password, user.passwordHash);
 
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    // Update last login
+    const settings = await this.prisma.tenantSecuritySettings.findUnique({
+      where: { tenantId },
+    });
+
+    // SSO-only sign-in. SUPER_ADMIN password login always stays available as
+    // a break-glass path, even when the tenant otherwise requires SSO.
+    if (settings?.requireSso && user.role !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Your organisation signs in with single sign-on.');
+    }
+
+    // Already enrolled: challenge for the second factor. No session is
+    // issued and lastLoginAt is not touched until the code is verified.
+    if (user.totpEnabledAt) {
+      const challenge = await this.prisma.mfaChallenge.create({
+        data: {
+          tenantId,
+          userId: user.id,
+          expiresAt: new Date(Date.now() + MFA_CHALLENGE_TTL_MS),
+        },
+      });
+      const mfaToken = this.stepTokenService.signMfa({
+        sub: user.id,
+        tenantId,
+        cid: challenge.id,
+      });
+      return { mfaRequired: true, mfaToken };
+    }
+
+    // The role now requires 2FA but this account has not enrolled yet.
+    // Sessions already open keep working (P6); only the next password
+    // sign-in is redirected into enrolment.
+    if ((settings?.twoFactorRequiredRoles ?? []).includes(user.role)) {
+      const enrolToken = this.stepTokenService.signEnrol({
+        sub: user.id,
+        tenantId,
+        tokenVersion: user.tokenVersion,
+      });
+      return { enrolmentRequired: true, enrolToken };
+    }
+
+    return this.issueSession(user);
+  }
+
+  /**
+   * Sign a normal session for a user who has fully authenticated (password,
+   * password + second factor, or SSO). Records the login time and returns the
+   * user's custom-role permissions so the client can shape its navigation.
+   */
+  async issueSession(user: User): Promise<SessionResponse> {
     await this.prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
     });
 
-    // Generate JWT
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
@@ -146,6 +235,7 @@ export class AuthService {
     };
 
     const accessToken = this.jwtService.sign(payload);
+    const permissions = await this.loadPermissions(user.id);
 
     return {
       accessToken,
@@ -156,8 +246,42 @@ export class AuthService {
         tenantId: user.tenantId,
         employeeId: user.employeeId || undefined,
         mustChangePassword: user.mustChangePassword,
+        permissions,
       },
     };
+  }
+
+  /** Permissions granted to a user by their custom roles. */
+  async loadPermissions(userId: string): Promise<string[]> {
+    const grants = await this.prisma.userCustomRole.findMany({
+      where: { userId },
+      select: { customRole: { select: { permissions: true } } },
+    });
+    return permissionsFrom(grants);
+  }
+
+  /**
+   * Tenant for an unauthenticated sign-in: the active tenant with this code,
+   * or DEFAULT_TENANT_ID when no code is given.
+   */
+  async resolveTenantId(tenantCode?: string | null): Promise<string> {
+    const code = tenantCode?.trim();
+    if (code) {
+      const tenant = await this.prisma.tenant.findFirst({
+        where: { code, isActive: true },
+        select: { id: true },
+      });
+      if (!tenant) {
+        throw new UnauthorizedException('Tenant not found');
+      }
+      return tenant.id;
+    }
+
+    const tenantId = this.configService.get<string>('DEFAULT_TENANT_ID');
+    if (!tenantId) {
+      throw new UnauthorizedException('Tenant ID is required');
+    }
+    return tenantId;
   }
 
   /**
@@ -180,6 +304,9 @@ export class AuthService {
             },
           },
         },
+        customRoles: {
+          select: { customRole: { select: { id: true, name: true, permissions: true } } },
+        },
       },
     });
 
@@ -187,12 +314,24 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
+    const settings = await this.prisma.tenantSecuritySettings.findUnique({
+      where: { tenantId: user.tenantId },
+      select: { twoFactorRequiredRoles: true },
+    });
+
     return {
       id: user.id,
       email: user.email,
       role: user.role,
       tenantId: user.tenantId,
       employee: user.employee,
+      permissions: permissionsFrom(user.customRoles),
+      customRoles: (user.customRoles ?? []).map((grant) => ({
+        id: grant.customRole.id,
+        name: grant.customRole.name,
+      })),
+      twoFactorEnabled: !!user.totpEnabledAt,
+      twoFactorRequired: (settings?.twoFactorRequiredRoles ?? []).includes(user.role),
     };
   }
 
@@ -200,8 +339,13 @@ export class AuthService {
    * Validate user from JWT payload
    */
   async validateUser(payload: JwtPayload) {
+    // Custom-role permissions ride along on the lookup that already runs for
+    // every request, so a grant or revocation applies on the next request.
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
+      include: {
+        customRoles: { select: { customRole: { select: { permissions: true } } } },
+      },
     });
 
     if (!user || !user.isActive) {
@@ -223,6 +367,7 @@ export class AuthService {
       tenantId: user.tenantId,
       role: user.role,
       employeeId: user.employeeId || undefined,
+      permissions: permissionsFrom(user.customRoles),
     };
   }
 

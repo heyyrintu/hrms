@@ -20,6 +20,7 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { RequirePermissions } from '../../common/permissions/require-permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 
@@ -34,6 +35,7 @@ import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 @Controller('webhooks')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+@RequirePermissions('integrations.manage')
 export class WebhooksController {
   constructor(private webhooksService: WebhooksService) {}
 

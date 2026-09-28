@@ -5,6 +5,7 @@ import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequirePermissions } from '../../../common/permissions/require-permissions.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../../common/types/jwt-payload.type';
 import { GlMappingService } from './gl-mapping.service';
@@ -20,6 +21,7 @@ import { ExportQueryDto, JournalQueryDto, ReplaceGlMappingsDto, UpdateAccounting
 @Controller('payroll/accounting')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+@RequirePermissions('payroll.accounting.manage')
 export class PayrollAccountingController {
   constructor(
     private readonly mappings: GlMappingService,

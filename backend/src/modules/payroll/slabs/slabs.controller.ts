@@ -4,6 +4,7 @@ import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequirePermissions } from '../../../common/permissions/require-permissions.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../../common/types/jwt-payload.type';
 import { SlabsService } from './slabs.service';
@@ -36,6 +37,7 @@ export class SlabsController {
 
   @Get('professional-tax')
   @Roles(...SLAB_EDITORS)
+  @RequirePermissions('payroll.statutory.manage')
   @ApiOperation({
     summary: 'List professional tax bands',
     description: 'Every band in the tenant, or only those for one state.',
@@ -50,6 +52,7 @@ export class SlabsController {
 
   @Post('professional-tax')
   @Roles(...SLAB_EDITORS)
+  @RequirePermissions('payroll.statutory.manage')
   @ApiOperation({
     summary: 'Add a professional tax band',
     description:
@@ -68,6 +71,7 @@ export class SlabsController {
 
   @Put('professional-tax/:id')
   @Roles(...SLAB_EDITORS)
+  @RequirePermissions('payroll.statutory.manage')
   @ApiOperation({
     summary: 'Replace a professional tax band',
     description: 'Replaces the whole row; there is no partial patch.',
@@ -85,6 +89,7 @@ export class SlabsController {
 
   @Delete('professional-tax/:id')
   @Roles(...SLAB_EDITORS)
+  @RequirePermissions('payroll.statutory.manage')
   @ApiOperation({
     summary: 'Delete a professional tax band',
     description:
@@ -103,6 +108,7 @@ export class SlabsController {
 
   @Get('income-tax')
   @Roles(...SLAB_EDITORS)
+  @RequirePermissions('payroll.statutory.manage')
   @ApiOperation({
     summary: 'List income tax configurations with their slabs',
     description: 'Every configuration in the tenant, or only those for one financial year.',
@@ -117,6 +123,7 @@ export class SlabsController {
 
   @Put('income-tax')
   @Roles(...SLAB_EDITORS)
+  @RequirePermissions('payroll.statutory.manage')
   @ApiOperation({
     summary: 'Create or replace the configuration for a year, regime and age band',
     description:
@@ -134,6 +141,7 @@ export class SlabsController {
 
   @Delete('income-tax/:id')
   @Roles(...SLAB_EDITORS)
+  @RequirePermissions('payroll.statutory.manage')
   @ApiOperation({
     summary: 'Delete an income tax configuration',
     description:

@@ -8,6 +8,14 @@ import { PasswordResetService } from './password-reset.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { EmailModule } from '../../common/email/email.module';
+import { TwoFactorController } from './two-factor/two-factor.controller';
+import { TwoFactorService } from './two-factor/two-factor.service';
+import { TotpService } from './two-factor/totp.service';
+import { RecoveryCodesService } from './two-factor/recovery-codes.service';
+import { StepTokenService } from './two-factor/step-token.service';
+import { SsoController } from './sso/sso.controller';
+import { SsoService } from './sso/sso.service';
+import { OidcClientService } from './sso/oidc-client.service';
 
 @Module({
   imports: [
@@ -33,8 +41,20 @@ import { EmailModule } from '../../common/email/email.module';
       inject: [ConfigService],
     }),
   ],
-  controllers: [AuthController],
-  providers: [AuthService, PasswordResetService, JwtStrategy, JwtAuthGuard],
-  exports: [AuthService, JwtAuthGuard],
+  controllers: [AuthController, TwoFactorController, SsoController],
+  providers: [
+    AuthService,
+    PasswordResetService,
+    JwtStrategy,
+    JwtAuthGuard,
+    // Keka wave H1: two-factor authentication and single sign-on
+    TwoFactorService,
+    TotpService,
+    RecoveryCodesService,
+    StepTokenService,
+    SsoService,
+    OidcClientService,
+  ],
+  exports: [AuthService, JwtAuthGuard, TwoFactorService],
 })
 export class AuthModule {}

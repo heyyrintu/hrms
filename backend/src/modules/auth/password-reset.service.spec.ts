@@ -213,6 +213,40 @@ describe('PasswordResetService', () => {
 
       expect(known).toEqual(unknown);
     });
+
+    // Keka wave H1 (spec §2.6): SSO-only tenants.
+    it('sends no email and creates no token for an SSO-only EMPLOYEE, but the response is identical', async () => {
+      (prisma.user.findMany as jest.Mock).mockResolvedValue([
+        { ...activeUser, role: 'EMPLOYEE' },
+      ]);
+      (prisma.tenantSecuritySettings.findUnique as jest.Mock).mockResolvedValue({
+        requireSso: true,
+        twoFactorRequiredRoles: [],
+      });
+
+      const known = await service.requestReset({ email: 'jane@acme.test' });
+
+      expect(prisma.passwordResetToken.create).not.toHaveBeenCalled();
+      expect(email.sendEmail).not.toHaveBeenCalled();
+      expect(known.message).toEqual(expect.any(String));
+    });
+
+    it('still emails a SUPER_ADMIN in an SSO-only tenant (break-glass)', async () => {
+      (prisma.user.findMany as jest.Mock).mockResolvedValue([
+        { ...activeUser, role: 'SUPER_ADMIN' },
+      ]);
+      (prisma.tenantSecuritySettings.findUnique as jest.Mock).mockResolvedValue({
+        requireSso: true,
+        twoFactorRequiredRoles: [],
+      });
+      (prisma.passwordResetToken.create as jest.Mock).mockResolvedValue({ id: 'tok-sa' });
+
+      await service.requestReset({ email: 'jane@acme.test' });
+      await flush();
+
+      expect(prisma.passwordResetToken.create).toHaveBeenCalledTimes(1);
+      expect(email.sendEmail).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('resetPassword', () => {
@@ -316,6 +350,53 @@ describe('PasswordResetService', () => {
       expect(
         ((prisma.$transaction as jest.Mock).mock.calls[0][0] as unknown[]).length,
       ).toBe(2);
+    });
+
+    // Keka wave H1 (spec §2.6): SSO-only tenants.
+    it('refuses an SSO-only non-SUPER_ADMIN with the generic message and burns the token', async () => {
+      (prisma.passwordResetToken.findFirst as jest.Mock).mockResolvedValue({
+        id: 'tok-sso',
+        tokenHash: hash,
+        usedAt: null,
+        expiresAt: new Date(Date.now() + 60_000),
+        user: { ...activeUser, role: 'EMPLOYEE' },
+      });
+      (prisma.tenantSecuritySettings.findUnique as jest.Mock).mockResolvedValue({
+        requireSso: true,
+        twoFactorRequiredRoles: [],
+      });
+      (prisma.passwordResetToken.update as jest.Mock).mockResolvedValue({ id: 'tok-sso' });
+
+      await expect(
+        service.resetPassword({ token: rawToken, newPassword: 'newpassword1' }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.passwordResetToken.update).toHaveBeenCalledWith({
+        where: { id: 'tok-sso' },
+        data: { usedAt: expect.any(Date) },
+      });
+    });
+
+    it('still resets the password for a SUPER_ADMIN in an SSO-only tenant', async () => {
+      (prisma.passwordResetToken.findFirst as jest.Mock).mockResolvedValue({
+        id: 'tok-sa',
+        tokenHash: hash,
+        usedAt: null,
+        expiresAt: new Date(Date.now() + 60_000),
+        user: { ...activeUser, role: 'SUPER_ADMIN' },
+      });
+      (prisma.tenantSecuritySettings.findUnique as jest.Mock).mockResolvedValue({
+        requireSso: true,
+        twoFactorRequiredRoles: [],
+      });
+      (prisma.user.update as jest.Mock).mockResolvedValue({ id: 'user-1' });
+      (prisma.passwordResetToken.update as jest.Mock).mockResolvedValue({ id: 'tok-sa' });
+
+      await expect(
+        service.resetPassword({ token: rawToken, newPassword: 'newpassword1' }),
+      ).resolves.toEqual({ message: expect.any(String) });
+      expect(prisma.user.update).toHaveBeenCalled();
     });
   });
 });

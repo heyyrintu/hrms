@@ -109,7 +109,7 @@ describe('EmployeeImportController', () => {
         mockHrAdmin.tenantId,
         mockHrAdmin.userId,
         'employeeCode\nE1',
-        { dryRun: false, initialPassword: 'initial-secret' },
+        { dryRun: false, initialPassword: 'initial-secret', callerRole: mockHrAdmin.role },
       );
       expect(result).toMatchObject({ created: 1 });
     });
@@ -119,7 +119,19 @@ describe('EmployeeImportController', () => {
       expect(service.importFromCsv.mock.calls[0][3]).toEqual({
         dryRun: true,
         initialPassword: undefined,
+        callerRole: mockHrAdmin.role,
       });
+    });
+
+    it('passes the caller fixed role through so a custom-role EMPLOYEE cannot mint admin accounts', async () => {
+      const mockEmployeeCaller = { ...mockHrAdmin, role: UserRole.EMPLOYEE };
+      await controller.import(
+        fakeFile('a'),
+        { initialPassword: 'initial-secret' },
+        { dryRun: false },
+        mockEmployeeCaller,
+      );
+      expect(service.importFromCsv.mock.calls[0][3].callerRole).toBe(UserRole.EMPLOYEE);
     });
 
     it('treats a missing dryRun query param as a real import', async () => {

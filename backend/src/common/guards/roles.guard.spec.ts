@@ -3,6 +3,8 @@ import { Reflector } from '@nestjs/core';
 import { UserRole } from '@prisma/client';
 import { RolesGuard } from './roles.guard';
 import { AuthenticatedUser } from '../types/jwt-payload.type';
+import { Roles } from '../decorators/roles.decorator';
+import { RequirePermissions } from '../permissions/require-permissions.decorator';
 
 describe('RolesGuard', () => {
   let guard: RolesGuard;
@@ -109,5 +111,85 @@ describe('RolesGuard', () => {
       context.getHandler(),
       context.getClass(),
     ]);
+  });
+});
+
+describe('RolesGuard with @RequirePermissions', () => {
+  const guard = new RolesGuard(new Reflector());
+
+  function user(role: UserRole, permissions?: string[]): AuthenticatedUser {
+    return { userId: 'u1', email: 'u@test.com', tenantId: 't1', role, permissions };
+  }
+
+  function ctx(target: { handler: Function; cls: Function }, u?: AuthenticatedUser): ExecutionContext {
+    return {
+      getHandler: () => target.handler,
+      getClass: () => target.cls,
+      switchToHttp: () => ({ getRequest: () => ({ user: u }) }),
+    } as unknown as ExecutionContext;
+  }
+
+  class PermissionOnly {
+    @RequirePermissions('org.manage')
+    handler() {}
+  }
+  class RolesOnly {
+    @Roles(UserRole.HR_ADMIN)
+    handler() {}
+  }
+  class Both {
+    @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+    @RequirePermissions('org.manage')
+    handler() {}
+  }
+  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('audit.view')
+  class ClassLevel {
+    handler() {}
+    @RequirePermissions('org.manage')
+    overridden() {}
+  }
+  class Neither {
+    handler() {}
+  }
+
+  const on = (cls: any, method = 'handler') => ({ handler: cls.prototype[method], cls });
+
+  it('lets a custom-role permission through a permission-only route', () => {
+    expect(guard.canActivate(ctx(on(PermissionOnly), user(UserRole.EMPLOYEE, ['org.manage'])))).toBe(true);
+  });
+
+  it('refuses a permission-only route without the permission', () => {
+    expect(guard.canActivate(ctx(on(PermissionOnly), user(UserRole.EMPLOYEE, [])))).toBe(false);
+    expect(guard.canActivate(ctx(on(PermissionOnly), user(UserRole.EMPLOYEE)))).toBe(false);
+    expect(guard.canActivate(ctx(on(PermissionOnly), user(UserRole.HR_ADMIN, ['audit.view'])))).toBe(false);
+  });
+
+  it('ignores permissions on a roles-only route (the Wave E case)', () => {
+    expect(guard.canActivate(ctx(on(RolesOnly), user(UserRole.EMPLOYEE, ['org.manage'])))).toBe(false);
+    expect(guard.canActivate(ctx(on(RolesOnly), user(UserRole.HR_ADMIN)))).toBe(true);
+    expect(guard.canActivate(ctx(on(RolesOnly), user(UserRole.MANAGER, ['org.manage'])))).toBe(false);
+  });
+
+  it('accepts either the fixed role or the permission when both are declared', () => {
+    expect(guard.canActivate(ctx(on(Both), user(UserRole.HR_ADMIN, [])))).toBe(true);
+    expect(guard.canActivate(ctx(on(Both), user(UserRole.MANAGER, ['org.manage'])))).toBe(true);
+    expect(guard.canActivate(ctx(on(Both), user(UserRole.MANAGER, [])))).toBe(false);
+  });
+
+  it('lets a method-level permission override the class-level one', () => {
+    const employee = user(UserRole.EMPLOYEE, ['org.manage']);
+    expect(guard.canActivate(ctx(on(ClassLevel, 'overridden'), employee))).toBe(true);
+    expect(guard.canActivate(ctx(on(ClassLevel), employee))).toBe(false);
+    expect(guard.canActivate(ctx(on(ClassLevel), user(UserRole.EMPLOYEE, ['audit.view'])))).toBe(true);
+  });
+
+  it('always allows SUPER_ADMIN and allows undecorated routes', () => {
+    expect(guard.canActivate(ctx(on(PermissionOnly), user(UserRole.SUPER_ADMIN)))).toBe(true);
+    expect(guard.canActivate(ctx(on(Neither), user(UserRole.EMPLOYEE)))).toBe(true);
+  });
+
+  it('refuses a permission route with no user on the request', () => {
+    expect(guard.canActivate(ctx(on(PermissionOnly), undefined))).toBe(false);
   });
 });

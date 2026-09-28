@@ -70,4 +70,48 @@ describe('API authentication errors', () => {
     expect(storage.get('hrms_token')).toBe('new-token');
     expect(replace).not.toHaveBeenCalled();
   });
+
+  // Keka wave H1
+  it('keeps an Authorization header the caller set (2FA enrolment step token)', async () => {
+    let sent: string | undefined;
+    api.defaults.adapter = async (config) => {
+      sent = String(config.headers.Authorization);
+      return { data: {}, status: 200, statusText: 'OK', headers: {}, config };
+    };
+    await api.post('/auth/2fa/setup', {}, { headers: { Authorization: 'Bearer step-token' } });
+    expect(sent).toBe('Bearer step-token');
+  });
+
+  it('still adds the stored session token when the caller sets none', async () => {
+    let sent: string | undefined;
+    api.defaults.adapter = async (config) => {
+      sent = String(config.headers.Authorization);
+      return { data: {}, status: 200, statusText: 'OK', headers: {}, config };
+    };
+    await api.get('/auth/2fa/status');
+    expect(sent).toBe('Bearer current-token');
+  });
+
+  it.each(['/auth/2fa/verify', '/auth/sso/exchange'])(
+    'returns a rejected %s to the form without clearing the session',
+    async (url) => {
+      await expect(api.post(url, {})).rejects.toMatchObject({ response: { status: 401 } });
+      expect(replace).not.toHaveBeenCalled();
+      expect(storage.get('hrms_token')).toBe('current-token');
+    },
+  );
+
+  it('sends tenantCode on login only when given', async () => {
+    const bodies: unknown[] = [];
+    api.defaults.adapter = async (config) => {
+      bodies.push(JSON.parse(String(config.data)));
+      return { data: {}, status: 200, statusText: 'OK', headers: {}, config };
+    };
+    await authApi.login('a@acme.com', 'secret1', 'acme');
+    await authApi.login('a@acme.com', 'secret1');
+    expect(bodies).toEqual([
+      { email: 'a@acme.com', password: 'secret1', tenantCode: 'acme' },
+      { email: 'a@acme.com', password: 'secret1' },
+    ]);
+  });
 });

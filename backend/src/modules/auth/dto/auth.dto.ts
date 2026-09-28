@@ -12,7 +12,26 @@ export class LoginDto {
   @MinLength(6)
   password: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description:
+      'Tenant code, for deployments that host more than one tenant (e.g. from /login?org=). ' +
+      'Omitted, the server falls back to DEFAULT_TENANT_ID.',
+  })
+  @IsOptional()
+  @IsString()
+  tenantCode?: string;
+
+  /**
+   * @deprecated pre-H1 clients sent the tenant id directly. Still accepted so
+   * they are not rejected by Nest's `forbidNonWhitelisted` validation; when
+   * present it wins over `tenantCode`, exactly the pre-H1 resolution order.
+   * New clients should send `tenantCode` (or omit both for the default
+   * tenant).
+   */
+  @ApiPropertyOptional({
+    deprecated: true,
+    description: 'Deprecated. Use tenantCode instead. Still accepted for backward compatibility.',
+  })
   @IsOptional()
   @IsString()
   tenantId?: string;
@@ -34,6 +53,15 @@ export class RegisterDto {
   role?: UserRole;
 }
 
+/**
+ * POST /auth/login can end in one of three shapes (Keka wave H1):
+ *  - a normal session (this class), when no second factor applies;
+ *  - `{ mfaRequired: true, mfaToken }`, when the account has TOTP enabled —
+ *    submit `mfaToken` and a code to `POST /auth/2fa/verify`;
+ *  - `{ enrolmentRequired: true, enrolToken }`, when the account's role
+ *    requires 2FA but it is not enrolled yet — use `enrolToken` as the
+ *    bearer token for `POST /auth/2fa/setup` and `POST /auth/2fa/enable`.
+ */
 export class AuthResponseDto {
   @ApiProperty()
   accessToken: string;
@@ -47,5 +75,7 @@ export class AuthResponseDto {
     employeeId?: string;
     /** True when the account still carries its shared initial password. */
     mustChangePassword?: boolean;
+    /** Permissions granted by the user's custom roles. */
+    permissions?: string[];
   };
 }

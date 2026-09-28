@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { AuditService } from '../../audit/audit.service';
 import { WebhookDispatcherService } from '../../webhooks/webhook-dispatcher.service';
@@ -78,8 +79,8 @@ describe('EmployeeImportService', () => {
     (prisma.branch.findMany as jest.Mock).mockResolvedValue([]);
   });
 
-  const dryRun = (text: string) =>
-    service.importFromCsv(TENANT, USER, text, { dryRun: true });
+  const dryRun = (text: string, callerRole: UserRole = UserRole.HR_ADMIN) =>
+    service.importFromCsv(TENANT, USER, text, { dryRun: true, callerRole });
 
   describe('header handling', () => {
     it('matches header names case-insensitively and ignores surrounding space', async () => {
@@ -329,8 +330,11 @@ describe('EmployeeImportService', () => {
   });
 
   describe('real run', () => {
-    const realRun = (text: string, initialPassword = 'initial-secret') =>
-      service.importFromCsv(TENANT, USER, text, { dryRun: false, initialPassword });
+    const realRun = (
+      text: string,
+      initialPassword = 'initial-secret',
+      callerRole: UserRole = UserRole.HR_ADMIN,
+    ) => service.importFromCsv(TENANT, USER, text, { dryRun: false, initialPassword, callerRole });
 
     beforeEach(() => {
       (prisma.employee.create as jest.Mock).mockImplementation(({ data }: any) =>
@@ -625,6 +629,81 @@ describe('EmployeeImportService', () => {
         realRun(csv('E1,Asha,Rao,a@x.com,2026-03-15', 'E2,Bina,Sen,bad-email,2026-03-15')),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(webhooks.dispatch).not.toHaveBeenCalled();
+    });
+  });
+
+  // C1: a permission-only EMPLOYEE holding `employees.import` (via a custom
+  // role) must not be able to mint HR_ADMIN / MANAGER / SUPER_ADMIN accounts
+  // through the CSV's role column. Only a caller whose *fixed* role is
+  // HR_ADMIN or SUPER_ADMIN may import a non-EMPLOYEE row.
+  describe('role restriction by caller', () => {
+    it('flags HR_ADMIN, MANAGER and SUPER_ADMIN rows from a non-admin caller', async () => {
+      const result = await dryRun(
+        csv(
+          'E1,Asha,Rao,a@x.com,2026-03-15,,,,,,,,,HR_ADMIN',
+          'E2,Bina,Sen,b@x.com,2026-03-15,,,,,,,,,MANAGER',
+          'E3,Chitra,Iyer,c@x.com,2026-03-15,,,,,,,,,SUPER_ADMIN',
+        ),
+        UserRole.EMPLOYEE,
+      );
+
+      expect(result.invalidRows).toBe(3);
+      expect(result.errors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            row: 1,
+            field: 'role',
+            message: 'Only HR administrators can import accounts with role "HR_ADMIN"',
+          }),
+          expect.objectContaining({
+            row: 2,
+            field: 'role',
+            message: 'Only HR administrators can import accounts with role "MANAGER"',
+          }),
+          expect.objectContaining({ row: 3, field: 'role' }),
+        ]),
+      );
+    });
+
+    it('allows an EMPLOYEE row from a non-admin caller', async () => {
+      const result = await dryRun(
+        csv('E1,Asha,Rao,a@x.com,2026-03-15,,,,,,,,,EMPLOYEE'),
+        UserRole.EMPLOYEE,
+      );
+      expect(result.errors).toEqual([]);
+    });
+
+    it('allows a row with no role column from a non-admin caller', async () => {
+      const result = await dryRun(csv('E1,Asha,Rao,a@x.com,2026-03-15'), UserRole.EMPLOYEE);
+      expect(result.errors).toEqual([]);
+    });
+
+    it('leaves HR_ADMIN caller behaviour unchanged', async () => {
+      const result = await dryRun(
+        csv('E1,Asha,Rao,a@x.com,2026-03-15,,,,,,,,,HR_ADMIN'),
+        UserRole.HR_ADMIN,
+      );
+      expect(result.errors).toEqual([]);
+    });
+
+    it('leaves SUPER_ADMIN caller behaviour unchanged', async () => {
+      const result = await dryRun(
+        csv('E1,Asha,Rao,a@x.com,2026-03-15,,,,,,,,,HR_ADMIN'),
+        UserRole.SUPER_ADMIN,
+      );
+      expect(result.errors).toEqual([]);
+    });
+
+    it('rejects the real run for a non-admin caller importing a MANAGER row', async () => {
+      await expect(
+        service.importFromCsv(
+          TENANT,
+          USER,
+          csv('E1,Asha,Rao,a@x.com,2026-03-15,,,,,,,,,MANAGER'),
+          { dryRun: false, initialPassword: 'initial-secret', callerRole: UserRole.EMPLOYEE },
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.employee.create).not.toHaveBeenCalled();
     });
   });
 });

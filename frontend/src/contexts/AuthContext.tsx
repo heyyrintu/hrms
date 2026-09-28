@@ -1,17 +1,30 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { User, AuthResponse, LoginCredentials, UserRole } from '@/types';
+import { User, AuthResponse, UserRole } from '@/types';
 import { api, authApi } from '@/lib/api';
+
+/**
+ * Password login can finish right away, or stop at a second-factor step
+ * (Keka wave H1). The caller (the login page) switches on `status`.
+ */
+export type LoginOutcome =
+  | { status: 'done' }
+  | { status: 'mfa'; mfaToken: string }
+  | { status: 'enrol'; enrolToken: string };
 
 interface AuthContextType {
   user: User | null;
   token: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
-  login: (credentials: LoginCredentials) => Promise<void>;
+  login: (email: string, password: string, tenantCode?: string | null) => Promise<LoginOutcome>;
   logout: () => void;
   hasRole: (...roles: UserRole[]) => boolean;
+  /** True when one of the user's custom roles grants this permission (Keka wave H1). */
+  hasPermission: (permission?: string) => boolean;
+  /** Store a finished sign-in (password, 2FA or SSO) exactly as login does. */
+  completeSession: (response: AuthResponse) => void;
   isManager: boolean;
   isAdmin: boolean;
   isSuperAdmin: boolean;
@@ -58,10 +71,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     initAuth();
   }, []);
 
-  const login = useCallback(async (credentials: LoginCredentials) => {
-    const response = await authApi.login(credentials.email, credentials.password);
-
-    const { accessToken, user: userData } = response.data;
+  const completeSession = useCallback((response: AuthResponse) => {
+    const { accessToken, user: userData } = response;
 
     // Store in state
     setToken(accessToken);
@@ -71,6 +82,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('hrms_token', accessToken);
     localStorage.setItem('hrms_user', JSON.stringify(userData));
   }, []);
+
+  const login = useCallback(
+    async (email: string, password: string, tenantCode?: string | null): Promise<LoginOutcome> => {
+      const response = await authApi.login(email, password, tenantCode ?? undefined);
+      const data = response.data as
+        | AuthResponse
+        | { mfaRequired: true; mfaToken: string }
+        | { enrolmentRequired: true; enrolToken: string };
+
+      if ('mfaRequired' in data && data.mfaRequired) {
+        return { status: 'mfa', mfaToken: data.mfaToken };
+      }
+      if ('enrolmentRequired' in data && data.enrolmentRequired) {
+        return { status: 'enrol', enrolToken: data.enrolToken };
+      }
+
+      completeSession(data as AuthResponse);
+      return { status: 'done' };
+    },
+    [completeSession],
+  );
 
   const logout = useCallback(() => {
     setToken(null);
@@ -82,6 +114,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const hasRole = useCallback((...roles: UserRole[]) => {
     if (!user) return false;
     return roles.includes(user.role);
+  }, [user]);
+
+  const hasPermission = useCallback((permission?: string) => {
+    if (!user || !permission) return false;
+    return (user.permissions ?? []).includes(permission);
   }, [user]);
 
   const isManager = user?.role === UserRole.MANAGER || 
@@ -101,6 +138,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     login,
     logout,
     hasRole,
+    hasPermission,
+    completeSession,
     isManager,
     isAdmin,
     isSuperAdmin,

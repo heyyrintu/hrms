@@ -50,6 +50,13 @@ class EnvironmentVariables {
   @IsOptional()
   FRONTEND_URL?: string = 'http://localhost:3000';
 
+  // Public base URL of this API, including the /api prefix. Builds the SSO
+  // redirect URIs registered with Google and Microsoft (Keka wave H1).
+  @IsString()
+  @IsOptional()
+  @Matches(/^https?:\/\/[^\s/]+(\/[^\s]*)?$/, { message: 'API_PUBLIC_URL must be an http(s) URL' })
+  API_PUBLIC_URL?: string = 'http://localhost:3001/api';
+
   @IsString()
   @IsOptional()
   LOG_LEVEL?: string = 'debug';

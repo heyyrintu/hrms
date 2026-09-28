@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcrypt';
+import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EmailService } from '../../common/email/email.service';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -30,6 +31,7 @@ type ResettableUser = {
   tenantId: string;
   email: string;
   isActive: boolean;
+  role: UserRole;
 };
 
 @Injectable()
@@ -54,6 +56,10 @@ export class PasswordResetService {
 
     for (const user of users) {
       try {
+        // SSO-only tenants (Keka wave H1): password login is disabled for
+        // every role except SUPER_ADMIN (break-glass), so a reset link would
+        // be unusable. Silently skipping keeps the response identical.
+        if (await this.isSsoOnlyForNonSuperAdmin(user)) continue;
         await this.issueToken(user);
       } catch (error) {
         // A failure here must not change the response, or the timing/status
@@ -88,6 +94,16 @@ export class PasswordResetService {
       record.expiresAt.getTime() <= Date.now() ||
       !record.user?.isActive
     ) {
+      throw new BadRequestException(INVALID_TOKEN_MESSAGE);
+    }
+
+    // SSO-only tenant, same break-glass exception as above. Reset does not
+    // touch 2FA either way; the next login still asks for a code.
+    if (await this.isSsoOnlyForNonSuperAdmin(record.user as ResettableUser)) {
+      await this.prisma.passwordResetToken.update({
+        where: { id: record.id },
+        data: { usedAt: new Date() },
+      });
       throw new BadRequestException(INVALID_TOKEN_MESSAGE);
     }
 
@@ -196,5 +212,18 @@ export class PasswordResetService {
 
   private hashToken(rawToken: string): string {
     return crypto.createHash('sha256').update(rawToken).digest('hex');
+  }
+
+  /**
+   * True when the user's tenant requires SSO and the user is not the
+   * SUPER_ADMIN break-glass role, i.e. password reset would produce a link
+   * this user cannot use to sign in.
+   */
+  private async isSsoOnlyForNonSuperAdmin(user: ResettableUser): Promise<boolean> {
+    if (user.role === UserRole.SUPER_ADMIN) return false;
+    const settings = await this.prisma.tenantSecuritySettings.findUnique({
+      where: { tenantId: user.tenantId },
+    });
+    return !!settings?.requireSso;
   }
 }

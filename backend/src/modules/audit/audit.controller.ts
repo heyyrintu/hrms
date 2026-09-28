@@ -10,6 +10,7 @@ import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { RequirePermissions } from '../../common/permissions/require-permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { AuditService } from './audit.service';
@@ -20,6 +21,7 @@ import { AuditQueryDto } from './dto/audit.dto';
 @Controller('audit')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+@RequirePermissions('audit.view')
 export class AuditController {
   constructor(private auditService: AuditService) {}
 

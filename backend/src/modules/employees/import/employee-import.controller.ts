@@ -25,6 +25,7 @@ import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequirePermissions } from '../../../common/permissions/require-permissions.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../../common/types/jwt-payload.type';
 import { EmployeeImportService } from './employee-import.service';
@@ -49,6 +50,7 @@ export class EmployeeImportController {
    */
   @Get('template')
   @Roles(UserRole.HR_ADMIN, UserRole.SUPER_ADMIN)
+  @RequirePermissions('employees.import')
   @ApiOperation({ summary: 'Download the employee import CSV template' })
   @ApiResponse({ status: 200, description: 'CSV template' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
@@ -68,6 +70,7 @@ export class EmployeeImportController {
    */
   @Post()
   @Roles(UserRole.HR_ADMIN, UserRole.SUPER_ADMIN)
+  @RequirePermissions('employees.import')
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {
@@ -112,7 +115,11 @@ export class EmployeeImportController {
       user.tenantId,
       user.userId,
       file.buffer.toString('utf8'),
-      { dryRun: query.dryRun === true, initialPassword: dto.initialPassword },
+      {
+        dryRun: query.dryRun === true,
+        initialPassword: dto.initialPassword,
+        callerRole: user.role,
+      },
     );
   }
 }

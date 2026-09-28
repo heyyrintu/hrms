@@ -5,6 +5,7 @@ import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequirePermissions } from '../../../common/permissions/require-permissions.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../../common/types/jwt-payload.type';
 import { GeneratedReturnFile, ReturnsService } from './returns.service';
@@ -25,6 +26,7 @@ import { GeneratedReturnFile, ReturnsService } from './returns.service';
 @Controller('payroll/returns')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+@RequirePermissions('payroll.reports.view')
 export class ReturnsController {
   constructor(private returnsService: ReturnsService) {}
 
