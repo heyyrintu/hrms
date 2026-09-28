@@ -134,6 +134,35 @@ describe('OidcClientService', () => {
       expect(Issuer.discover).toHaveBeenCalledTimes(1);
     });
 
+    // I3: a failed discovery (e.g. the IdP was briefly unreachable) must not
+    // poison the cache forever — the next call should retry, not keep
+    // replaying the same rejection until the process restarts.
+    it('evicts a failed discovery from the cache so the next call retries', async () => {
+      (Issuer.discover as jest.Mock).mockRejectedValueOnce(new Error('discovery unreachable'));
+      mockClientInstance.authorizationUrl.mockReturnValue('https://example.com/authorize');
+
+      await expect(
+        service.authorizationUrl(googleConfig, {
+          state: 's1',
+          nonce: 'n1',
+          codeChallenge: 'c1',
+          redirectUri: 'https://api.example.com/api/auth/sso/google/callback',
+        }),
+      ).rejects.toThrow('discovery unreachable');
+
+      (Issuer.discover as jest.Mock).mockResolvedValueOnce(mockIssuerInstance);
+
+      const url = await service.authorizationUrl(googleConfig, {
+        state: 's2',
+        nonce: 'n2',
+        codeChallenge: 'c2',
+        redirectUri: 'https://api.example.com/api/auth/sso/google/callback',
+      });
+
+      expect(Issuer.discover).toHaveBeenCalledTimes(2);
+      expect(url).toBe('https://example.com/authorize');
+    });
+
     it('discovers Google and Microsoft issuers separately (different cache keys)', async () => {
       mockClientInstance.authorizationUrl.mockReturnValue('https://example.com/authorize');
 

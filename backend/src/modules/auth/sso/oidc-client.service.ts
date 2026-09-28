@@ -39,6 +39,11 @@ export class OidcClientService {
     let cached = this.issuers.get(url);
     if (!cached) {
       cached = Issuer.discover(url);
+      // I3: a rejected discovery must not stay cached forever — evict it so
+      // the next call retries instead of replaying the same failure until
+      // the process restarts. The rejection itself is still returned to
+      // this caller.
+      cached.catch(() => this.issuers.delete(url));
       this.issuers.set(url, cached);
     }
     return cached;

@@ -287,6 +287,132 @@ describe('SsoConfigService', () => {
         ),
       ).rejects.toThrow(BadRequestException);
     });
+
+    // I2: PUT is also a way to disable a provider (enabled: false in the
+    // body). Only DELETE was guarded against locking the tenant out; a PUT
+    // that flips the last enabled provider to disabled must be refused the
+    // same way.
+    it('400s disabling the last enabled provider via PUT while requireSso is on', async () => {
+      prisma.tenantSsoProvider.findUnique.mockResolvedValue({
+        id: 'row-1',
+        tenantId,
+        provider: SsoProvider.GOOGLE,
+        clientSecretEnc: 'enc:old-secret',
+        enabled: true,
+        allowedDomains: [],
+        autoCreateUsers: false,
+      });
+      prisma.tenantSecuritySettings.findUnique.mockResolvedValue({ requireSso: true });
+      prisma.tenantSsoProvider.count.mockResolvedValue(1);
+
+      await expect(
+        service.upsert(tenantId, SsoProvider.GOOGLE, { ...baseDto, enabled: false } as any, actor),
+      ).rejects.toThrow(
+        'Cannot remove the last enabled SSO provider while single sign-on is required.',
+      );
+      expect(prisma.tenantSsoProvider.upsert).not.toHaveBeenCalled();
+    });
+
+    it('allows disabling via PUT when another enabled provider remains', async () => {
+      prisma.tenantSsoProvider.findUnique.mockResolvedValue({
+        id: 'row-1',
+        tenantId,
+        provider: SsoProvider.GOOGLE,
+        clientSecretEnc: 'enc:old-secret',
+        enabled: true,
+        allowedDomains: [],
+        autoCreateUsers: false,
+      });
+      prisma.tenantSecuritySettings.findUnique.mockResolvedValue({ requireSso: true });
+      prisma.tenantSsoProvider.count.mockResolvedValue(2);
+      prisma.tenantSsoProvider.upsert.mockImplementation(({ update }: any) => ({
+        id: 'row-1',
+        provider: SsoProvider.GOOGLE,
+        clientId: update.clientId,
+        clientSecretEnc: 'enc:old-secret',
+        entraTenantId: null,
+        enabled: update.enabled,
+        allowedDomains: update.allowedDomains,
+        autoCreateUsers: update.autoCreateUsers,
+        updatedAt: new Date(),
+      }));
+
+      await service.upsert(tenantId, SsoProvider.GOOGLE, { ...baseDto, enabled: false } as any, actor);
+      expect(prisma.tenantSsoProvider.upsert).toHaveBeenCalled();
+    });
+
+    it('allows disabling via PUT when requireSso is off, with no count check', async () => {
+      prisma.tenantSsoProvider.findUnique.mockResolvedValue({
+        id: 'row-1',
+        tenantId,
+        provider: SsoProvider.GOOGLE,
+        clientSecretEnc: 'enc:old-secret',
+        enabled: true,
+        allowedDomains: [],
+        autoCreateUsers: false,
+      });
+      prisma.tenantSecuritySettings.findUnique.mockResolvedValue({ requireSso: false });
+      prisma.tenantSsoProvider.upsert.mockImplementation(({ update }: any) => ({
+        id: 'row-1',
+        provider: SsoProvider.GOOGLE,
+        ...update,
+        updatedAt: new Date(),
+      }));
+
+      await service.upsert(tenantId, SsoProvider.GOOGLE, { ...baseDto, enabled: false } as any, actor);
+
+      expect(prisma.tenantSsoProvider.count).not.toHaveBeenCalled();
+      expect(prisma.tenantSsoProvider.upsert).toHaveBeenCalled();
+    });
+
+    it('allows disabling a provider that was already disabled (not "the last enabled" one)', async () => {
+      prisma.tenantSsoProvider.findUnique.mockResolvedValue({
+        id: 'row-1',
+        tenantId,
+        provider: SsoProvider.GOOGLE,
+        clientSecretEnc: 'enc:old-secret',
+        enabled: false,
+        allowedDomains: [],
+        autoCreateUsers: false,
+      });
+      prisma.tenantSsoProvider.upsert.mockImplementation(({ update }: any) => ({
+        id: 'row-1',
+        provider: SsoProvider.GOOGLE,
+        ...update,
+        updatedAt: new Date(),
+      }));
+
+      await service.upsert(tenantId, SsoProvider.GOOGLE, { ...baseDto, enabled: false } as any, actor);
+
+      expect(prisma.tenantSecuritySettings.findUnique).not.toHaveBeenCalled();
+      expect(prisma.tenantSsoProvider.upsert).toHaveBeenCalled();
+    });
+
+    // M7: the audit trail should record which Entra tenant a Microsoft
+    // config points at (no secret involved, safe to log).
+    it('includes entraTenantId in the audit newValues', async () => {
+      prisma.tenantSsoProvider.findUnique.mockResolvedValue(null);
+      prisma.tenantSsoProvider.upsert.mockImplementation(({ create }: any) => ({
+        id: 'row-1',
+        ...create,
+        updatedAt: new Date(),
+      }));
+
+      await service.upsert(
+        tenantId,
+        SsoProvider.MICROSOFT,
+        { ...baseDto, entraTenantId: '11111111-2222-3333-4444-555555555555' } as any,
+        actor,
+      );
+
+      expect(audit.log).toHaveBeenCalledWith(
+        expect.objectContaining({
+          newValues: expect.objectContaining({
+            entraTenantId: '11111111-2222-3333-4444-555555555555',
+          }),
+        }),
+      );
+    });
   });
 
   describe('remove', () => {

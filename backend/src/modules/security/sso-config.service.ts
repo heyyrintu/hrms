@@ -96,6 +96,23 @@ export class SsoConfigService {
       throw new BadRequestException('autoCreateUsers requires at least one allowed domain');
     }
 
+    // I2: disabling a provider is a valid PUT body too (enabled: false), and
+    // it can lock the tenant out of single sign-on exactly like DELETE can —
+    // guarded the same way `remove` is.
+    if (existing?.enabled && !dto.enabled) {
+      const settings = await this.prisma.tenantSecuritySettings.findUnique({ where: { tenantId } });
+      if (settings?.requireSso) {
+        const enabledCount = await this.prisma.tenantSsoProvider.count({
+          where: { tenantId, enabled: true },
+        });
+        if (enabledCount <= 1) {
+          throw new BadRequestException(
+            'Cannot remove the last enabled SSO provider while single sign-on is required.',
+          );
+        }
+      }
+    }
+
     const secretChanged = !!dto.clientSecret;
     const clientSecretEnc = dto.clientSecret ? this.encryption.encrypt(dto.clientSecret) : undefined;
 
@@ -135,6 +152,7 @@ export class SsoConfigService {
       newValues: {
         provider,
         clientId: dto.clientId,
+        entraTenantId,
         enabled: dto.enabled,
         allowedDomains,
         autoCreateUsers: dto.autoCreateUsers,
