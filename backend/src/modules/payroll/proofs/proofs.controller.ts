@@ -200,7 +200,13 @@ export class ProofsController {
   ) {
     const upload = await this.proofsService.fileFor(user.tenantId, id, {
       employeeId: user.employeeId,
-      isPayrollStaff: PAYROLL_STAFF.includes(user.role),
+      // Fixed role, or a custom role granting the same review permission
+      // (Keka wave H1) — list/employeeSummary/approve/reject already accept
+      // either, so gating the file behind the fixed role alone left a
+      // custom-role reviewer unable to open what they were reviewing.
+      isPayrollStaff:
+        PAYROLL_STAFF.includes(user.role) ||
+        (user.permissions ?? []).includes('payroll.proofs.review'),
     });
 
     // The path is derived from the stored key, never from anything the caller

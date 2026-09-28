@@ -147,6 +147,30 @@ describe('ProofsController', () => {
         { employeeId: mockManager.employeeId, isPayrollStaff: false },
       );
     });
+
+    it('treats an EMPLOYEE holding payroll.proofs.review as payroll staff (Keka wave H1)', async () => {
+      const customRoleHolder = { ...mockEmployee, permissions: ['payroll.proofs.review'] };
+
+      await controller.downloadFile(customRoleHolder, 'proof-1', mockResponse());
+
+      expect(service.fileFor).toHaveBeenCalledWith(
+        customRoleHolder.tenantId,
+        'proof-1',
+        { employeeId: customRoleHolder.employeeId, isPayrollStaff: true },
+      );
+    });
+
+    it('does not treat an EMPLOYEE without payroll.proofs.review as payroll staff', async () => {
+      const noPermissionHolder = { ...mockEmployee, permissions: ['org.manage'] };
+
+      await controller.downloadFile(noPermissionHolder, 'proof-1', mockResponse());
+
+      expect(service.fileFor).toHaveBeenCalledWith(
+        noPermissionHolder.tenantId,
+        'proof-1',
+        { employeeId: noPermissionHolder.employeeId, isPayrollStaff: false },
+      );
+    });
   });
 
   describe('payroll staff routes', () => {
