@@ -41,6 +41,14 @@ interface CreatedEmployee {
 export interface ImportOptions {
   dryRun: boolean;
   initialPassword?: string;
+  /**
+   * The caller's fixed role. When it is neither SUPER_ADMIN nor HR_ADMIN
+   * (i.e. the caller only reached this route via a custom-role permission
+   * grant), every row's role must be EMPLOYEE — otherwise a low-privilege
+   * holder of `employees.import` could mint HR_ADMIN/MANAGER/SUPER_ADMIN
+   * accounts through the CSV's role column.
+   */
+  callerRole: UserRole;
 }
 
 /** A data row after parsing, before it is known to be valid. */
@@ -135,7 +143,7 @@ export class EmployeeImportService {
     }
 
     const parsed = dataRows.map((cells, i) => this.readRow(cells, columnIndex, i + 1));
-    const errors = await this.validate(tenantId, parsed);
+    const errors = await this.validate(tenantId, parsed, options.callerRole);
 
     const rowsWithErrors = new Set(errors.map((e) => e.row));
     const result: ImportEmployeesResult = {
@@ -279,10 +287,16 @@ export class EmployeeImportService {
     };
   }
 
-  private async validate(tenantId: string, rows: ParsedRow[]): Promise<ImportRowError[]> {
+  private async validate(
+    tenantId: string,
+    rows: ParsedRow[],
+    callerRole: UserRole,
+  ): Promise<ImportRowError[]> {
     const errors: ImportRowError[] = [];
     const add = (row: number, field: string, message: string) =>
       errors.push({ row, field, message });
+    const callerIsAdmin =
+      callerRole === UserRole.SUPER_ADMIN || callerRole === UserRole.HR_ADMIN;
 
     const employeeCodes = rows.map((r) => r.employeeCode).filter(Boolean);
     const managerCodes = rows.map((r) => r.managerEmployeeCode).filter(Boolean);
@@ -375,6 +389,9 @@ export class EmployeeImportService {
       }
       if (r.role && !IMPORTABLE_ROLES.includes(r.role as UserRole)) {
         add(r.row, 'role', `"${r.role}" must be one of ${IMPORTABLE_ROLES.join(', ')}`);
+      }
+      if (r.role && r.role !== UserRole.EMPLOYEE && !callerIsAdmin) {
+        add(r.row, 'role', `Only HR administrators can import accounts with role "${r.role}"`);
       }
 
       if (r.employeeCode) {

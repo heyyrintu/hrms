@@ -115,7 +115,11 @@ export class EmployeeImportController {
       user.tenantId,
       user.userId,
       file.buffer.toString('utf8'),
-      { dryRun: query.dryRun === true, initialPassword: dto.initialPassword },
+      {
+        dryRun: query.dryRun === true,
+        initialPassword: dto.initialPassword,
+        callerRole: user.role,
+      },
     );
   }
 }
