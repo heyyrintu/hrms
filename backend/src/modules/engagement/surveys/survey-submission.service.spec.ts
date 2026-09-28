@@ -8,6 +8,7 @@ import {
 import { SurveyQuestionType, SurveyStatus } from '@prisma/client';
 import { SurveySubmissionService } from './survey-submission.service';
 import { SurveyReleaseService } from './survey-release.service';
+import { padPayload } from './pending-payload';
 import { FieldEncryptionService } from '../../../common/crypto/field-encryption.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { createMockPrismaService } from '../../../test/helpers';
@@ -123,9 +124,12 @@ describe('SurveySubmissionService', () => {
       const expectedPlain = JSON.stringify([
         { questionId: 'q-1', textValue: 'Great', choiceValues: [], numericValue: null },
       ]);
-      expect(encryption.encrypt).toHaveBeenCalledWith(expectedPlain);
+      // Padded to a fixed bucket so the ciphertext length hides the answers' length.
+      const padded = padPayload(expectedPlain);
+      expect(Buffer.byteLength(padded, 'utf8')).toBe(8192);
+      expect(encryption.encrypt).toHaveBeenCalledWith(padded);
       expect(prisma.surveyPendingResponse.create).toHaveBeenCalledWith({
-        data: { tenantId, surveyId, payload: `cipher:${expectedPlain}` },
+        data: { tenantId, surveyId, payload: `cipher:${padded}` },
         select: { id: true },
       });
       const pendingData = prisma.surveyPendingResponse.create.mock.calls[0][0].data;

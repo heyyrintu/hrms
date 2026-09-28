@@ -140,8 +140,8 @@ SurveyPendingResponse              -- anonymous submissions awaiting batch relea
      `'You have already responded'`; else 404 (not in the audience).
   4. Named survey: insert `SurveyResponse` (with `employeeId`/`submittedAt`)
      and its `SurveyAnswer`s. Anonymous survey: insert ONE
-     `SurveyPendingResponse` whose `payload` is the encrypted normalised
-     answers; no `SurveyResponse`/`SurveyAnswer` row is written in this
+     `SurveyPendingResponse` whose `payload` is the encrypted, padded
+     normalised answers (see *Payload padding*); no `SurveyResponse`/`SurveyAnswer` row is written in this
      transaction. The payload is encrypted before the transaction starts, so a
      missing `FIELD_ENCRYPTION_KEY` fails the submit with a 500 and nothing is
      written.
@@ -184,6 +184,14 @@ SurveyPendingResponse              -- anonymous submissions awaiting batch relea
     physical order within the batch is random. Results therefore change in
     steps of 3 or more responses, which also blunts differential reading of
     live results.
+  - **Payload padding.** AES-GCM ciphertext is as long as its plaintext, so an
+    unpadded pending row would leak the byte length of the answers, which
+    anyone with SELECT could match against released responses. Before
+    encryption the JSON is framed as `<UTF-8 byte length, 8 zero-padded
+    digits>` + JSON + spaces up to a bucket of `max(8192, next multiple of
+    8192 ≥ 8 + byte length)` bytes; release strips it using the length
+    prefix. Every normal submission therefore encrypts to the same size. Poll
+    pending votes are not padded: their payload is a fixed-length option id.
   - **Out of scope (documented residual risk):**
     - Someone holding BOTH database access AND `FIELD_ENCRYPTION_KEY` can
       decrypt submissions that are still pending and pair each with the
@@ -195,6 +203,10 @@ SurveyPendingResponse              -- anonymous submissions awaiting batch relea
       submission with its answers.
     - A forced release after close may carry a batch of 1 or 2; its `xmin`
       identifies the batch, not the respondent, but the batch is small.
+    - Payload size is coarse, not hidden: a submission whose answers exceed
+      one bucket (roughly 8 KB of JSON, i.e. very long text answers) encrypts
+      to a larger size, so an observer of a pending row learns which bucket
+      it fell in and can narrow it to the released responses of similar size.
     The survey form's help text says "responses are not linked to you in the
     application or its data", which holds for anyone without both the
     encryption key and superuser-level page access.

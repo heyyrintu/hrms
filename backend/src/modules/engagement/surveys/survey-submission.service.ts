@@ -11,6 +11,7 @@ import { FieldEncryptionService } from '../../../common/crypto/field-encryption.
 import { SubmitSurveyDto } from './dto/survey.dto';
 import { validateAnswers } from './survey-answer-validation';
 import { SurveyReleaseService } from './survey-release.service';
+import { padPayload } from './pending-payload';
 
 /**
  * Submitting a survey response. Kept separate from `SurveysService` so the
@@ -51,9 +52,10 @@ export class SurveySubmissionService {
 
     const rows = validateAnswers(survey.questions, dto.answers);
     // Encrypt before any write: a missing FIELD_ENCRYPTION_KEY fails with a
-    // 500 here and nothing is recorded.
+    // 500 here and nothing is recorded. Padded to a fixed-size bucket so the
+    // ciphertext length does not reveal the answers' length.
     const payload = survey.isAnonymous
-      ? this.fieldEncryption.encrypt(JSON.stringify(rows))
+      ? this.fieldEncryption.encrypt(padPayload(JSON.stringify(rows)))
       : null;
 
     await this.prisma.$transaction(async (tx) => {

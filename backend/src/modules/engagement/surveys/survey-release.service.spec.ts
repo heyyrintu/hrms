@@ -9,6 +9,7 @@ import { SurveyReleaseService, RELEASE_BATCH_MIN } from './survey-release.servic
 import { PrismaService } from '../../../prisma/prisma.service';
 import { FieldEncryptionService } from '../../../common/crypto/field-encryption.service';
 import { createMockPrismaService } from '../../../test/helpers';
+import { padPayload } from './pending-payload';
 
 describe('SurveyReleaseService', () => {
   let service: SurveyReleaseService;
@@ -23,7 +24,7 @@ describe('SurveyReleaseService', () => {
   ];
   const pendingRow = (id: string, label: string) => ({
     id,
-    payload: `cipher:${JSON.stringify(answerRows(label))}`,
+    payload: `cipher:${padPayload(JSON.stringify(answerRows(label)))}`,
   });
 
   function givePending(rows: { id: string; payload: string }[]) {

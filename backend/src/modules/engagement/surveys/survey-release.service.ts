@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { randomInt } from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { FieldEncryptionService } from '../../../common/crypto/field-encryption.service';
+import { unpadPayload } from './pending-payload';
 
 /**
  * Pending anonymous responses are only released once at least this many are
@@ -69,7 +70,10 @@ export class SurveyReleaseService {
 
       const submissions = secureShuffle(
         pending.map(
-          (row) => JSON.parse(this.fieldEncryption.decrypt(row.payload)) as PendingAnswerRow[],
+          (row) =>
+            JSON.parse(
+              unpadPayload(this.fieldEncryption.decrypt(row.payload)),
+            ) as PendingAnswerRow[],
         ),
       );
 
