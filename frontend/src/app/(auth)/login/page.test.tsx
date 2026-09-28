@@ -162,6 +162,18 @@ describe('LoginPage', () => {
     expect(mockLogin).toHaveBeenCalledWith('a@acme.test', 'pw', 'acme');
   });
 
+  // M3(c): a multi-tenant deployment reached via /login?org=acme must keep
+  // that tenant when the visitor follows Forgot password — without it, the
+  // reset flow loses track of which tenant they meant.
+  it('M3(c): keeps ?org= on the Forgot password link when present', () => {
+    searchParams = new URLSearchParams('org=acme');
+    render(<LoginPage />);
+    expect(screen.getByRole('link', { name: 'Forgot password?' })).toHaveAttribute(
+      'href',
+      '/forgot-password?org=acme',
+    );
+  });
+
   it('redirects to /dashboard on a "done" result', async () => {
     mockLogin.mockResolvedValue({ status: 'done' });
     render(<LoginPage />);

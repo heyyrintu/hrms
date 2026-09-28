@@ -83,7 +83,8 @@ export const PERMISSIONS = [
     key: 'integrations.manage',
     group: 'Integrations',
     label: 'Manage integrations',
-    description: 'Webhooks and approval workflow definitions',
+    description:
+      'Webhooks and approval workflow definitions (including who approves payroll, loans and expenses)',
   },
 ] as const;
 

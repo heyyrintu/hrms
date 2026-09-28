@@ -192,7 +192,7 @@ function LoginForm() {
 
             <div className="flex justify-end -mt-1">
               <Link
-                href="/forgot-password"
+                href={org ? `/forgot-password?org=${encodeURIComponent(org)}` : '/forgot-password'}
                 className="text-sm font-medium text-primary-600 hover:text-primary-700"
               >
                 Forgot password?

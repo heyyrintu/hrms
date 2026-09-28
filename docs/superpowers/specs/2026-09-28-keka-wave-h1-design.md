@@ -292,6 +292,15 @@ today carry no `typ`, so every existing session keeps working. A token without
 
 ### 2.3 Password login (`POST /auth/login`)
 
+The tenant is resolved as `dto.tenantId ?? resolveTenantId(dto.tenantCode)`.
+`tenantId` stays accepted on `LoginDto` as a deprecated field, so a client
+that still sends it (pre-H1 shape) is not rejected by
+`forbidNonWhitelisted`; when present it wins over `tenantCode`. An unknown
+or inactive `tenantCode` (or no default tenant configured) returns the same
+401 "Invalid credentials" a wrong password gets, not `resolveTenantId`'s own
+message — login never reveals tenant configuration to an unauthenticated
+caller.
+
 Evaluated in this order after the password is verified:
 
 1. **SSO-only:** tenant `requireSso` and `user.role !== SUPER_ADMIN` → 403
@@ -330,8 +339,10 @@ step is `<= totpLastStep` is rejected. The accepted step is written in the same
 update that consumes the challenge.
 
 Recovery codes: 10 codes, 10 base32 characters each shown as `xxxxx-xxxxx`
-(50 bits). Stored as sha256 hex of the normalised code (lower-case, no dash),
-compared with `timingSafeEqual`. Each code works once.
+(50 bits), stored as the sha256 hex of the normalised code (lower-case, no
+dash), looked up by the sha256 hex of the normalised code (a 50-bit random
+code's hash matched by index, so timing reveals nothing usable). Each code
+works once.
 
 ### 2.5 Admin policy and reset (`SecurityModule`, `@Roles(SUPER_ADMIN, HR_ADMIN)`)
 
@@ -473,7 +484,12 @@ Callback steps:
    its domain must be listed.
 4. **Match** in this order:
    1. `UserIdentity(tenantId, provider, sub)` → that user.
-   2. Else a `User` in the tenant with that email (case-insensitive). If the
+   2. Else a `User` in the tenant with that email (case-insensitive). If that
+      user's fixed role is `SUPER_ADMIN`, refuse as `no_account` instead
+      (never bind or sign in a SUPER_ADMIN through email match — an
+      HR_ADMIN who controls a directory that asserts a SUPER_ADMIN's email
+      must not be able to take over that account this way; a SUPER_ADMIN
+      already bound by `sub` still matches at step 4.1, unaffected). If the
       user already has a `UserIdentity` for this provider with a different
       `sub` → refuse (`identity_conflict`). Otherwise create the identity.
    3. Else, if `autoCreateUsers`: an `Employee` in the tenant with that email
