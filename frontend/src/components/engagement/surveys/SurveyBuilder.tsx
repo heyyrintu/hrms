@@ -98,7 +98,9 @@ export function SurveyBuilder({ initial, onSubmit, onCancel, saving }: SurveyBui
       isAnonymous,
       audienceType,
       audienceIds: audienceType === 'ALL' ? [] : audienceIds,
-      closesAt: closesAt ? new Date(closesAt).toISOString() : undefined,
+      // A date-only pick means "through the end of that day" in IST, not UTC
+      // midnight (which is 05:30 IST on the chosen day).
+      closesAt: closesAt ? `${closesAt}T23:59:59+05:30` : undefined,
       questions,
     };
     await onSubmit(payload);

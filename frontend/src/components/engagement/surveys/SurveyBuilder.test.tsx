@@ -63,4 +63,38 @@ describe('SurveyBuilder', () => {
       },
     ]);
   });
+
+  it('sends a date-only close as the end of that day in IST', async () => {
+    const onSubmit = jest.fn();
+    const { container } = render(<SurveyBuilder onSubmit={onSubmit} onCancel={jest.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Q1 Pulse' } });
+    fireEvent.change(screen.getByLabelText('Question 1 text'), {
+      target: { value: 'How do you feel?' },
+    });
+    const dateInput = container.querySelector('input[type="date"]') as HTMLInputElement;
+    fireEvent.change(dateInput, { target: { value: '2026-09-30' } });
+
+    fireEvent.submit(screen.getByTestId('survey-builder-form'));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    const payload = onSubmit.mock.calls[0][0];
+    expect(payload.closesAt).toBe('2026-09-30T23:59:59+05:30');
+    // 23:59:59 IST is 18:29:59 UTC on the same day, not UTC midnight (05:30 IST).
+    expect(new Date(payload.closesAt).toISOString()).toBe('2026-09-30T18:29:59.000Z');
+  });
+
+  it('omits closesAt when no date is picked', async () => {
+    const onSubmit = jest.fn();
+    render(<SurveyBuilder onSubmit={onSubmit} onCancel={jest.fn()} />);
+
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Q1 Pulse' } });
+    fireEvent.change(screen.getByLabelText('Question 1 text'), {
+      target: { value: 'How do you feel?' },
+    });
+    fireEvent.submit(screen.getByTestId('survey-builder-form'));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0].closesAt).toBeUndefined();
+  });
 });

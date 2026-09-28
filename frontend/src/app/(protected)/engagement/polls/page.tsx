@@ -73,7 +73,9 @@ export default function EngagementPollsPage() {
       await pollsApi.create({
         question: form.question,
         options: form.options.map((o) => o.trim()).filter((o) => o.length > 0),
-        closesAt: form.closesAt || undefined,
+        // datetime-local gives a zone-less `YYYY-MM-DDTHH:mm`; pin it to IST so
+        // the server does not read it in its own zone.
+        closesAt: form.closesAt ? `${form.closesAt}:00+05:30` : undefined,
       });
       toast.success('Poll created');
       setFormOpen(false);

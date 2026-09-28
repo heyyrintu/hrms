@@ -89,6 +89,28 @@ describe('EngagementPollsPage', () => {
     });
   });
 
+  it('sends a datetime-local close as that wall-clock time in IST', async () => {
+    (pollsApi.create as jest.Mock).mockResolvedValue({ data: { id: 'poll-2' } });
+
+    const { container } = render(<EngagementPollsPage />);
+    await waitFor(() => expect(screen.getByText('Best snack?')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /new poll/i }));
+    fireEvent.change(screen.getByLabelText('Question'), { target: { value: 'Tea or coffee?' } });
+    fireEvent.change(screen.getByLabelText('Option 1'), { target: { value: 'Tea' } });
+    fireEvent.change(screen.getByLabelText('Option 2'), { target: { value: 'Coffee' } });
+    const closeInput = (container.ownerDocument ?? document).querySelector(
+      'input[type="datetime-local"]',
+    ) as HTMLInputElement;
+    fireEvent.change(closeInput, { target: { value: '2026-09-30T17:00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create poll' }));
+
+    await waitFor(() => expect(pollsApi.create).toHaveBeenCalled());
+    const payload = (pollsApi.create as jest.Mock).mock.calls[0][0];
+    expect(payload.closesAt).toBe('2026-09-30T17:00:00+05:30');
+    expect(new Date(payload.closesAt).toISOString()).toBe('2026-09-30T11:30:00.000Z');
+  });
+
   it('supports adding a third option', async () => {
     render(<EngagementPollsPage />);
     await waitFor(() => expect(screen.getByText('Best snack?')).toBeInTheDocument());
