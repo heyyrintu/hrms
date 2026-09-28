@@ -26,11 +26,19 @@ jest.mock('lucide-react', () =>
 
 // Mock AuthContext
 const mockHasRole = jest.fn().mockReturnValue(true);
+const mockHasPermission = jest.fn().mockReturnValue(false);
 jest.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
     user: { email: 'admin@test.com', role: 'HR_ADMIN' },
     hasRole: mockHasRole,
+    hasPermission: mockHasPermission,
   }),
+}));
+
+// Keka wave H1: one mapped page, so the custom-role case is deterministic.
+jest.mock('@/lib/permission-paths', () => ({
+  permissionForPath: (path?: string) =>
+    path === '/admin/departments' ? 'org.manage' : undefined,
 }));
 
 describe('Sidebar', () => {
@@ -42,6 +50,7 @@ describe('Sidebar', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockHasRole.mockReturnValue(true);
+    mockHasPermission.mockReturnValue(false);
   });
 
   it('renders company logo', () => {
@@ -136,5 +145,31 @@ describe('Sidebar', () => {
       fireEvent.click(overlay);
       expect(defaultProps.onClose).toHaveBeenCalled();
     }
+  });
+
+  // Keka wave H1
+  it('shows My Security to everyone and Security to admins', () => {
+    render(<Sidebar {...defaultProps} />);
+    expect(screen.getByText('My Security')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Admin'));
+    expect(screen.getByText('Security')).toBeInTheDocument();
+  });
+
+  it('shows a custom-role holder only the admin pages their permission covers', () => {
+    mockHasRole.mockReturnValue(false);
+    mockHasPermission.mockImplementation((p?: string) => p === 'org.manage');
+    render(<Sidebar {...defaultProps} />);
+
+    fireEvent.click(screen.getByText('Admin'));
+    expect(screen.getByText('Departments')).toBeInTheDocument();
+    expect(screen.queryByText('Designations')).not.toBeInTheDocument();
+    expect(screen.queryByText('Security')).not.toBeInTheDocument();
+    expect(screen.queryByText('Companies')).not.toBeInTheDocument();
+  });
+
+  it('hides the Admin group from a user with no role and no permission', () => {
+    mockHasRole.mockReturnValue(false);
+    render(<Sidebar {...defaultProps} />);
+    expect(screen.queryByText('Admin')).not.toBeInTheDocument();
   });
 });

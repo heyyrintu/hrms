@@ -21,4 +21,10 @@ export interface AuthenticatedUser {
   tenantId: string;
   role: UserRole;
   employeeId?: string;
+  /**
+   * Permissions granted by the user's custom roles (Keka wave H1), loaded on
+   * every request by AuthService.validateUser. Always set there; optional in
+   * the type so hand-built fixtures without it still compile.
+   */
+  permissions?: string[];
 }

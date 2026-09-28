@@ -161,4 +161,56 @@ describe('AuthContext', () => {
     expect(() => render(<TestComponent />)).toThrow('useAuth must be used within an AuthProvider');
     spy.mockRestore();
   });
+
+  // Keka wave H1
+  it('completeSession stores the session and hasPermission reads custom-role grants', async () => {
+    function PermissionProbe() {
+      const auth = useAuth();
+      return (
+        <div>
+          <span data-testid="org">{String(auth.hasPermission('org.manage'))}</span>
+          <span data-testid="audit">{String(auth.hasPermission('audit.view'))}</span>
+          <span data-testid="none">{String(auth.hasPermission(undefined))}</span>
+          <span data-testid="probe-loading">{String(auth.isLoading)}</span>
+          <button
+            onClick={() =>
+              auth.completeSession({
+                accessToken: 'sso-token',
+                user: {
+                  id: 'u1',
+                  email: 'sso@test.com',
+                  role: 'EMPLOYEE' as any,
+                  tenantId: 't1',
+                  permissions: ['org.manage'],
+                },
+              })
+            }
+          >
+            Complete
+          </button>
+        </div>
+      );
+    }
+
+    render(
+      <AuthProvider>
+        <PermissionProbe />
+      </AuthProvider>
+    );
+
+    // Let the provider finish restoring (and clearing) any stored session first.
+    await waitFor(() => {
+      expect(screen.getByTestId('probe-loading').textContent).toBe('false');
+    });
+    expect(screen.getByTestId('org').textContent).toBe('false');
+
+    await act(async () => {
+      screen.getByText('Complete').click();
+    });
+
+    expect(mockLocalStorage.setItem).toHaveBeenCalledWith('hrms_token', 'sso-token');
+    expect(screen.getByTestId('org').textContent).toBe('true');
+    expect(screen.getByTestId('audit').textContent).toBe('false');
+    expect(screen.getByTestId('none').textContent).toBe('false');
+  });
 });

@@ -26,6 +26,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
    * Validate JWT payload and return authenticated user
    */
   async validate(payload: JwtPayload) {
+    // Step tokens (2FA challenge, forced enrolment) are signed with the same
+    // secret but must never work as a session. Sessions carry no typ.
+    if ((payload as { typ?: unknown }).typ !== undefined) {
+      throw new UnauthorizedException('Invalid token');
+    }
+
     try {
       return await this.authService.validateUser(payload);
     } catch {

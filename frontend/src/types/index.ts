@@ -132,6 +132,12 @@ export interface User {
   tenantId: string;
   employeeId?: string;
   employee?: Employee;
+  mustChangePassword?: boolean;
+  /** Permissions granted by the user's custom roles (Keka wave H1). */
+  permissions?: string[];
+  customRoles?: { id: string; name: string }[];
+  twoFactorEnabled?: boolean;
+  twoFactorRequired?: boolean;
 }
 
 export interface AuthResponse {

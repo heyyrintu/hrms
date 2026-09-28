@@ -40,6 +40,10 @@ describe('AuthService', () => {
     jwtService = module.get(JwtService);
     configService = module.get(ConfigService);
 
+    // Wave H1: no custom roles and no security settings unless a test says so.
+    prisma.userCustomRole.findMany.mockResolvedValue([]);
+    prisma.tenantSecuritySettings.findUnique.mockResolvedValue(null);
+
     // Reset bcrypt mocks
     (mockBcrypt.hash as jest.Mock).mockReset();
     (mockBcrypt.compare as jest.Mock).mockReset();
@@ -290,6 +294,7 @@ describe('AuthService', () => {
           role: 'EMPLOYEE',
           tenantId: 'test-tenant',
           employeeId: 'emp-1',
+          permissions: [],
         },
       });
 
@@ -382,6 +387,10 @@ describe('AuthService', () => {
         role: 'EMPLOYEE',
         tenantId: 'test-tenant',
         employee: mockUserWithEmployee.employee,
+        permissions: [],
+        customRoles: [],
+        twoFactorEnabled: false,
+        twoFactorRequired: false,
       });
 
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
@@ -399,6 +408,9 @@ describe('AuthService', () => {
                 },
               },
             },
+          },
+          customRoles: {
+            select: { customRole: { select: { id: true, name: true, permissions: true } } },
           },
         },
       });
@@ -440,10 +452,14 @@ describe('AuthService', () => {
         tenantId: 'test-tenant',
         role: 'EMPLOYEE',
         employeeId: 'emp-1',
+        permissions: [],
       });
 
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
         where: { id: 'user-1' },
+        include: {
+          customRoles: { select: { customRole: { select: { permissions: true } } } },
+        },
       });
     });
 
@@ -471,6 +487,132 @@ describe('AuthService', () => {
       const result = await service.validateUser(payload);
 
       expect(result.employeeId).toBeUndefined();
+    });
+  });
+  describe('wave H1 session helpers', () => {
+    const baseUser = {
+      id: 'user-1',
+      email: 'user@test.com',
+      passwordHash: 'hashed-password',
+      role: 'EMPLOYEE',
+      tenantId: 'test-tenant',
+      employeeId: 'emp-1',
+      isActive: true,
+      mustChangePassword: false,
+      tokenVersion: 3,
+      totpEnabledAt: null,
+    } as any;
+
+    it('validateUser returns the deduplicated union of custom-role permissions, dropping unknown keys', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        ...baseUser,
+        customRoles: [
+          { customRole: { permissions: ['org.manage', 'audit.view'] } },
+          { customRole: { permissions: ['audit.view', 'retired.permission'] } },
+        ],
+      });
+
+      const result = await service.validateUser({
+        sub: 'user-1',
+        email: 'user@test.com',
+        tenantId: 'test-tenant',
+        role: 'EMPLOYEE' as any,
+        tokenVersion: 3,
+      });
+
+      expect(result.permissions).toEqual(['audit.view', 'org.manage']);
+    });
+
+    it('issueSession signs the same payload login always signed and returns permissions', async () => {
+      prisma.user.update.mockResolvedValue(baseUser);
+      prisma.userCustomRole.findMany.mockResolvedValue([
+        { customRole: { permissions: ['exit.manage'] } },
+      ]);
+
+      const result = await service.issueSession(baseUser);
+
+      expect(jwtService.sign).toHaveBeenCalledWith({
+        sub: 'user-1',
+        email: 'user@test.com',
+        tenantId: 'test-tenant',
+        role: 'EMPLOYEE',
+        employeeId: 'emp-1',
+        tokenVersion: 3,
+      });
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: { lastLoginAt: expect.any(Date) },
+      });
+      expect(prisma.userCustomRole.findMany).toHaveBeenCalledWith({
+        where: { userId: 'user-1' },
+        select: { customRole: { select: { permissions: true } } },
+      });
+      expect(result).toEqual({
+        accessToken: 'mock-jwt-token',
+        user: {
+          id: 'user-1',
+          email: 'user@test.com',
+          role: 'EMPLOYEE',
+          tenantId: 'test-tenant',
+          employeeId: 'emp-1',
+          mustChangePassword: false,
+          permissions: ['exit.manage'],
+        },
+      });
+    });
+
+    it('resolveTenantId falls back to DEFAULT_TENANT_ID without a code', async () => {
+      await expect(service.resolveTenantId(undefined)).resolves.toBe('default-tenant-id');
+      await expect(service.resolveTenantId('   ')).resolves.toBe('default-tenant-id');
+      expect(prisma.tenant.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('resolveTenantId maps an active tenant code to its id', async () => {
+      prisma.tenant.findFirst.mockResolvedValue({ id: 'acme-id' });
+
+      await expect(service.resolveTenantId('acme')).resolves.toBe('acme-id');
+      expect(prisma.tenant.findFirst).toHaveBeenCalledWith({
+        where: { code: 'acme', isActive: true },
+        select: { id: true },
+      });
+    });
+
+    it('resolveTenantId refuses an unknown or inactive code', async () => {
+      prisma.tenant.findFirst.mockResolvedValue(null);
+
+      await expect(service.resolveTenantId('ghost')).rejects.toThrow('Tenant not found');
+    });
+
+    it('resolveTenantId refuses when no code and no default tenant is configured', async () => {
+      configService.get.mockReturnValue(undefined);
+
+      await expect(service.resolveTenantId()).rejects.toThrow('Tenant ID is required');
+    });
+
+    it('getProfile reports custom roles, permissions and 2FA state', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        ...baseUser,
+        role: 'MANAGER',
+        totpEnabledAt: new Date('2026-09-01T12:00:00Z'),
+        employee: null,
+        customRoles: [
+          { customRole: { id: 'r1', name: 'Payroll Viewer', permissions: ['payroll.reports.view'] } },
+        ],
+      });
+      prisma.tenantSecuritySettings.findUnique.mockResolvedValue({
+        twoFactorRequiredRoles: ['MANAGER', 'HR_ADMIN'],
+      });
+
+      const result = await service.getProfile('user-1');
+
+      expect(result).toMatchObject({
+        permissions: ['payroll.reports.view'],
+        customRoles: [{ id: 'r1', name: 'Payroll Viewer' }],
+        twoFactorEnabled: true,
+        twoFactorRequired: true,
+      });
+      expect(result).not.toHaveProperty('totpSecretEnc');
+      expect(result).not.toHaveProperty('passwordHash');
     });
   });
 });

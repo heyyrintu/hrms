@@ -47,5 +47,7 @@ export class AuthResponseDto {
     employeeId?: string;
     /** True when the account still carries its shared initial password. */
     mustChangePassword?: boolean;
+    /** Permissions granted by the user's custom roles. */
+    permissions?: string[];
   };
 }

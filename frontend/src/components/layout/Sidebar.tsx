@@ -68,12 +68,16 @@ import {
   History,
   ListOrdered,
   Globe,
+  // Keka wave H1
+  KeyRound,
+  ShieldCheck,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserRole } from '@/types';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/api';
+import { permissionForPath } from '@/lib/permission-paths';
 
 interface NavItem {
   name: string;
@@ -125,6 +129,8 @@ const sections: NavSection[] = [
       { name: 'HR Helpdesk', href: '/helpdesk', icon: <LifeBuoy className="h-[18px] w-[18px]" /> },
       // Keka wave D: any employee can sit on an interview panel.
       { name: 'My Interviews', href: '/recruitment/interviews', icon: <CalendarSearch className="h-[18px] w-[18px]" /> },
+      // Keka wave H1: every user manages their own two-factor authentication.
+      { name: 'My Security', href: '/my-security', icon: <KeyRound className="h-[18px] w-[18px]" /> },
     ],
   },
   {
@@ -259,6 +265,8 @@ const sections: NavSection[] = [
           { name: 'Payroll Settings', href: '/admin/payroll-settings', icon: <SlidersHorizontal className="h-4 w-4" /> },
           { name: 'Pipeline Stages', href: '/admin/pipeline-stages', icon: <ListOrdered className="h-4 w-4" /> },
           { name: 'Recruitment Settings', href: '/admin/recruitment-settings', icon: <Globe className="h-4 w-4" /> },
+          // Keka wave H1: fixed admins only, never unlocked by a custom role.
+          { name: 'Security', href: '/admin/security', icon: <ShieldCheck className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
         ],
       },
     ],
@@ -272,7 +280,7 @@ interface SidebarProps {
 
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
-  const { user, hasRole } = useAuth();
+  const { user, hasRole, hasPermission } = useAuth();
   const [expandedItems, setExpandedItems] = useState<string[]>(['Attendance']);
   const [tenantLogoUrl, setTenantLogoUrl] = useState<string | null>(null);
   const [tenantName, setTenantName] = useState<string | null>(null);
@@ -301,13 +309,20 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
     return pathname === href || pathname.startsWith(href + '/');
   };
 
+  // Role rules are unchanged: a group's roles gate all of its children. On top
+  // of them, a custom-role holder sees any page their permission covers.
+  const roleAllows = (roles?: UserRole[]) => !roles || hasRole(...roles);
+  const permissionAllows = (item: NavItem) =>
+    !!item.href && hasPermission(permissionForPath(item.href));
+  const canSeeChild = (child: NavItem, parent: NavItem) =>
+    (roleAllows(parent.roles) && roleAllows(child.roles)) || permissionAllows(child);
+
   const filterItems = (items: NavItem[]): NavItem[] =>
     items.filter(item => {
-      if (item.roles && !hasRole(...item.roles)) return false;
       if (item.children) {
-        return item.children.some(child => !child.roles || hasRole(...child.roles));
+        return item.children.some(child => canSeeChild(child, item));
       }
-      return true;
+      return roleAllows(item.roles) || permissionAllows(item);
     });
 
   const renderNavItem = (item: NavItem, isChild = false) => {
@@ -315,10 +330,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
     const isExpanded = expandedItems.includes(item.name);
     const active = isActive(item.href);
 
-    const filteredChildren = item.children?.filter(child => {
-      if (!child.roles) return true;
-      return hasRole(...child.roles);
-    });
+    const filteredChildren = item.children?.filter(child => canSeeChild(child, item));
 
     if (hasChildren) {
       return (

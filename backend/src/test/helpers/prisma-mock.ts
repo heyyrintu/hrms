@@ -112,6 +112,16 @@ const prismaModels = [
   'jobOffer',
   'preOnboardingInvite',
   'preOnboardingDocument',
+  // Keka wave H1 (security)
+  'customRole',
+  'userCustomRole',
+  'tenantSecuritySettings',
+  'userRecoveryCode',
+  'mfaChallenge',
+  'tenantSsoProvider',
+  'userIdentity',
+  'ssoLoginState',
+  'ssoExchangeCode',
 ];
 
 function createModelMock() {

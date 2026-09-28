@@ -6,12 +6,32 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { UserRole } from '@prisma/client';
+import { User, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LoginDto, RegisterDto, AuthResponseDto } from './dto/auth.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { AuthenticatedUser, JwtPayload } from '../../common/types/jwt-payload.type';
+import { isPermission } from '../../common/permissions/permissions';
+import { SessionResponse } from './auth.types';
+
+/** Rows of UserCustomRole with the role's permissions, as loaded for a session. */
+type CustomRoleGrant = { customRole: { permissions: string[] } };
+
+/**
+ * Union of the permissions granted by a user's custom roles, deduplicated.
+ * Keys that are no longer in the catalogue are dropped, so removing a
+ * permission from the code revokes it everywhere without a data migration.
+ */
+function permissionsFrom(grants: CustomRoleGrant[] | undefined | null): string[] {
+  const keys = new Set<string>();
+  for (const grant of grants ?? []) {
+    for (const key of grant.customRole?.permissions ?? []) {
+      if (isPermission(key)) keys.add(key);
+    }
+  }
+  return [...keys].sort();
+}
 
 @Injectable()
 export class AuthService {
@@ -101,7 +121,7 @@ export class AuthService {
   /**
    * Login with email and password
    */
-  async login(dto: LoginDto): Promise<AuthResponseDto> {
+  async login(dto: LoginDto): Promise<SessionResponse> {
     // Determine tenant ID - use provided tenantId or default
     const tenantId = dto.tenantId || this.configService.get<string>('DEFAULT_TENANT_ID');
 
@@ -129,13 +149,20 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    // Update last login
+    return this.issueSession(user);
+  }
+
+  /**
+   * Sign a normal session for a user who has fully authenticated (password,
+   * password + second factor, or SSO). Records the login time and returns the
+   * user's custom-role permissions so the client can shape its navigation.
+   */
+  async issueSession(user: User): Promise<SessionResponse> {
     await this.prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
     });
 
-    // Generate JWT
     const payload: JwtPayload = {
       sub: user.id,
       email: user.email,
@@ -146,6 +173,7 @@ export class AuthService {
     };
 
     const accessToken = this.jwtService.sign(payload);
+    const permissions = await this.loadPermissions(user.id);
 
     return {
       accessToken,
@@ -156,8 +184,42 @@ export class AuthService {
         tenantId: user.tenantId,
         employeeId: user.employeeId || undefined,
         mustChangePassword: user.mustChangePassword,
+        permissions,
       },
     };
+  }
+
+  /** Permissions granted to a user by their custom roles. */
+  async loadPermissions(userId: string): Promise<string[]> {
+    const grants = await this.prisma.userCustomRole.findMany({
+      where: { userId },
+      select: { customRole: { select: { permissions: true } } },
+    });
+    return permissionsFrom(grants);
+  }
+
+  /**
+   * Tenant for an unauthenticated sign-in: the active tenant with this code,
+   * or DEFAULT_TENANT_ID when no code is given.
+   */
+  async resolveTenantId(tenantCode?: string | null): Promise<string> {
+    const code = tenantCode?.trim();
+    if (code) {
+      const tenant = await this.prisma.tenant.findFirst({
+        where: { code, isActive: true },
+        select: { id: true },
+      });
+      if (!tenant) {
+        throw new UnauthorizedException('Tenant not found');
+      }
+      return tenant.id;
+    }
+
+    const tenantId = this.configService.get<string>('DEFAULT_TENANT_ID');
+    if (!tenantId) {
+      throw new UnauthorizedException('Tenant ID is required');
+    }
+    return tenantId;
   }
 
   /**
@@ -180,6 +242,9 @@ export class AuthService {
             },
           },
         },
+        customRoles: {
+          select: { customRole: { select: { id: true, name: true, permissions: true } } },
+        },
       },
     });
 
@@ -187,12 +252,24 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
+    const settings = await this.prisma.tenantSecuritySettings.findUnique({
+      where: { tenantId: user.tenantId },
+      select: { twoFactorRequiredRoles: true },
+    });
+
     return {
       id: user.id,
       email: user.email,
       role: user.role,
       tenantId: user.tenantId,
       employee: user.employee,
+      permissions: permissionsFrom(user.customRoles),
+      customRoles: (user.customRoles ?? []).map((grant) => ({
+        id: grant.customRole.id,
+        name: grant.customRole.name,
+      })),
+      twoFactorEnabled: !!user.totpEnabledAt,
+      twoFactorRequired: (settings?.twoFactorRequiredRoles ?? []).includes(user.role),
     };
   }
 
@@ -200,8 +277,13 @@ export class AuthService {
    * Validate user from JWT payload
    */
   async validateUser(payload: JwtPayload) {
+    // Custom-role permissions ride along on the lookup that already runs for
+    // every request, so a grant or revocation applies on the next request.
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
+      include: {
+        customRoles: { select: { customRole: { select: { permissions: true } } } },
+      },
     });
 
     if (!user || !user.isActive) {
@@ -223,6 +305,7 @@ export class AuthService {
       tenantId: user.tenantId,
       role: user.role,
       employeeId: user.employeeId || undefined,
+      permissions: permissionsFrom(user.customRoles),
     };
   }
 

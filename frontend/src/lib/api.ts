@@ -22,19 +22,23 @@ export const api = axios.create({
 api.interceptors.request.use((config) => {
   if (typeof window !== 'undefined') {
     const token = localStorage.getItem('hrms_token');
-    if (token) {
+    // A caller-supplied header wins: forced 2FA enrolment sends its step token.
+    if (token && !config.headers.Authorization) {
       config.headers.Authorization = `Bearer ${token}`;
     }
   }
   return config;
 });
 
+const FORM_AUTH_URLS = ['/auth/login', '/auth/2fa/verify', '/auth/sso/exchange'];
+
 // Handle auth errors
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    // A rejected login belongs to the form, not the session-expiry handler.
-    if (error.response?.status === 401 && error.config?.url !== '/auth/login') {
+    // A rejected login, 2FA code or SSO exchange belongs to the form, not the
+    // session-expiry handler.
+    if (error.response?.status === 401 && !FORM_AUTH_URLS.includes(error.config?.url)) {
       if (typeof window !== 'undefined') {
         const token = localStorage.getItem('hrms_token');
         // Ignore unauthenticated requests and responses from an older session.
@@ -87,8 +91,8 @@ export const companiesApi = {
 
 // Auth API
 export const authApi = {
-  login: (email: string, password: string) =>
-    api.post('/auth/login', { email, password }),
+  login: (email: string, password: string, tenantCode?: string | null) =>
+    api.post('/auth/login', tenantCode ? { email, password, tenantCode } : { email, password }),
   register: (email: string, password: string, role?: string) =>
     api.post('/auth/register', { email, password, role }),
   getProfile: () => api.get('/auth/me'),

@@ -149,6 +149,10 @@ model Tenant {
   jobOffers                 JobOffer[]
   preOnboardingInvites      PreOnboardingInvite[]
   preOnboardingDocuments    PreOnboardingDocument[]
+  // Keka wave H1 (security)
+  securitySettings          TenantSecuritySettings?
+  ssoProviders              TenantSsoProvider[]
+  customRoles               CustomRole[]
 
   @@map("tenants")
 }
@@ -176,6 +180,14 @@ model User {
   // were issued with and are rejected once it no longer matches.
   tokenVersion Int       @default(0)
   lastLoginAt  DateTime?
+  // Two-factor authentication (Keka wave H1). Secrets are AES-GCM encrypted
+  // with FieldEncryptionService and never returned by the API.
+  totpSecretEnc        String?
+  // Set by /auth/2fa/setup, promoted to totpSecretEnc by /auth/2fa/enable.
+  totpPendingSecretEnc String?
+  totpEnabledAt        DateTime?
+  // Last accepted 30-second TOTP step; a code at or before it is a replay.
+  totpLastStep         Int?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -186,6 +198,11 @@ model User {
   passwordResetTokens PasswordResetToken[]
   assignedTickets     HrTicket[]        @relation("TicketAssignee")
   ticketComments      HrTicketComment[]
+  // Keka wave H1 (security)
+  customRoles         UserCustomRole[]
+  recoveryCodes       UserRecoveryCode[]
+  mfaChallenges       MfaChallenge[]
+  identities          UserIdentity[]
 
   @@unique([tenantId, email])
   @@index([tenantId])
@@ -3366,4 +3383,174 @@ model PreOnboardingDocument {
   @@unique([inviteId, documentKey])
   @@index([tenantId])
   @@map("pre_onboarding_documents")
+}
+
+// ============================================================================
+// Keka wave H1 — security: custom roles, two-factor authentication, SSO
+// ============================================================================
+
+enum SsoProvider {
+  GOOGLE
+  MICROSOFT
+}
+
+// A named bundle of permissions granted on top of a user's fixed role.
+// Additive only: it never removes access the fixed role already has.
+model CustomRole {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String   @db.VarChar(80)
+  description String?  @db.VarChar(500)
+  permissions String[]
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant           @relation(fields: [tenantId], references: [id])
+  users  UserCustomRole[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("custom_roles")
+}
+
+model UserCustomRole {
+  id           String   @id @default(uuid())
+  tenantId     String
+  userId       String
+  customRoleId String
+  assignedById String?
+  createdAt    DateTime @default(now())
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customRole CustomRole @relation(fields: [customRoleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, customRoleId])
+  @@index([tenantId])
+  @@index([customRoleId])
+  @@map("user_custom_roles")
+}
+
+// Absent row = { requireSso: false, twoFactorRequiredRoles: [] }.
+model TenantSecuritySettings {
+  id                     String     @id @default(uuid())
+  tenantId               String     @unique
+  // SSO-only sign-in. SUPER_ADMIN password login always stays available.
+  requireSso             Boolean    @default(false)
+  twoFactorRequiredRoles UserRole[] @default([])
+  updatedById            String?
+  createdAt              DateTime   @default(now())
+  updatedAt              DateTime   @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("tenant_security_settings")
+}
+
+model UserRecoveryCode {
+  id        String    @id @default(uuid())
+  tenantId  String
+  userId    String
+  // sha256 hex of the normalised code
+  codeHash  String    @db.VarChar(64)
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tenantId])
+  @@map("user_recovery_codes")
+}
+
+// One password-verified login waiting for its second factor.
+model MfaChallenge {
+  id         String    @id @default(uuid())
+  tenantId   String
+  userId     String
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tenantId])
+  @@map("mfa_challenges")
+}
+
+model TenantSsoProvider {
+  id              String      @id @default(uuid())
+  tenantId        String
+  provider        SsoProvider
+  clientId        String      @db.VarChar(255)
+  // AES-GCM via FieldEncryptionService; never returned by the API.
+  clientSecretEnc String
+  // Microsoft Entra directory (tenant) id; required for MICROSOFT.
+  entraTenantId   String?     @db.VarChar(64)
+  enabled         Boolean     @default(false)
+  // Lower-case domains. Empty = any domain (not allowed with autoCreateUsers).
+  allowedDomains  String[]
+  autoCreateUsers Boolean     @default(false)
+  updatedById     String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@unique([tenantId, provider])
+  @@map("tenant_sso_providers")
+}
+
+// Binds a user to the identity provider's permanent subject after the first
+// SSO login, so a later email change at the IdP cannot move the login.
+model UserIdentity {
+  id         String      @id @default(uuid())
+  tenantId   String
+  userId     String
+  provider   SsoProvider
+  subject    String      @db.VarChar(255)
+  email      String      @db.VarChar(255)
+  lastUsedAt DateTime?
+  createdAt  DateTime    @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, provider, subject])
+  @@unique([userId, provider])
+  @@index([tenantId])
+  @@map("user_identities")
+}
+
+// OIDC authorisation request in flight: single use, 10 minutes.
+model SsoLoginState {
+  id           String      @id @default(uuid())
+  tenantId     String
+  provider     SsoProvider
+  stateHash    String      @unique @db.VarChar(64)
+  nonce        String      @db.VarChar(128)
+  codeVerifier String      @db.VarChar(128)
+  expiresAt    DateTime
+  consumedAt   DateTime?
+  createdAt    DateTime    @default(now())
+
+  @@index([tenantId])
+  @@index([expiresAt])
+  @@map("sso_login_states")
+}
+
+// Hands a completed SSO login to the browser: single use, 60 seconds.
+model SsoExchangeCode {
+  id         String    @id @default(uuid())
+  tenantId   String
+  userId     String
+  codeHash   String    @unique @db.VarChar(64)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([tenantId])
+  @@index([expiresAt])
+  @@map("sso_exchange_codes")
 }

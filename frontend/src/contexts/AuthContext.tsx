@@ -12,6 +12,10 @@ interface AuthContextType {
   login: (credentials: LoginCredentials) => Promise<void>;
   logout: () => void;
   hasRole: (...roles: UserRole[]) => boolean;
+  /** True when one of the user's custom roles grants this permission (Keka wave H1). */
+  hasPermission: (permission?: string) => boolean;
+  /** Store a finished sign-in (password, 2FA or SSO) exactly as login does. */
+  completeSession: (response: AuthResponse) => void;
   isManager: boolean;
   isAdmin: boolean;
   isSuperAdmin: boolean;
@@ -58,10 +62,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     initAuth();
   }, []);
 
-  const login = useCallback(async (credentials: LoginCredentials) => {
-    const response = await authApi.login(credentials.email, credentials.password);
-
-    const { accessToken, user: userData } = response.data;
+  const completeSession = useCallback((response: AuthResponse) => {
+    const { accessToken, user: userData } = response;
 
     // Store in state
     setToken(accessToken);
@@ -71,6 +73,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem('hrms_token', accessToken);
     localStorage.setItem('hrms_user', JSON.stringify(userData));
   }, []);
+
+  const login = useCallback(async (credentials: LoginCredentials) => {
+    const response = await authApi.login(credentials.email, credentials.password);
+    completeSession(response.data);
+  }, [completeSession]);
 
   const logout = useCallback(() => {
     setToken(null);
@@ -82,6 +89,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const hasRole = useCallback((...roles: UserRole[]) => {
     if (!user) return false;
     return roles.includes(user.role);
+  }, [user]);
+
+  const hasPermission = useCallback((permission?: string) => {
+    if (!user || !permission) return false;
+    return (user.permissions ?? []).includes(permission);
   }, [user]);
 
   const isManager = user?.role === UserRole.MANAGER || 
@@ -101,6 +113,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     login,
     logout,
     hasRole,
+    hasPermission,
+    completeSession,
     isManager,
     isAdmin,
     isSuperAdmin,
