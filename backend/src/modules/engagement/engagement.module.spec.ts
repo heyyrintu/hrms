@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CryptoModule } from '../../common/crypto/crypto.module';
 import { createMockPrismaService } from '../../test/helpers';
 import { EngagementModule } from './engagement.module';
 import { FeedService } from './feed/feed.service';
@@ -34,6 +35,8 @@ describe('EngagementModule', () => {
         ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
         ThrottlerModule.forRoot([]),
         GlobalPrismaStubModule,
+        // Global in AppModule; surveys and polls encrypt pending submissions.
+        CryptoModule,
         EngagementModule,
       ],
     })

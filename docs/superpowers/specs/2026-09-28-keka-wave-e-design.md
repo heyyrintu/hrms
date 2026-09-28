@@ -99,6 +99,12 @@ SurveyAnswer
   textValue String? (Text), choiceValues String[], numericValue Int?
   -- NO timestamps
   @@index([questionId])
+
+SurveyPendingResponse              -- anonymous submissions awaiting batch release
+  id, tenantId, surveyId (cascade), payload String (Text)
+  -- payload = FieldEncryptionService (AES-256-GCM) ciphertext of the normalised answers
+  -- NO timestamps, NO employee column
+  @@index([surveyId])
 ```
 
 ### Rules
@@ -117,9 +123,10 @@ SurveyAnswer
   set `launchedAt`. An empty audience → 400. After commit, notify each
   participant's user (`SURVEY_LAUNCHED`, link `/engagement/surveys/<id>`).
   `isAnonymous` is frozen from this point.
-- **Close** (`ACTIVE → CLOSED`): sets `closedAt`. A survey whose `closesAt` has
-  passed is treated as closed for submissions and in listings even if its
-  status is still `ACTIVE` (no cron).
+- **Close** (`ACTIVE → CLOSED`): sets `closedAt`, then force-releases any
+  pending anonymous responses (see *Batch release*). A survey whose `closesAt`
+  has passed is treated as closed for submissions and in listings even if its
+  status is still `ACTIVE`; the release cron flushes its buffer.
 - **Delete**: only `DRAFT` surveys (else 400).
 - **Submit** (`POST /engagement/surveys/:id/responses`), one transaction:
   1. Survey must be ACTIVE and not past `closesAt` (else 400).
@@ -131,8 +138,28 @@ SurveyAnswer
   3. `updateMany SurveyParticipant where { surveyId, employeeId, submitted: false }
      set submitted = true`. Count 0 → if a participant row exists, 409
      `'You have already responded'`; else 404 (not in the audience).
-  4. Insert `SurveyResponse` (`employeeId`/`submittedAt` only when NOT
-     anonymous) and its `SurveyAnswer`s.
+  4. Named survey: insert `SurveyResponse` (with `employeeId`/`submittedAt`)
+     and its `SurveyAnswer`s. Anonymous survey: insert ONE
+     `SurveyPendingResponse` whose `payload` is the encrypted normalised
+     answers; no `SurveyResponse`/`SurveyAnswer` row is written in this
+     transaction. The payload is encrypted before the transaction starts, so a
+     missing `FIELD_ENCRYPTION_KEY` fails the submit with a 500 and nothing is
+     written.
+  5. Anonymous survey, after commit: a non-forced batch release (below). A
+     release failure is logged (survey id only, no user/employee identifier)
+     and never fails the submit: the submission is already recorded.
+- **Batch release** (`SurveyReleaseService.release(tenantId, surveyId, { force })`),
+  its own transaction that touches NO participant rows:
+  1. `SELECT id FROM survey_pending_responses WHERE "surveyId" = ... AND
+     "tenantId" = ... FOR UPDATE SKIP LOCKED`.
+  2. Fewer than `RELEASE_BATCH_MIN = 3` locked rows and not `force`: release
+     nothing.
+  3. Decrypt, shuffle with a `crypto.randomInt` Fisher-Yates, insert each as a
+     `SurveyResponse` (`employeeId`/`submittedAt` null) plus its answers in the
+     shuffled order, delete the pending rows.
+  - Triggered after each anonymous submit (non-forced), on close (forced), and
+    by a cron every 15 minutes (`survey-release`, IST): forced for surveys that
+    are CLOSED or past `closesAt`, non-forced for ACTIVE ones.
 - **Anonymity guarantees** (anonymous surveys):
   - No column on `SurveyResponse` or `SurveyAnswer` identifies the employee or
     the submission time. `SurveyParticipant` holds only a boolean.
@@ -141,16 +168,44 @@ SurveyAnswer
   - Every results query orders text answers by answer `id` (random UUID),
     never by insertion order.
   - Results (aggregates and text) are withheld until the survey has at least
-    `MIN_ANONYMOUS_RESPONSES = 3` responses; below that the endpoint returns
-    `{ withheld: true, responseCount }` with no answer data.
-  - **Out of scope (documented residual risk):** a database superuser reading
-    physical row order (`ctid`), the write-ahead log or server access logs
-    could still correlate a submission with its answer rows. This is stated in
-    the survey form's help text as "responses are not linked to you in the
-    application or its data".
+    `MIN_ANONYMOUS_RESPONSES = 3` released responses; below that the endpoint
+    returns `{ withheld: true, responseCount }` with no answer data.
+  - **Transaction-id (`xmin`) side channel.** Every PostgreSQL row version
+    records the id of the transaction that wrote it in the `xmin` system
+    column, readable by any role with SELECT, and freezing keeps it. If the
+    participant flag (which names the employee) and the response were written
+    in one transaction, `JOIN ... ON r.xmin = p.xmin` would de-anonymise every
+    response; two consecutive transactions would still correlate by adjacent
+    ids. Hence the pending buffer: the submit transaction's only
+    non-participant row is ciphertext, and responses are written later by a
+    release transaction that writes no participant row and inserts at least 3
+    shuffled responses at once (except a forced release after close). Every
+    released row in a batch shares one `xmin` that matches no participant, and
+    physical order within the batch is random. Results therefore change in
+    steps of 3 or more responses, which also blunts differential reading of
+    live results.
+  - **Out of scope (documented residual risk):**
+    - Someone holding BOTH database access AND `FIELD_ENCRYPTION_KEY` can
+      decrypt submissions that are still pending and pair each with the
+      participant row that shares its `xmin`. Once released, the pending row
+      is deleted and the link is gone from live data.
+    - A database superuser inspecting heap pages (dead tuples of deleted
+      pending rows before vacuum, physical row order via `ctid`), the
+      write-ahead log, or server access logs could still correlate a
+      submission with its answers.
+    - A forced release after close may carry a batch of 1 or 2; its `xmin`
+      identifies the batch, not the respondent, but the batch is small.
+    The survey form's help text says "responses are not linked to you in the
+    application or its data", which holds for anyone without both the
+    encryption key and superuser-level page access.
 - **Results** (`GET /engagement/surveys/:id/results`, HR/SUPER), for ACTIVE or
   CLOSED surveys:
-  - `participantCount`, `responseCount`, `responseRate` (0–100, 1 dp).
+  - `participantCount`, `responseCount` (released responses only),
+    `responseRate` (0–100, 1 dp, from participants whose `submitted` flag is
+    set, so it includes pending submissions) and, for anonymous surveys,
+    `pendingCount` (submissions waiting in the buffer; 0 for named surveys).
+    The results page shows "N responses are waiting to be released in a
+    batch" when `pendingCount > 0`.
   - Per question: SINGLE/MULTI_CHOICE → `{ option, count }[]` in option order;
     RATING → `average` (2 dp), `distribution` for 1..5; ENPS → `promoters`
     (9–10), `passives` (7–8), `detractors` (0–6), `score` =
@@ -220,6 +275,12 @@ PollVoter                          -- who voted; never which option
   id, tenantId, pollId (cascade), employeeId
   -- NO timestamps
   @@unique([pollId, employeeId])
+
+PollPendingVote                    -- votes awaiting batch application
+  id, tenantId, pollId (cascade), payload String (Text)
+  -- payload = FieldEncryptionService ciphertext of the chosen optionId
+  -- NO timestamps, NO employee column
+  @@index([pollId])
 ```
 
 ### Rules
@@ -228,11 +289,23 @@ PollVoter                          -- who voted; never which option
   published on create (no draft). 2–10 distinct non-empty options.
 - **Vote**, one transaction: poll ACTIVE and not past `closesAt` (else 400);
   option belongs to the poll (else 400); `create PollVoter` — unique violation
-  (P2002) → 409 `'You have already voted'`; then
-  `pollOption.update({ voteCount: { increment: 1 } })`. Votes are final.
+  (P2002) → 409 `'You have already voted'`; then `create PollPendingVote`
+  with the encrypted `optionId`. No option row is written in the vote
+  transaction: an option's `voteCount` update would share `xmin` with the
+  voter's `PollVoter` row and name the latest voter's choice. Votes are final.
+- **Batch count application** (`PollReleaseService.release(tenantId, pollId, { force })`),
+  same rules as the survey release: lock pending rows `FOR UPDATE SKIP LOCKED`;
+  fewer than 3 and not forced: nothing; otherwise decrypt, group by option,
+  `voteCount increment` per option, delete the pending rows. Triggered after
+  each vote (non-forced), on close (forced), and by a 15-minute cron
+  (`poll-release`, IST; forced for CLOSED or expired polls). Residual risk as
+  for surveys (database access plus the encryption key decrypts still-pending
+  votes).
 - **Results visibility:** a caller who has voted, or HR/SUPER, or anyone once
-  the poll is closed, sees `voteCount` per option and `totalVotes`; otherwise
-  counts are omitted (`null`).
+  the poll is closed, sees `voteCount` per option and `totalVotes` (applied
+  votes only) plus `pendingVotes` (votes not yet applied); otherwise counts are
+  omitted (`null`). The UI shows "Some votes are still being counted" when
+  `pendingVotes > 0`.
 - HR/SUPER: create, close, delete (any status; cascades).
 
 ### API

@@ -2,7 +2,7 @@
 -- one-on-ones.
 -- Spec: docs/superpowers/specs/2026-09-28-keka-wave-e-design.md
 --
--- Purely additive: new enums, 17 new tables, their indexes and foreign keys,
+-- Purely additive: new enums, 19 new tables, their indexes and foreign keys,
 -- and three NotificationType values. No backfill. The new NotificationType
 -- values are not used inside this migration, so ADD VALUE inside the
 -- migration transaction is safe (PostgreSQL 12+), as in earlier waves.
@@ -11,6 +11,11 @@
 -- feed_items.*EmployeeId and feed_reactions.employeeId deliberately carry no
 -- foreign key, and survey_participants / survey_responses / survey_answers /
 -- poll_voters carry no timestamps.
+--
+-- survey_pending_responses / poll_pending_votes buffer anonymous submissions
+-- and votes as encrypted payloads (no employee column, no timestamps) so the
+-- rows readable in survey_responses / poll_options are written by a separate
+-- batch-release transaction and never share xmin with a participant/voter row.
 
 -- CreateEnum
 CREATE TYPE "SurveyStatus" AS ENUM ('DRAFT', 'ACTIVE', 'CLOSED');
@@ -112,6 +117,16 @@ CREATE TABLE "survey_answers" (
 );
 
 -- CreateTable
+CREATE TABLE "survey_pending_responses" (
+    "id" TEXT NOT NULL,
+    "tenantId" TEXT NOT NULL,
+    "surveyId" TEXT NOT NULL,
+    "payload" TEXT NOT NULL,
+
+    CONSTRAINT "survey_pending_responses_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "polls" (
     "id" TEXT NOT NULL,
     "tenantId" TEXT NOT NULL,
@@ -146,6 +161,16 @@ CREATE TABLE "poll_voters" (
     "employeeId" TEXT NOT NULL,
 
     CONSTRAINT "poll_voters_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "poll_pending_votes" (
+    "id" TEXT NOT NULL,
+    "tenantId" TEXT NOT NULL,
+    "pollId" TEXT NOT NULL,
+    "payload" TEXT NOT NULL,
+
+    CONSTRAINT "poll_pending_votes_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -299,6 +324,9 @@ CREATE INDEX "survey_responses_surveyId_idx" ON "survey_responses"("surveyId");
 CREATE INDEX "survey_answers_questionId_idx" ON "survey_answers"("questionId");
 
 -- CreateIndex
+CREATE INDEX "survey_pending_responses_surveyId_idx" ON "survey_pending_responses"("surveyId");
+
+-- CreateIndex
 CREATE INDEX "polls_tenantId_status_idx" ON "polls"("tenantId", "status");
 
 -- CreateIndex
@@ -306,6 +334,9 @@ CREATE INDEX "poll_options_pollId_idx" ON "poll_options"("pollId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "poll_voters_pollId_employeeId_key" ON "poll_voters"("pollId", "employeeId");
+
+-- CreateIndex
+CREATE INDEX "poll_pending_votes_pollId_idx" ON "poll_pending_votes"("pollId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "badges_tenantId_name_key" ON "badges"("tenantId", "name");
@@ -386,6 +417,12 @@ ALTER TABLE "survey_answers" ADD CONSTRAINT "survey_answers_responseId_fkey" FOR
 ALTER TABLE "survey_answers" ADD CONSTRAINT "survey_answers_questionId_fkey" FOREIGN KEY ("questionId") REFERENCES "survey_questions"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "survey_pending_responses" ADD CONSTRAINT "survey_pending_responses_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "tenants"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "survey_pending_responses" ADD CONSTRAINT "survey_pending_responses_surveyId_fkey" FOREIGN KEY ("surveyId") REFERENCES "surveys"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "polls" ADD CONSTRAINT "polls_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "tenants"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -402,6 +439,12 @@ ALTER TABLE "poll_voters" ADD CONSTRAINT "poll_voters_tenantId_fkey" FOREIGN KEY
 
 -- AddForeignKey
 ALTER TABLE "poll_voters" ADD CONSTRAINT "poll_voters_pollId_fkey" FOREIGN KEY ("pollId") REFERENCES "polls"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "poll_pending_votes" ADD CONSTRAINT "poll_pending_votes_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "tenants"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "poll_pending_votes" ADD CONSTRAINT "poll_pending_votes_pollId_fkey" FOREIGN KEY ("pollId") REFERENCES "polls"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "badges" ADD CONSTRAINT "badges_tenantId_fkey" FOREIGN KEY ("tenantId") REFERENCES "tenants"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
