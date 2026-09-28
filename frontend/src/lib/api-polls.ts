@@ -15,7 +15,10 @@ export interface Poll {
   closedAt?: string | null;
   createdAt: string;
   hasVoted?: boolean;
+  /** Applied votes only. */
   totalVotes: number | null;
+  /** Votes cast but not yet applied to the counts (applied in batches). */
+  pendingVotes?: number | null;
   options: PollOption[];
 }
 

@@ -81,5 +81,29 @@ describe('PollWidget', () => {
     });
     expect(pollsApi.vote).toHaveBeenCalledWith('poll-1', 'opt-1');
     expect(screen.queryByRole('button', { name: 'Vote' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Some votes are still being counted')).not.toBeInTheDocument();
+  });
+
+  it('says some votes are still being counted when votes are pending', async () => {
+    (pollsApi.active as jest.Mock).mockResolvedValue({
+      data: [
+        {
+          ...openPoll,
+          hasVoted: true,
+          totalVotes: 3,
+          pendingVotes: 1,
+          options: [
+            { id: 'opt-1', order: 0, label: 'Chips', voteCount: 2 },
+            { id: 'opt-2', order: 1, label: 'Cookies', voteCount: 1 },
+          ],
+        },
+      ],
+    });
+
+    render(<PollWidget />);
+
+    await waitFor(() =>
+      expect(screen.getByText('Some votes are still being counted')).toBeInTheDocument(),
+    );
   });
 });

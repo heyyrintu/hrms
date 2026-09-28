@@ -166,6 +166,11 @@ export default function EngagementPollsPage() {
                             </div>
                           );
                         })}
+                        {(poll.pendingVotes ?? 0) > 0 && (
+                          <p className="text-xs text-warm-400">
+                            Some votes are still being counted
+                          </p>
+                        )}
                       </div>
                     </div>
                     <div className="flex flex-col gap-2">

@@ -1,6 +1,14 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PollStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { FieldEncryptionService } from '../../../common/crypto/field-encryption.service';
+import { PollReleaseService } from './poll-release.service';
 import { CreatePollDto } from './dto/create-poll.dto';
 import { VoteDto } from './dto/vote.dto';
 
@@ -17,14 +25,30 @@ export interface ActivePollView {
   closesAt: Date | null;
   createdAt: Date;
   hasVoted: boolean;
+  /** Applied votes only; votes still in the pending buffer are in `pendingVotes`. */
   totalVotes: number | null;
+  /** Votes cast but not yet applied to the option counts (null when counts are hidden). */
+  pendingVotes: number | null;
   options: PollOptionView[];
 }
 
-/** Anonymous, single-choice, whole-tenant polls. */
+/**
+ * Anonymous, single-choice, whole-tenant polls.
+ *
+ * A vote never writes an option row in the transaction that inserts the
+ * voter's `PollVoter` row (they would share PostgreSQL's `xmin`, naming the
+ * latest voter's choice). It buffers an encrypted pending vote instead, and
+ * `PollReleaseService` applies the counts in batches.
+ */
 @Injectable()
 export class PollsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(PollsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fieldEncryption: FieldEncryptionService,
+    private readonly release: PollReleaseService,
+  ) {}
 
   async create(tenantId: string, createdById: string, dto: CreatePollDto) {
     const trimmed = dto.options.map((o) => o.trim());
@@ -71,7 +95,10 @@ export class PollsService {
         status: PollStatus.ACTIVE,
         OR: [{ closesAt: null }, { closesAt: { gt: now } }],
       },
-      include: { options: { orderBy: { order: 'asc' } } },
+      include: {
+        options: { orderBy: { order: 'asc' } },
+        _count: { select: { pending: true } },
+      },
       orderBy: { createdAt: 'desc' },
     });
     if (polls.length === 0) return [];
@@ -101,6 +128,7 @@ export class PollsService {
         createdAt: poll.createdAt,
         hasVoted,
         totalVotes,
+        pendingVotes: showCounts ? poll._count?.pending ?? 0 : null,
         options: poll.options.map((o) => ({
           id: o.id,
           order: o.order,
@@ -116,7 +144,10 @@ export class PollsService {
     const [data, total] = await Promise.all([
       this.prisma.poll.findMany({
         where: { tenantId },
-        include: { options: { orderBy: { order: 'asc' } } },
+        include: {
+          options: { orderBy: { order: 'asc' } },
+          _count: { select: { pending: true } },
+        },
         orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
@@ -125,15 +156,20 @@ export class PollsService {
     ]);
 
     return {
-      data: data.map((poll) => ({
+      data: data.map(({ _count, ...poll }) => ({
         ...poll,
         totalVotes: poll.options.reduce((sum, o) => sum + o.voteCount, 0),
+        pendingVotes: _count?.pending ?? 0,
       })),
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
 
   async vote(tenantId: string, id: string, employeeId: string, dto: VoteDto): Promise<{ success: true }> {
+    // Encrypt before any write: a missing FIELD_ENCRYPTION_KEY fails with a
+    // 500 here and nothing is recorded.
+    const payload = this.fieldEncryption.encrypt(dto.optionId);
+
     await this.prisma.$transaction(async (tx) => {
       const poll = await tx.poll.findFirst({
         where: { id, tenantId },
@@ -156,11 +192,19 @@ export class PollsService {
         throw e;
       }
 
-      await tx.pollOption.update({
-        where: { id: dto.optionId },
-        data: { voteCount: { increment: 1 } },
+      await tx.pollPendingVote.create({
+        data: { tenantId, pollId: id, payload },
+        select: { id: true },
       });
     });
+
+    // The vote is recorded; a failed release is retried on close and by the
+    // cron. Log without any user or employee identifier.
+    try {
+      await this.release.release(tenantId, id, { force: false });
+    } catch (err) {
+      this.logger.error(`Poll vote release failed for poll ${id}: ${(err as Error).message}`);
+    }
 
     return { success: true };
   }
@@ -172,6 +216,14 @@ export class PollsService {
     });
     if (result.count === 0) {
       throw new BadRequestException('Poll is already closed or does not exist');
+    }
+    // Apply any votes still waiting for a batch: no later vote can join it.
+    try {
+      await this.release.release(tenantId, id, { force: true });
+    } catch (err) {
+      this.logger.error(
+        `Failed to apply pending votes on close of poll ${id}: ${(err as Error).message}`,
+      );
     }
     return { success: true };
   }

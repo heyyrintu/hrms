@@ -7,6 +7,7 @@ import { pollsApi, type Poll } from '@/lib/api-polls';
 import toast from 'react-hot-toast';
 
 const MAX_POLLS = 3;
+const PENDING_VOTES_MESSAGE = 'Some votes are still being counted';
 
 function PollCard({ poll, onVoted }: { poll: Poll; onVoted: (updated: Poll) => void }) {
   const [selected, setSelected] = useState<string>('');
@@ -51,6 +52,9 @@ function PollCard({ poll, onVoted }: { poll: Poll; onVoted: (updated: Poll) => v
               </div>
             );
           })}
+          {(poll.pendingVotes ?? 0) > 0 && (
+            <p className="text-xs text-warm-400">{PENDING_VOTES_MESSAGE}</p>
+          )}
         </div>
       ) : (
         <div className="space-y-2">

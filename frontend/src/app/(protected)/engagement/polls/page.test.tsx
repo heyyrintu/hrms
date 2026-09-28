@@ -50,6 +50,22 @@ describe('EngagementPollsPage', () => {
 
     await waitFor(() => expect(screen.getByText('Best snack?')).toBeInTheDocument());
     expect(screen.getByText('3 votes (75%)')).toBeInTheDocument();
+    expect(screen.queryByText('Some votes are still being counted')).not.toBeInTheDocument();
+  });
+
+  it('says some votes are still being counted when votes are pending', async () => {
+    (pollsApi.list as jest.Mock).mockResolvedValue({
+      data: {
+        data: [{ ...closedPoll, status: 'ACTIVE', pendingVotes: 2 }],
+        meta: { total: 1, page: 1, limit: 20, totalPages: 1 },
+      },
+    });
+
+    render(<EngagementPollsPage />);
+
+    await waitFor(() =>
+      expect(screen.getByText('Some votes are still being counted')).toBeInTheDocument(),
+    );
   });
 
   it('creates a poll with the right DTO shape', async () => {

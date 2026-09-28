@@ -1,21 +1,34 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PollsService } from './polls.service';
+import { PollReleaseService } from './poll-release.service';
+import { FieldEncryptionService } from '../../../common/crypto/field-encryption.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { createMockPrismaService } from '../../../test/helpers';
 
 describe('PollsService', () => {
   let service: PollsService;
   let prisma: any;
+  let encryption: { encrypt: jest.Mock };
+  let release: { release: jest.Mock };
 
   const tenantId = 'tenant-1';
   const employeeId = 'emp-1';
 
   beforeEach(async () => {
+    encryption = { encrypt: jest.fn((plain: string) => `cipher:${plain}`) };
+    release = { release: jest.fn().mockResolvedValue(0) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PollsService,
         { provide: PrismaService, useValue: createMockPrismaService() },
+        { provide: FieldEncryptionService, useValue: encryption },
+        { provide: PollReleaseService, useValue: release },
       ],
     }).compile();
 
@@ -156,6 +169,48 @@ describe('PollsService', () => {
       expect(result[0].totalVotes).toBe(3);
     });
 
+    it('reports pendingVotes alongside applied counts once counts are visible', async () => {
+      prisma.poll.findMany.mockResolvedValue([
+        {
+          id: 'poll-1',
+          question: 'Q?',
+          closesAt: null,
+          createdAt: now,
+          options: [{ id: 'opt-1', order: 0, label: 'A', voteCount: 3 }],
+          _count: { pending: 2 },
+        },
+      ]);
+      prisma.pollVoter.findMany.mockResolvedValue([{ pollId: 'poll-1' }]);
+
+      const result = await service.active(tenantId, employeeId, false);
+
+      expect(prisma.poll.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({ _count: { select: { pending: true } } }),
+        }),
+      );
+      expect(result[0].totalVotes).toBe(3);
+      expect(result[0].pendingVotes).toBe(2);
+    });
+
+    it('hides pendingVotes from a caller who cannot see counts', async () => {
+      prisma.poll.findMany.mockResolvedValue([
+        {
+          id: 'poll-1',
+          question: 'Q?',
+          closesAt: null,
+          createdAt: now,
+          options: [{ id: 'opt-1', order: 0, label: 'A', voteCount: 3 }],
+          _count: { pending: 2 },
+        },
+      ]);
+      prisma.pollVoter.findMany.mockResolvedValue([]);
+
+      const result = await service.active(tenantId, employeeId, false);
+
+      expect(result[0].pendingVotes).toBeNull();
+    });
+
     it('does not query pollVoter when there is no employeeId (e.g. an admin with no employee record)', async () => {
       prisma.poll.findMany.mockResolvedValue([
         {
@@ -184,7 +239,7 @@ describe('PollsService', () => {
       options: [optionA],
     };
 
-    it('votes: creates the voter row and increments the option count', async () => {
+    it('votes: creates the voter row and an encrypted pending vote, no option write', async () => {
       prisma.poll.findFirst.mockResolvedValue(activePoll);
       prisma.pollVoter.create.mockResolvedValue({ id: 'voter-1' });
 
@@ -193,10 +248,45 @@ describe('PollsService', () => {
       expect(prisma.pollVoter.create).toHaveBeenCalledWith({
         data: { tenantId, pollId: 'poll-1', employeeId },
       });
-      expect(prisma.pollOption.update).toHaveBeenCalledWith({
-        where: { id: 'opt-a' },
-        data: { voteCount: { increment: 1 } },
+      expect(encryption.encrypt).toHaveBeenCalledWith('opt-a');
+      expect(prisma.pollPendingVote.create).toHaveBeenCalledWith({
+        data: { tenantId, pollId: 'poll-1', payload: 'cipher:opt-a' },
+        select: { id: true },
       });
+      expect(prisma.pollOption.update).not.toHaveBeenCalled();
+      expect(prisma.pollOption.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('triggers a non-forced release after the vote commits', async () => {
+      prisma.poll.findFirst.mockResolvedValue(activePoll);
+      prisma.pollVoter.create.mockResolvedValue({ id: 'voter-1' });
+
+      await service.vote(tenantId, 'poll-1', employeeId, { optionId: 'opt-a' });
+
+      expect(release.release).toHaveBeenCalledWith(tenantId, 'poll-1', { force: false });
+    });
+
+    it('still succeeds when the release fails', async () => {
+      prisma.poll.findFirst.mockResolvedValue(activePoll);
+      prisma.pollVoter.create.mockResolvedValue({ id: 'voter-1' });
+      release.release.mockRejectedValue(new Error('db blip'));
+
+      await expect(
+        service.vote(tenantId, 'poll-1', employeeId, { optionId: 'opt-a' }),
+      ).resolves.toEqual({ success: true });
+    });
+
+    it('fails before any write when the encryption key is missing', async () => {
+      prisma.poll.findFirst.mockResolvedValue(activePoll);
+      encryption.encrypt.mockImplementation(() => {
+        throw new InternalServerErrorException('FIELD_ENCRYPTION_KEY is not configured');
+      });
+
+      await expect(
+        service.vote(tenantId, 'poll-1', employeeId, { optionId: 'opt-a' }),
+      ).rejects.toThrow(InternalServerErrorException);
+      expect(prisma.pollVoter.create).not.toHaveBeenCalled();
+      expect(prisma.pollPendingVote.create).not.toHaveBeenCalled();
     });
 
     it('404s when the poll does not exist in the tenant', async () => {
@@ -237,7 +327,8 @@ describe('PollsService', () => {
       await expect(
         service.vote(tenantId, 'poll-1', employeeId, { optionId: 'opt-a' }),
       ).rejects.toThrow(ConflictException);
-      expect(prisma.pollOption.update).not.toHaveBeenCalled();
+      expect(prisma.pollPendingVote.create).not.toHaveBeenCalled();
+      expect(release.release).not.toHaveBeenCalled();
     });
   });
 
@@ -257,6 +348,22 @@ describe('PollsService', () => {
       prisma.poll.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(service.close(tenantId, 'poll-1')).rejects.toThrow(BadRequestException);
+      expect(release.release).not.toHaveBeenCalled();
+    });
+
+    it('force-applies pending votes after the close commits', async () => {
+      prisma.poll.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.close(tenantId, 'poll-1');
+
+      expect(release.release).toHaveBeenCalledWith(tenantId, 'poll-1', { force: true });
+    });
+
+    it('still closes when the release fails (the cron retries it)', async () => {
+      prisma.poll.updateMany.mockResolvedValue({ count: 1 });
+      release.release.mockRejectedValue(new Error('db blip'));
+
+      await expect(service.close(tenantId, 'poll-1')).resolves.toEqual({ success: true });
     });
   });
 
