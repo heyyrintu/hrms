@@ -50,10 +50,16 @@ describe('FeedController', () => {
       expect(feedQuery.list).toHaveBeenCalledWith('tenant-1', 'emp-1', { cursor: undefined, limit: 1 });
     });
 
-    it('throws 400 when the user has no employee record', async () => {
-      await expect(controller.list(userWithoutEmployee, undefined, 20)).rejects.toThrow(
-        BadRequestException,
-      );
+    it('lists the feed for a user with no employee record instead of 400ing', async () => {
+      await expect(controller.list(userWithoutEmployee, undefined, 20)).resolves.toEqual({
+        items: [],
+        nextCursor: null,
+      });
+
+      expect(feedQuery.list).toHaveBeenCalledWith('tenant-1', undefined, {
+        cursor: undefined,
+        limit: 20,
+      });
     });
   });
 

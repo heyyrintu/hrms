@@ -37,9 +37,8 @@ export class FeedController {
     @Query('cursor') cursor?: string,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number = 20,
   ) {
-    if (!user.employeeId) {
-      throw new BadRequestException('No employee record linked to this user');
-    }
+    // A user with no employee record (e.g. a SUPER_ADMIN) can still read the
+    // feed; they just have no reactions of their own. Reacting keeps its 400.
     const clampedLimit = Math.min(50, Math.max(1, limit));
     return this.feedQuery.list(user.tenantId, user.employeeId, { cursor, limit: clampedLimit });
   }

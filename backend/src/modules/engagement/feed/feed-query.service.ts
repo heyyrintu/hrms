@@ -54,7 +54,11 @@ export class FeedQueryService {
     private readonly settings: EngagementSettingsService,
   ) {}
 
-  async list(tenantId: string, employeeId: string, options: FeedListOptions): Promise<FeedPage> {
+  async list(
+    tenantId: string,
+    employeeId: string | undefined,
+    options: FeedListOptions,
+  ): Promise<FeedPage> {
     const { cursor, limit } = options;
     const settings = await this.settings.get(tenantId);
 
@@ -114,10 +118,14 @@ export class FeedQueryService {
         _count: true,
         where: { feedItemId: { in: itemIds } },
       }),
-      this.prisma.feedReaction.findMany({
-        where: { feedItemId: { in: itemIds }, employeeId },
-        select: { feedItemId: true, kind: true },
-      }),
+      // Guarded: an undefined employeeId in a Prisma `where` matches every
+      // row, which would report everyone's reactions as the caller's.
+      employeeId
+        ? this.prisma.feedReaction.findMany({
+            where: { feedItemId: { in: itemIds }, employeeId },
+            select: { feedItemId: true, kind: true },
+          })
+        : Promise.resolve([] as Array<{ feedItemId: string; kind: FeedReactionKind }>),
     ]);
 
     const countMap = new Map<string, FeedReactionCounts>();

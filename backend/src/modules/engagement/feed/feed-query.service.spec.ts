@@ -192,6 +192,21 @@ describe('FeedQueryService', () => {
       expect(page.items[0].myReactions).toEqual(['LIKE']);
     });
 
+    it('returns myReactions [] and never queries reactions by an undefined employeeId', async () => {
+      prisma.feedItem.findMany.mockResolvedValue([baseRow({ id: 'item-1' })]);
+      prisma.employee.findMany.mockResolvedValue([]);
+      prisma.feedReaction.groupBy.mockResolvedValue([
+        { feedItemId: 'item-1', kind: 'LIKE', _count: 2 },
+      ]);
+      prisma.feedReaction.findMany.mockResolvedValue([{ feedItemId: 'item-1', kind: 'LIKE' }]);
+
+      const page = await service.list(tenantId, undefined, { limit: 20 });
+
+      expect(prisma.feedReaction.findMany).not.toHaveBeenCalled();
+      expect(page.items[0].reactionCounts).toEqual({ LIKE: 2, CELEBRATE: 0 });
+      expect(page.items[0].myReactions).toEqual([]);
+    });
+
     it('returns an empty page without querying employees or reactions', async () => {
       prisma.feedItem.findMany.mockResolvedValue([]);
 
