@@ -5,21 +5,29 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createMockPrismaService, createMockNotificationsService } from '../../test/helpers';
 import { NotificationType } from '@prisma/client';
+import { FeedService } from '../engagement/feed/feed.service';
 
 describe('AnnouncementsService', () => {
   let service: AnnouncementsService;
   let prisma: any;
   let notificationsService: any;
+  let feed: { post: jest.Mock; removeBySource: jest.Mock };
 
   const tenantId = 'tenant-1';
   const authorId = 'emp-author';
 
   beforeEach(async () => {
+    feed = {
+      post: jest.fn().mockResolvedValue({ id: 'feed-1', created: true }),
+      removeBySource: jest.fn().mockResolvedValue(0),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AnnouncementsService,
         { provide: PrismaService, useValue: createMockPrismaService() },
         { provide: NotificationsService, useValue: createMockNotificationsService() },
+        { provide: FeedService, useValue: feed },
       ],
     }).compile();
 
@@ -509,6 +517,182 @@ describe('AnnouncementsService', () => {
       await expect(service.delete(tenantId, 'nonexistent')).rejects.toThrow(
         NotFoundException,
       );
+    });
+  });
+
+  // ============================================
+  // feed sync
+  // ============================================
+
+  describe('feed sync', () => {
+    it('posts a feed item when creating a published announcement', async () => {
+      const mockAnnouncement = {
+        id: 'ann-1',
+        tenantId,
+        authorId,
+        title: 'Holiday Notice',
+        content: 'Republic Day holiday on Jan 26',
+        priority: 'NORMAL',
+        isPublished: true,
+        publishedAt: new Date('2026-03-15T12:00:00Z'),
+        expiresAt: null,
+        author: { firstName: 'Jane', lastName: 'Doe' },
+      };
+      prisma.announcement.create.mockResolvedValue(mockAnnouncement);
+      prisma.user.findMany.mockResolvedValue([]);
+
+      await service.create(tenantId, authorId, { title: 'Holiday Notice', content: 'x', isPublished: true });
+
+      expect(feed.post).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId,
+          type: 'ANNOUNCEMENT',
+          sourceType: 'Announcement',
+          sourceId: 'ann-1',
+          actorEmployeeId: authorId,
+          title: 'Holiday Notice',
+          dedupeKey: 'announcement:ann-1',
+        }),
+      );
+    });
+
+    it('does not post a feed item when creating a draft', async () => {
+      const mockAnnouncement = {
+        id: 'ann-1',
+        tenantId,
+        authorId,
+        title: 'Draft',
+        content: 'x',
+        priority: 'NORMAL',
+        isPublished: false,
+        publishedAt: null,
+        author: { firstName: 'Jane', lastName: 'Doe' },
+      };
+      prisma.announcement.create.mockResolvedValue(mockAnnouncement);
+
+      await service.create(tenantId, authorId, { title: 'Draft', content: 'x' });
+
+      expect(feed.post).not.toHaveBeenCalled();
+      expect(feed.removeBySource).toHaveBeenCalledWith(tenantId, 'Announcement', 'ann-1');
+    });
+
+    it('posts a feed item on update when isPublished flips false -> true', async () => {
+      prisma.announcement.findFirst.mockResolvedValue({
+        id: 'ann-1',
+        tenantId,
+        title: 'Draft',
+        content: 'x',
+        priority: 'NORMAL',
+        isPublished: false,
+        author: { firstName: 'John', lastName: 'Doe' },
+      });
+      const updated = {
+        id: 'ann-1',
+        tenantId,
+        authorId,
+        title: 'Draft',
+        content: 'x',
+        priority: 'NORMAL',
+        isPublished: true,
+        publishedAt: new Date('2026-03-15T12:00:00Z'),
+      };
+      prisma.announcement.update.mockResolvedValue(updated);
+      prisma.user.findMany.mockResolvedValue([]);
+
+      await service.update(tenantId, 'ann-1', { isPublished: true });
+
+      expect(feed.post).toHaveBeenCalledWith(
+        expect.objectContaining({ sourceId: 'ann-1', dedupeKey: 'announcement:ann-1' }),
+      );
+    });
+
+    it('removes the feed item on update when isPublished flips true -> false', async () => {
+      prisma.announcement.findFirst.mockResolvedValue({
+        id: 'ann-2',
+        tenantId,
+        title: 'Published',
+        content: 'x',
+        priority: 'NORMAL',
+        isPublished: true,
+        author: { firstName: 'Jane', lastName: 'Smith' },
+      });
+      const updated = {
+        id: 'ann-2',
+        tenantId,
+        authorId,
+        title: 'Published',
+        content: 'x',
+        priority: 'NORMAL',
+        isPublished: false,
+        publishedAt: null,
+      };
+      prisma.announcement.update.mockResolvedValue(updated);
+
+      await service.update(tenantId, 'ann-2', { isPublished: false });
+
+      expect(feed.removeBySource).toHaveBeenCalledWith(tenantId, 'Announcement', 'ann-2');
+      expect(feed.post).not.toHaveBeenCalled();
+    });
+
+    it('does not touch the feed on update when isPublished is unchanged', async () => {
+      prisma.announcement.findFirst.mockResolvedValue({
+        id: 'ann-2',
+        tenantId,
+        title: 'Published',
+        content: 'x',
+        isPublished: true,
+        author: { firstName: 'Jane', lastName: 'Smith' },
+      });
+      prisma.announcement.update.mockResolvedValue({
+        id: 'ann-2',
+        tenantId,
+        content: 'updated content',
+        isPublished: true,
+      });
+
+      await service.update(tenantId, 'ann-2', { content: 'updated content' });
+
+      expect(feed.post).not.toHaveBeenCalled();
+      expect(feed.removeBySource).not.toHaveBeenCalled();
+    });
+
+    it('removes the feed item on delete', async () => {
+      prisma.announcement.findFirst.mockResolvedValue({
+        id: 'ann-1',
+        tenantId,
+        title: 'Test',
+        author: { firstName: 'John', lastName: 'Doe' },
+      });
+      prisma.announcement.delete.mockResolvedValue({});
+
+      await service.delete(tenantId, 'ann-1');
+
+      expect(feed.removeBySource).toHaveBeenCalledWith(tenantId, 'Announcement', 'ann-1');
+    });
+
+    it('does not fail create when feed.post rejects', async () => {
+      const mockAnnouncement = {
+        id: 'ann-1',
+        tenantId,
+        authorId,
+        title: 'Holiday Notice',
+        content: 'x',
+        priority: 'NORMAL',
+        isPublished: true,
+        publishedAt: new Date('2026-03-15T12:00:00Z'),
+        author: { firstName: 'Jane', lastName: 'Doe' },
+      };
+      prisma.announcement.create.mockResolvedValue(mockAnnouncement);
+      prisma.user.findMany.mockResolvedValue([]);
+      feed.post.mockRejectedValue(new Error('feed is down'));
+
+      const result = await service.create(tenantId, authorId, {
+        title: 'Holiday Notice',
+        content: 'x',
+        isPublished: true,
+      });
+
+      expect(result).toEqual(mockAnnouncement);
     });
   });
 });

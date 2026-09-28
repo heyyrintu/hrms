@@ -137,4 +137,21 @@ describe('Sidebar', () => {
       expect(defaultProps.onClose).toHaveBeenCalled();
     }
   });
+
+  // Keka wave E
+  it('renders the ENGAGEMENT section with Polls only for HR and super admins', () => {
+    const { unmount } = render(<Sidebar {...defaultProps} />);
+    expect(screen.getByText('ENGAGEMENT')).toBeInTheDocument();
+    for (const name of ['Feed', 'Recognition', 'Surveys', 'One-on-ones', 'Polls']) {
+      expect(screen.getByText(name)).toBeInTheDocument();
+    }
+    expect(screen.getByText('One-on-ones').closest('a')).toHaveAttribute('href', '/one-on-ones');
+    unmount();
+
+    mockHasRole.mockReturnValue(false);
+    render(<Sidebar {...defaultProps} />);
+    expect(screen.getByText('Feed')).toBeInTheDocument();
+    expect(screen.getByText('One-on-ones')).toBeInTheDocument();
+    expect(screen.queryByText('Polls')).not.toBeInTheDocument();
+  });
 });

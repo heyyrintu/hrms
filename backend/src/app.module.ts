@@ -43,6 +43,7 @@ import { LoansModule } from './modules/loans/loans.module';
 import { HelpdeskModule } from './modules/helpdesk/helpdesk.module';
 import { WorkflowModule } from './modules/workflow/workflow.module';
 import { RecruitmentModule } from './modules/recruitment/recruitment.module';
+import { EngagementModule } from './modules/engagement/engagement.module';
 
 @Module({
   imports: [
@@ -96,6 +97,7 @@ import { RecruitmentModule } from './modules/recruitment/recruitment.module';
     HelpdeskModule,
     WorkflowModule,
     RecruitmentModule,
+    EngagementModule,
   ],
 })
 export class AppModule {}

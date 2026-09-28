@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -10,13 +11,57 @@ import {
   UpdateAnnouncementDto,
   AnnouncementQueryDto,
 } from './dto/announcement.dto';
+import { FeedService } from '../engagement/feed/feed.service';
+import { FEED_SOURCE } from '../engagement/feed/feed.types';
 
 @Injectable()
 export class AnnouncementsService {
+  private readonly logger = new Logger(AnnouncementsService.name);
+
   constructor(
     private prisma: PrismaService,
     private notificationsService: NotificationsService,
+    private feed: FeedService,
   ) {}
+
+  /**
+   * Keeps the social feed in sync with an announcement's published state.
+   * Feed errors are caught and logged; they must never fail the
+   * announcement write itself.
+   */
+  private async syncFeed(
+    tenantId: string,
+    a: {
+      id: string;
+      title: string;
+      content: string;
+      authorId: string;
+      priority: string;
+      isPublished: boolean;
+      publishedAt: Date | null;
+    },
+  ): Promise<void> {
+    try {
+      if (a.isPublished) {
+        await this.feed.post({
+          tenantId,
+          type: 'ANNOUNCEMENT',
+          sourceType: FEED_SOURCE.ANNOUNCEMENT,
+          sourceId: a.id,
+          actorEmployeeId: a.authorId,
+          title: a.title,
+          body: a.content.slice(0, 500),
+          payload: { priority: a.priority },
+          dedupeKey: `announcement:${a.id}`,
+          occurredAt: a.publishedAt ?? new Date(),
+        });
+      } else {
+        await this.feed.removeBySource(tenantId, FEED_SOURCE.ANNOUNCEMENT, a.id);
+      }
+    } catch (err) {
+      this.logger.error(`Feed sync failed for announcement ${a.id}`, err as Error);
+    }
+  }
 
   async create(tenantId: string, authorId: string, dto: CreateAnnouncementDto) {
     const announcement = await this.prisma.announcement.create({
@@ -39,6 +84,8 @@ export class AnnouncementsService {
     if (announcement.isPublished) {
       await this.notifyAllUsers(tenantId, announcement.title);
     }
+
+    await this.syncFeed(tenantId, announcement);
 
     return announcement;
   }
@@ -147,12 +194,21 @@ export class AnnouncementsService {
       await this.notifyAllUsers(tenantId, updated.title);
     }
 
+    if (dto.isPublished !== undefined && dto.isPublished !== wasPublished) {
+      await this.syncFeed(tenantId, updated);
+    }
+
     return updated;
   }
 
   async delete(tenantId: string, id: string) {
     await this.findById(tenantId, id);
     await this.prisma.announcement.delete({ where: { id } });
+    try {
+      await this.feed.removeBySource(tenantId, FEED_SOURCE.ANNOUNCEMENT, id);
+    } catch (err) {
+      this.logger.error(`Feed sync failed for announcement ${id}`, err as Error);
+    }
     return { message: 'Announcement deleted' };
   }
 
