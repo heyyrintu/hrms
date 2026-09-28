@@ -20,6 +20,21 @@ export class LoginDto {
   @IsOptional()
   @IsString()
   tenantCode?: string;
+
+  /**
+   * @deprecated pre-H1 clients sent the tenant id directly. Still accepted so
+   * they are not rejected by Nest's `forbidNonWhitelisted` validation; when
+   * present it wins over `tenantCode`, exactly the pre-H1 resolution order.
+   * New clients should send `tenantCode` (or omit both for the default
+   * tenant).
+   */
+  @ApiPropertyOptional({
+    deprecated: true,
+    description: 'Deprecated. Use tenantCode instead. Still accepted for backward compatibility.',
+  })
+  @IsOptional()
+  @IsString()
+  tenantId?: string;
 }
 
 export class RegisterDto {

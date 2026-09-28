@@ -163,6 +163,25 @@ describe('SsoService', () => {
       const url = await service.start(SsoProvider.GOOGLE, 'acme');
       expect(url).toBe('http://localhost:3000/login?sso_error=idp_error&org=acme');
     });
+
+    // M4: expired SsoExchangeCode rows are never cleaned up anywhere else —
+    // start() already opportunistically cleans expired SsoLoginState rows,
+    // and must do the same for SsoExchangeCode.
+    it('also cleans up expired SsoExchangeCode rows', async () => {
+      prisma.tenantSsoProvider.findUnique.mockResolvedValue({
+        clientId: 'client-1',
+        clientSecretEnc: 'enc:secret-1',
+        entraTenantId: null,
+        enabled: true,
+      });
+      oidcClient.authorizationUrl.mockResolvedValue('https://accounts.google.com/o/oauth2/auth?x=1');
+
+      await service.start(SsoProvider.GOOGLE, 'acme');
+
+      expect(prisma.ssoExchangeCode.deleteMany).toHaveBeenCalledWith({
+        where: { expiresAt: { lt: expect.any(Date) } },
+      });
+    });
   });
 
   describe('callback', () => {
@@ -206,6 +225,26 @@ describe('SsoService', () => {
 
       const url = await service.callback(SsoProvider.GOOGLE, query);
       expect(url).toBe('http://localhost:3000/login?sso_error=invalid_state');
+    });
+
+    // M3(a): the IdP redirected back with an error and no `code` (e.g. the
+    // user hit cancel), but `state` is present and still matches a real,
+    // readable login-state row. The tenant is knowable from that row, so the
+    // error redirect must still carry `org` — otherwise the login page loses
+    // track of which tenant's SSO buttons to show.
+    it('M3(a): keeps org on an IdP error/cancel (no code) when the state row can still be read', async () => {
+      prisma.ssoLoginState.findUnique.mockResolvedValue({ ...stateRow });
+      prisma.tenant.findUnique.mockResolvedValue({ code: 'acme' });
+
+      const url = await service.callback(SsoProvider.GOOGLE, { state: 'state-1', error: 'access_denied' });
+
+      expect(url).toBe('http://localhost:3000/login?sso_error=idp_error&org=acme');
+      expect(prisma.ssoLoginState.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('M3(a): no org when state is entirely missing (nothing to look up)', async () => {
+      const url = await service.callback(SsoProvider.GOOGLE, { error: 'access_denied' });
+      expect(url).toBe('http://localhost:3000/login?sso_error=idp_error');
     });
 
     it('redirects to invalid_state when the row is for a different provider than the route', async () => {
@@ -370,6 +409,76 @@ describe('SsoService', () => {
           email: 'priya.s@acme.com',
         }),
       });
+    });
+
+    // I6: an HR_ADMIN who controls a directory (e.g. their own Microsoft
+    // tenant) that asserts a SUPER_ADMIN's email must not be able to take
+    // over that account through the email-match step. Treated as
+    // `no_account` so the callback doesn't reveal the account exists, and no
+    // identity is created (so no later `sub` binds either).
+    it('I6: never binds or signs in a SUPER_ADMIN matched only by email — treated as no_account', async () => {
+      mockValidState();
+      prisma.tenantSsoProvider.findUnique.mockResolvedValue(googleConfig);
+      oidcClient.exchange.mockResolvedValue({ sub: 'attacker-sub', email: 'super@acme.com', email_verified: true });
+      prisma.userIdentity.findUnique.mockResolvedValueOnce(null); // step 1: no identity by sub
+      prisma.user.findFirst.mockResolvedValue({
+        id: 'super-1',
+        isActive: true,
+        email: 'super@acme.com',
+        role: UserRole.SUPER_ADMIN,
+      });
+
+      const url = await service.callback(SsoProvider.GOOGLE, query);
+
+      expect(url).toBe('http://localhost:3000/login?sso_error=no_account&org=acme');
+      expect(prisma.userIdentity.create).not.toHaveBeenCalled();
+      expect(prisma.userIdentity.update).not.toHaveBeenCalled();
+      expect(authService.issueSession).not.toHaveBeenCalled();
+    });
+
+    // A SUPER_ADMIN already bound by `sub` (step 4.1, identity match) is a
+    // separate, unchanged path — the I6 restriction is only on the
+    // email-match step.
+    it('I6: a SUPER_ADMIN already bound by sub still matches via identity (step 4.1 unchanged)', async () => {
+      mockValidState();
+      prisma.tenantSsoProvider.findUnique.mockResolvedValue(googleConfig);
+      oidcClient.exchange.mockResolvedValue({ sub: 'sub-1', email: 'super@acme.com', email_verified: true });
+      prisma.userIdentity.findUnique.mockResolvedValue({
+        id: 'identity-1',
+        subject: 'sub-1',
+        user: { id: 'super-1', isActive: true, role: UserRole.SUPER_ADMIN },
+      });
+      prisma.userIdentity.update.mockResolvedValue({});
+      prisma.ssoExchangeCode.create.mockResolvedValue({});
+
+      const url = await service.callback(SsoProvider.GOOGLE, query);
+
+      expect(url).toMatch(/^http:\/\/localhost:3000\/sso\/callback#code=/);
+      expect(prisma.user.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('I6: an HR_ADMIN matched by email still binds normally', async () => {
+      mockValidState();
+      prisma.tenantSsoProvider.findUnique.mockResolvedValue(googleConfig);
+      oidcClient.exchange.mockResolvedValue({ sub: 'sub-1', email: 'hr@acme.com', email_verified: true });
+      prisma.userIdentity.findUnique
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null);
+      prisma.user.findFirst.mockResolvedValue({
+        id: 'hr-1',
+        isActive: true,
+        email: 'hr@acme.com',
+        role: UserRole.HR_ADMIN,
+      });
+      prisma.userIdentity.create.mockResolvedValue({});
+      prisma.ssoExchangeCode.create.mockResolvedValue({});
+
+      const url = await service.callback(SsoProvider.GOOGLE, query);
+
+      expect(prisma.userIdentity.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ userId: 'hr-1' }),
+      });
+      expect(url).toMatch(/^http:\/\/localhost:3000\/sso\/callback#code=/);
     });
 
     it('redirects to identity_conflict when the matched email user already has a different sub bound', async () => {

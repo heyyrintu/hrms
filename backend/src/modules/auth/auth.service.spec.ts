@@ -351,11 +351,66 @@ describe('AuthService', () => {
       expect(prisma.tenant.findFirst).not.toHaveBeenCalled();
     });
 
-    it('throws UnauthorizedException when no tenant can be resolved at all', async () => {
+    // I1: resolveTenantId's own 401 ("Tenant not found" / "Tenant ID is
+    // required") must never reach an unauthenticated caller — it is caught in
+    // login() and normalised to the same "Invalid credentials" a wrong
+    // password gets, so login never reveals tenant configuration details.
+    it('throws UnauthorizedException with "Invalid credentials" when no tenant can be resolved at all', async () => {
       configService.get.mockReturnValue(undefined);
 
       await expect(service.login(loginDto)).rejects.toThrow(UnauthorizedException);
-      await expect(service.login(loginDto)).rejects.toThrow('Tenant ID is required');
+      await expect(service.login(loginDto)).rejects.toThrow('Invalid credentials');
+    });
+
+    it('rejects an unknown tenantCode with "Invalid credentials", not "Tenant not found"', async () => {
+      prisma.tenant.findFirst.mockResolvedValue(null);
+
+      await expect(service.login({ ...loginDto, tenantCode: 'ghost' })).rejects.toThrow(
+        UnauthorizedException,
+      );
+      await expect(service.login({ ...loginDto, tenantCode: 'ghost' })).rejects.toThrow(
+        'Invalid credentials',
+      );
+      expect(prisma.user.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('rejects an inactive tenantCode the same way (resolveTenantId already filters isActive)', async () => {
+      prisma.tenant.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.login({ ...loginDto, tenantCode: 'suspended-tenant' }),
+      ).rejects.toThrow('Invalid credentials');
+    });
+
+    // I1: a client that still sends the deprecated `tenantId` field (pre-H1
+    // shape) must not get a 400 from Nest's forbidNonWhitelisted validation,
+    // and it takes priority over tenantCode exactly like the pre-H1 login did.
+    it('accepts a deprecated tenantId field and uses it directly, skipping resolveTenantId', async () => {
+      prisma.user.findFirst.mockResolvedValue({ ...mockUser, tenantId: 'legacy-tenant-id' });
+      (mockBcrypt.compare as jest.Mock).mockResolvedValue(true);
+      prisma.user.update.mockResolvedValue(mockUser);
+
+      const result = await service.login({ ...loginDto, tenantId: 'legacy-tenant-id' });
+
+      expect(prisma.tenant.findFirst).not.toHaveBeenCalled();
+      expect(configService.get).not.toHaveBeenCalledWith('DEFAULT_TENANT_ID');
+      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+        where: { email: 'user@test.com', tenantId: 'legacy-tenant-id', isActive: true },
+      });
+      expect(result).toMatchObject({ accessToken: 'mock-jwt-token' });
+    });
+
+    it('prefers tenantId over tenantCode when both are sent', async () => {
+      prisma.user.findFirst.mockResolvedValue({ ...mockUser, tenantId: 'legacy-tenant-id' });
+      (mockBcrypt.compare as jest.Mock).mockResolvedValue(true);
+      prisma.user.update.mockResolvedValue(mockUser);
+
+      await service.login({ ...loginDto, tenantId: 'legacy-tenant-id', tenantCode: 'acme' });
+
+      expect(prisma.tenant.findFirst).not.toHaveBeenCalled();
+      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+        where: { email: 'user@test.com', tenantId: 'legacy-tenant-id', isActive: true },
+      });
     });
 
     it('throws UnauthorizedException when the user is not found', async () => {

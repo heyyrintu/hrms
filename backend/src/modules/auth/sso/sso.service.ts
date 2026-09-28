@@ -98,6 +98,8 @@ export class SsoService {
 
     // Opportunistic cleanup; nothing depends on this succeeding synchronously with the create below.
     await this.prisma.ssoLoginState.deleteMany({ where: { expiresAt: { lt: new Date() } } });
+    // M4: SsoExchangeCode rows are otherwise never cleaned up anywhere.
+    await this.prisma.ssoExchangeCode.deleteMany({ where: { expiresAt: { lt: new Date() } } });
 
     const providerConfig = await this.prisma.tenantSsoProvider.findUnique({
       where: { tenantId_provider: { tenantId, provider } },
@@ -167,6 +169,15 @@ export class SsoService {
       where: { tenantId, email: { equals: email, mode: 'insensitive' } },
     });
     if (userByEmail) {
+      // I6: never bind or sign in a SUPER_ADMIN through the email-match
+      // step — an HR_ADMIN who controls a directory that asserts a
+      // SUPER_ADMIN's email must not be able to take over that account this
+      // way. Treated as no_account so the callback reveals nothing. A
+      // SUPER_ADMIN already bound by `sub` still matches at step 1, above,
+      // which is unaffected.
+      if (userByEmail.role === UserRole.SUPER_ADMIN) {
+        return null;
+      }
       const existingIdentity = await this.prisma.userIdentity.findUnique({
         where: { userId_provider: { userId: userByEmail.id, provider } },
       });
@@ -253,8 +264,23 @@ export class SsoService {
 
   private async doCallback(provider: SsoProvider, query: Record<string, string>): Promise<string> {
     const state = query.state;
+
     if (!state || !query.code) {
-      throw new SsoFlowError('idp_error');
+      // M3(a): the IdP sent an error (or the user cancelled) with no code,
+      // but a `state` may still be present and readable — look up its
+      // tenant so the redirect keeps `org` and the login page still shows
+      // the right tenant's buttons. This is a read-only lookup: the state
+      // row is not consumed here (there is no code to exchange with it
+      // anyway; the real consuming lookup below only runs once code is
+      // present).
+      let org: string | null = null;
+      if (state) {
+        const row = await this.prisma.ssoLoginState.findUnique({ where: { stateHash: sha256(state) } });
+        if (row) {
+          org = await this.tenantCode(row.tenantId);
+        }
+      }
+      return this.errorUrl('idp_error', org);
     }
 
     const stateHash = sha256(state);

@@ -132,7 +132,23 @@ export class AuthService {
    * enrolment for a role that requires 2FA, or a normal session.
    */
   async login(dto: LoginDto): Promise<LoginResult> {
-    const tenantId = await this.resolveTenantId(dto.tenantCode);
+    // `tenantId` is a deprecated pre-H1 field, still accepted so an old
+    // client isn't rejected by forbidNonWhitelisted; it wins over
+    // `tenantCode` when both are sent, matching the pre-H1 behaviour.
+    // resolveTenantId's own 401 (unknown/inactive code, or no default tenant
+    // configured) must never reach an unauthenticated caller with its real
+    // message — it is normalised to the same "Invalid credentials" a wrong
+    // password gets.
+    let tenantId: string;
+    if (dto.tenantId) {
+      tenantId = dto.tenantId;
+    } else {
+      try {
+        tenantId = await this.resolveTenantId(dto.tenantCode);
+      } catch {
+        throw new UnauthorizedException('Invalid credentials');
+      }
+    }
 
     // Find user by email and tenantId for proper tenant isolation
     const user = await this.prisma.user.findFirst({
