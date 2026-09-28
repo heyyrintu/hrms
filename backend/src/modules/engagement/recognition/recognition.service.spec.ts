@@ -164,6 +164,57 @@ describe('RecognitionService', () => {
         expect.objectContaining({ tenantId, userId: 'u-2', type: 'RECOGNITION_RECEIVED' }),
       ]);
     });
+
+    it('notifies only active users', async () => {
+      (prisma.employee.findMany as jest.Mock).mockResolvedValue(recipientRows);
+
+      await service.give(tenantId, giverId, { recipientIds: ['r-1', 'r-2'], message: 'Nice' });
+      await flush();
+
+      expect(prisma.user.findMany).toHaveBeenCalledWith({
+        where: { tenantId, employeeId: { in: ['r-1', 'r-2'] }, isActive: true },
+        select: { id: true },
+      });
+    });
+
+    describe('when notifications fail', () => {
+      let unhandled: jest.Mock;
+      beforeEach(() => {
+        unhandled = jest.fn();
+        process.on('unhandledRejection', unhandled);
+      });
+      afterEach(() => {
+        process.off('unhandledRejection', unhandled);
+      });
+
+      it('does not reject give and leaves no unhandled rejection when createMany rejects', async () => {
+        (prisma.employee.findMany as jest.Mock).mockResolvedValue(recipientRows);
+        (prisma.user.findMany as jest.Mock).mockResolvedValue([{ id: 'u-1' }]);
+        (notifications.createMany as jest.Mock).mockRejectedValue(new Error('enum missing'));
+
+        await expect(
+          service.give(tenantId, giverId, { recipientIds: ['r-1', 'r-2'], message: 'Nice' }),
+        ).resolves.toBeDefined();
+        await flush();
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(notifications.createMany).toHaveBeenCalled();
+        expect(unhandled).not.toHaveBeenCalled();
+      });
+
+      it('does not reject give and leaves no unhandled rejection when the user lookup rejects', async () => {
+        (prisma.employee.findMany as jest.Mock).mockResolvedValue(recipientRows);
+        (prisma.user.findMany as jest.Mock).mockRejectedValue(new Error('db blip'));
+
+        await expect(
+          service.give(tenantId, giverId, { recipientIds: ['r-1', 'r-2'], message: 'Nice' }),
+        ).resolves.toBeDefined();
+        await flush();
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(unhandled).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe('remove', () => {

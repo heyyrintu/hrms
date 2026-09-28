@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { NotificationType } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { NotificationsService } from '../../notifications/notifications.service';
@@ -38,6 +38,8 @@ const WALL_INCLUDE = {
 /** Give kudos, browse the wall, and track a caller's own monthly allowance. */
 @Injectable()
 export class RecognitionService {
+  private readonly logger = new Logger(RecognitionService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
@@ -138,29 +140,40 @@ export class RecognitionService {
     return created;
   }
 
-  /** Fire-and-forget, after the recognition transaction has committed. */
+  /**
+   * Fire-and-forget, after the recognition transaction has committed. Never
+   * rejects: the caller does not await it, so an escaped rejection would be
+   * unhandled and terminate the process. Failures are logged instead.
+   */
   private async notifyRecipients(
     tenantId: string,
     recipientIds: string[],
     giver: NameParts | null,
   ) {
-    const users = await this.prisma.user.findMany({
-      where: { tenantId, employeeId: { in: recipientIds } },
-      select: { id: true },
-    });
-    if (users.length === 0) return;
+    try {
+      const users = await this.prisma.user.findMany({
+        where: { tenantId, employeeId: { in: recipientIds }, isActive: true },
+        select: { id: true },
+      });
+      if (users.length === 0) return;
 
-    const giverName = giver ? `${giver.firstName} ${giver.lastName}`.trim() : 'Someone';
-    await this.notifications.createMany(
-      users.map((user) => ({
-        tenantId,
-        userId: user.id,
-        type: NotificationType.RECOGNITION_RECEIVED,
-        title: 'You were recognised!',
-        message: `${giverName} recognised you.`,
-        link: '/engagement/recognition',
-      })),
-    );
+      const giverName = giver ? `${giver.firstName} ${giver.lastName}`.trim() : 'Someone';
+      await this.notifications.createMany(
+        users.map((user) => ({
+          tenantId,
+          userId: user.id,
+          type: NotificationType.RECOGNITION_RECEIVED,
+          title: 'You were recognised!',
+          message: `${giverName} recognised you.`,
+          link: '/engagement/recognition',
+        })),
+      );
+    } catch (err) {
+      this.logger.error(
+        `Failed to notify recognition recipients: ${(err as Error).message}`,
+        (err as Error).stack,
+      );
+    }
   }
 
   async remove(tenantId: string, id: string) {
