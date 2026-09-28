@@ -201,8 +201,13 @@ SurveyPendingResponse              -- anonymous submissions awaiting batch relea
       pending rows before vacuum, physical row order via `ctid`), the
       write-ahead log, or server access logs could still correlate a
       submission with its answers.
-    - A forced release after close may carry a batch of 1 or 2; its `xmin`
-      identifies the batch, not the respondent, but the batch is small.
+    - Anonymity is per release batch, not per survey. A plain-SELECT reader
+      can infer which participants belong to a batch by comparing transaction
+      ids (participants whose flag was set between two releases). A normal
+      batch hides each respondent among at least 3; a forced release after
+      close (or a submission that raced `close()`) may carry 1 or 2, and a
+      batch of 1 names its respondent. A batch whose members all gave the
+      same answer reveals that answer for each of them.
     - Payload size is coarse, not hidden: a submission whose answers exceed
       one bucket (roughly 8 KB of JSON, i.e. very long text answers) encrypts
       to a larger size, so an observer of a pending row learns which bucket
@@ -311,8 +316,10 @@ PollPendingVote                    -- votes awaiting batch application
   `voteCount increment` per option, delete the pending rows. Triggered after
   each vote (non-forced), on close (forced), and by a 15-minute cron
   (`poll-release`, IST; forced for CLOSED or expired polls). Residual risk as
-  for surveys (database access plus the encryption key decrypts still-pending
-  votes).
+  for surveys: database access plus the encryption key decrypts still-pending
+  votes, and anonymity is per batch — a forced batch of 1 at close names its
+  voter's choice (each option row keeps the transaction id of the last batch
+  that changed it), and on a two-option poll a batch of 3 is often unanimous.
 - **Results visibility:** a caller who has voted, or HR/SUPER, or anyone once
   the poll is closed, sees `voteCount` per option and `totalVotes` (applied
   votes only) plus `pendingVotes` (votes not yet applied); otherwise counts are
