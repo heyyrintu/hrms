@@ -112,6 +112,19 @@ describe('AuthController', () => {
         'Invalid credentials',
       );
     });
+
+    it.each([
+      ['a normal session', { accessToken: 'tok', user: { id: 'u1' } }],
+      ['an mfa challenge', { mfaRequired: true, mfaToken: 'mfa-tok' }],
+      ['forced enrolment', { enrolmentRequired: true, enrolToken: 'enrol-tok' }],
+    ])('returns %s from the service unchanged', async (_label, mockResult) => {
+      const dto = { email: 'user@test.com', password: 'password123' };
+      service.login.mockResolvedValue(mockResult);
+
+      const result = await controller.login(dto as any);
+
+      expect(result).toEqual(mockResult);
+    });
   });
 
   describe('getProfile', () => {

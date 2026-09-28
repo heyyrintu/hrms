@@ -12,10 +12,14 @@ export class LoginDto {
   @MinLength(6)
   password: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description:
+      'Tenant code, for deployments that host more than one tenant (e.g. from /login?org=). ' +
+      'Omitted, the server falls back to DEFAULT_TENANT_ID.',
+  })
   @IsOptional()
   @IsString()
-  tenantId?: string;
+  tenantCode?: string;
 }
 
 export class RegisterDto {
@@ -34,6 +38,15 @@ export class RegisterDto {
   role?: UserRole;
 }
 
+/**
+ * POST /auth/login can end in one of three shapes (Keka wave H1):
+ *  - a normal session (this class), when no second factor applies;
+ *  - `{ mfaRequired: true, mfaToken }`, when the account has TOTP enabled —
+ *    submit `mfaToken` and a code to `POST /auth/2fa/verify`;
+ *  - `{ enrolmentRequired: true, enrolToken }`, when the account's role
+ *    requires 2FA but it is not enrolled yet — use `enrolToken` as the
+ *    bearer token for `POST /auth/2fa/setup` and `POST /auth/2fa/enable`.
+ */
 export class AuthResponseDto {
   @ApiProperty()
   accessToken: string;

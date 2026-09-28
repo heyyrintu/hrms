@@ -13,7 +13,11 @@ import { LoginDto, RegisterDto, AuthResponseDto } from './dto/auth.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { AuthenticatedUser, JwtPayload } from '../../common/types/jwt-payload.type';
 import { isPermission } from '../../common/permissions/permissions';
-import { SessionResponse } from './auth.types';
+import { LoginResult, SessionResponse } from './auth.types';
+import { StepTokenService } from './two-factor/step-token.service';
+
+/** How long a password-verified login waits for its second factor. */
+const MFA_CHALLENGE_TTL_MS = 5 * 60_000;
 
 /** Rows of UserCustomRole with the role's permissions, as loaded for a session. */
 type CustomRoleGrant = { customRole: { permissions: string[] } };
@@ -39,6 +43,7 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private stepTokenService: StepTokenService,
   ) {}
 
   /**
@@ -119,21 +124,21 @@ export class AuthService {
   }
 
   /**
-   * Login with email and password
+   * Login with email and password.
+   *
+   * Ends in one of four shapes, evaluated in this order once the password is
+   * confirmed (Keka wave H1): SSO-only refusal (SUPER_ADMIN always exempt as
+   * break-glass), a second-factor challenge for an enrolled account, forced
+   * enrolment for a role that requires 2FA, or a normal session.
    */
-  async login(dto: LoginDto): Promise<SessionResponse> {
-    // Determine tenant ID - use provided tenantId or default
-    const tenantId = dto.tenantId || this.configService.get<string>('DEFAULT_TENANT_ID');
-
-    if (!tenantId) {
-      throw new UnauthorizedException('Tenant ID is required');
-    }
+  async login(dto: LoginDto): Promise<LoginResult> {
+    const tenantId = await this.resolveTenantId(dto.tenantCode);
 
     // Find user by email and tenantId for proper tenant isolation
     const user = await this.prisma.user.findFirst({
       where: {
         email: dto.email,
-        tenantId: tenantId,
+        tenantId,
         isActive: true,
       },
     });
@@ -142,11 +147,52 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    // Verify password
+    // Verify password before reading any security settings, so a wrong
+    // password never reveals whether the tenant requires SSO or 2FA.
     const isPasswordValid = await bcrypt.compare(dto.password, user.passwordHash);
 
     if (!isPasswordValid) {
       throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const settings = await this.prisma.tenantSecuritySettings.findUnique({
+      where: { tenantId },
+    });
+
+    // SSO-only sign-in. SUPER_ADMIN password login always stays available as
+    // a break-glass path, even when the tenant otherwise requires SSO.
+    if (settings?.requireSso && user.role !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException('Your organisation signs in with single sign-on.');
+    }
+
+    // Already enrolled: challenge for the second factor. No session is
+    // issued and lastLoginAt is not touched until the code is verified.
+    if (user.totpEnabledAt) {
+      const challenge = await this.prisma.mfaChallenge.create({
+        data: {
+          tenantId,
+          userId: user.id,
+          expiresAt: new Date(Date.now() + MFA_CHALLENGE_TTL_MS),
+        },
+      });
+      const mfaToken = this.stepTokenService.signMfa({
+        sub: user.id,
+        tenantId,
+        cid: challenge.id,
+      });
+      return { mfaRequired: true, mfaToken };
+    }
+
+    // The role now requires 2FA but this account has not enrolled yet.
+    // Sessions already open keep working (P6); only the next password
+    // sign-in is redirected into enrolment.
+    if ((settings?.twoFactorRequiredRoles ?? []).includes(user.role)) {
+      const enrolToken = this.stepTokenService.signEnrol({
+        sub: user.id,
+        tenantId,
+        tokenVersion: user.tokenVersion,
+      });
+      return { enrolmentRequired: true, enrolToken };
     }
 
     return this.issueSession(user);

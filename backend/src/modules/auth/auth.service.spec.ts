@@ -5,6 +5,7 @@ import { ConflictException, ForbiddenException, UnauthorizedException } from '@n
 import * as bcrypt from 'bcrypt';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { StepTokenService } from './two-factor/step-token.service';
 import { createMockPrismaService, mockHrAdmin } from '../../test/helpers';
 
 jest.mock('bcrypt');
@@ -16,6 +17,7 @@ describe('AuthService', () => {
   let prisma: any;
   let jwtService: jest.Mocked<JwtService>;
   let configService: jest.Mocked<ConfigService>;
+  let stepTokenService: { signMfa: jest.Mock; signEnrol: jest.Mock };
 
   beforeEach(async () => {
     const mockJwtService = {
@@ -26,12 +28,18 @@ describe('AuthService', () => {
       get: jest.fn().mockReturnValue('default-tenant-id'),
     };
 
+    stepTokenService = {
+      signMfa: jest.fn().mockReturnValue('mock-mfa-token'),
+      signEnrol: jest.fn().mockReturnValue('mock-enrol-token'),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
         { provide: PrismaService, useValue: createMockPrismaService() },
         { provide: JwtService, useValue: mockJwtService },
         { provide: ConfigService, useValue: mockConfigService },
+        { provide: StepTokenService, useValue: stepTokenService },
       ],
     }).compile();
 
@@ -266,7 +274,6 @@ describe('AuthService', () => {
     const loginDto = {
       email: 'user@test.com',
       password: 'password123',
-      tenantId: 'test-tenant',
     };
 
     const mockUser = {
@@ -274,12 +281,14 @@ describe('AuthService', () => {
       email: 'user@test.com',
       passwordHash: 'hashed-password',
       role: 'EMPLOYEE',
-      tenantId: 'test-tenant',
+      tenantId: 'default-tenant-id',
       employeeId: 'emp-1',
       isActive: true,
+      tokenVersion: 0,
+      totpEnabledAt: null,
     };
 
-    it('should login successfully with valid credentials', async () => {
+    it('should login successfully with valid credentials, defaulting to DEFAULT_TENANT_ID', async () => {
       prisma.user.findFirst.mockResolvedValue(mockUser);
       (mockBcrypt.compare as jest.Mock).mockResolvedValue(true);
       prisma.user.update.mockResolvedValue(mockUser);
@@ -292,40 +301,12 @@ describe('AuthService', () => {
           id: 'user-1',
           email: 'user@test.com',
           role: 'EMPLOYEE',
-          tenantId: 'test-tenant',
+          tenantId: 'default-tenant-id',
           employeeId: 'emp-1',
+          mustChangePassword: undefined,
           permissions: [],
         },
       });
-
-      expect(prisma.user.findFirst).toHaveBeenCalledWith({
-        where: {
-          email: 'user@test.com',
-          tenantId: 'test-tenant',
-          isActive: true,
-        },
-      });
-      expect(mockBcrypt.compare).toHaveBeenCalledWith('password123', 'hashed-password');
-      expect(prisma.user.update).toHaveBeenCalledWith({
-        where: { id: 'user-1' },
-        data: { lastLoginAt: expect.any(Date) },
-      });
-      expect(jwtService.sign).toHaveBeenCalledWith({
-        sub: 'user-1',
-        email: 'user@test.com',
-        tenantId: 'test-tenant',
-        role: 'EMPLOYEE',
-        employeeId: 'emp-1',
-      });
-    });
-
-    it('should use DEFAULT_TENANT_ID when tenantId is not provided', async () => {
-      const dtoWithoutTenant = { email: 'user@test.com', password: 'password123' };
-      prisma.user.findFirst.mockResolvedValue(mockUser);
-      (mockBcrypt.compare as jest.Mock).mockResolvedValue(true);
-      prisma.user.update.mockResolvedValue(mockUser);
-
-      await service.login(dtoWithoutTenant);
 
       expect(configService.get).toHaveBeenCalledWith('DEFAULT_TENANT_ID');
       expect(prisma.user.findFirst).toHaveBeenCalledWith({
@@ -335,29 +316,162 @@ describe('AuthService', () => {
           isActive: true,
         },
       });
+      expect(mockBcrypt.compare).toHaveBeenCalledWith('password123', 'hashed-password');
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: { lastLoginAt: expect.any(Date) },
+      });
     });
 
-    it('should throw UnauthorizedException when tenantId is not resolved', async () => {
+    it('resolves an explicit tenantCode to its tenant before looking up the user (Review Focus 1)', async () => {
+      prisma.tenant.findFirst.mockResolvedValue({ id: 'acme-id' });
+      prisma.user.findFirst.mockResolvedValue({ ...mockUser, tenantId: 'acme-id' });
+      (mockBcrypt.compare as jest.Mock).mockResolvedValue(true);
+      prisma.user.update.mockResolvedValue(mockUser);
+
+      const result = await service.login({ ...loginDto, tenantCode: 'acme' });
+
+      expect(prisma.tenant.findFirst).toHaveBeenCalledWith({
+        where: { code: 'acme', isActive: true },
+        select: { id: true },
+      });
+      expect(prisma.user.findFirst).toHaveBeenCalledWith({
+        where: { email: 'user@test.com', tenantId: 'acme-id', isActive: true },
+      });
+      expect(result).toMatchObject({ accessToken: 'mock-jwt-token' });
+    });
+
+    it('without the tenantCode, a user that exists only in that tenant is not found (401)', async () => {
+      // The user lives only in tenant acme-id; without ?org=acme the lookup
+      // scopes to DEFAULT_TENANT_ID and finds nobody.
+      prisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(service.login(loginDto)).rejects.toThrow(UnauthorizedException);
+      await expect(service.login(loginDto)).rejects.toThrow('Invalid credentials');
+      expect(prisma.tenant.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('throws UnauthorizedException when no tenant can be resolved at all', async () => {
       configService.get.mockReturnValue(undefined);
-      const dtoWithoutTenant = { email: 'user@test.com', password: 'password123' };
 
-      await expect(service.login(dtoWithoutTenant)).rejects.toThrow(UnauthorizedException);
-      await expect(service.login(dtoWithoutTenant)).rejects.toThrow('Tenant ID is required');
+      await expect(service.login(loginDto)).rejects.toThrow(UnauthorizedException);
+      await expect(service.login(loginDto)).rejects.toThrow('Tenant ID is required');
     });
 
-    it('should throw UnauthorizedException when user is not found', async () => {
+    it('throws UnauthorizedException when the user is not found', async () => {
       prisma.user.findFirst.mockResolvedValue(null);
 
       await expect(service.login(loginDto)).rejects.toThrow(UnauthorizedException);
       await expect(service.login(loginDto)).rejects.toThrow('Invalid credentials');
     });
 
-    it('should throw UnauthorizedException when password is invalid', async () => {
+    it('rejects a wrong password before reading any security settings', async () => {
       prisma.user.findFirst.mockResolvedValue(mockUser);
       (mockBcrypt.compare as jest.Mock).mockResolvedValue(false);
 
       await expect(service.login(loginDto)).rejects.toThrow(UnauthorizedException);
       await expect(service.login(loginDto)).rejects.toThrow('Invalid credentials');
+      expect(prisma.tenantSecuritySettings.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('refuses an HR_ADMIN with a 403 when the tenant requires SSO', async () => {
+      prisma.user.findFirst.mockResolvedValue({ ...mockUser, role: 'HR_ADMIN' });
+      (mockBcrypt.compare as jest.Mock).mockResolvedValue(true);
+      prisma.tenantSecuritySettings.findUnique.mockResolvedValue({
+        requireSso: true,
+        twoFactorRequiredRoles: [],
+      });
+
+      await expect(service.login(loginDto)).rejects.toThrow(ForbiddenException);
+      await expect(service.login(loginDto)).rejects.toThrow(
+        'Your organisation signs in with single sign-on.',
+      );
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('lets SUPER_ADMIN sign in with a password as break-glass even when SSO is required', async () => {
+      prisma.user.findFirst.mockResolvedValue({ ...mockUser, role: 'SUPER_ADMIN' });
+      (mockBcrypt.compare as jest.Mock).mockResolvedValue(true);
+      prisma.tenantSecuritySettings.findUnique.mockResolvedValue({
+        requireSso: true,
+        twoFactorRequiredRoles: [],
+      });
+      prisma.user.update.mockResolvedValue(mockUser);
+
+      const result = await service.login(loginDto);
+
+      expect(result).toMatchObject({ accessToken: 'mock-jwt-token' });
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: { lastLoginAt: expect.any(Date) },
+      });
+    });
+
+    it('creates a 5-minute MfaChallenge and returns mfaRequired when 2FA is enabled, without updating lastLoginAt', async () => {
+      prisma.user.findFirst.mockResolvedValue({
+        ...mockUser,
+        totpEnabledAt: new Date('2026-09-01T00:00:00Z'),
+      });
+      (mockBcrypt.compare as jest.Mock).mockResolvedValue(true);
+      const before = Date.now();
+      prisma.mfaChallenge.create.mockResolvedValue({ id: 'challenge-1' });
+
+      const result = await service.login(loginDto);
+
+      expect(result).toEqual({ mfaRequired: true, mfaToken: 'mock-mfa-token' });
+      expect(prisma.mfaChallenge.create).toHaveBeenCalledWith({
+        data: {
+          tenantId: 'default-tenant-id',
+          userId: 'user-1',
+          expiresAt: expect.any(Date),
+        },
+      });
+      const expiresAt = (prisma.mfaChallenge.create as jest.Mock).mock.calls[0][0].data.expiresAt;
+      expect(expiresAt.getTime() - before).toBeGreaterThan(4.9 * 60_000);
+      expect(expiresAt.getTime() - before).toBeLessThanOrEqual(5.1 * 60_000);
+      expect(stepTokenService.signMfa).toHaveBeenCalledWith({
+        sub: 'user-1',
+        tenantId: 'default-tenant-id',
+        cid: 'challenge-1',
+      });
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('returns enrolmentRequired when the role requires 2FA and the user has not enrolled', async () => {
+      prisma.user.findFirst.mockResolvedValue({ ...mockUser, role: 'MANAGER', tokenVersion: 4 });
+      (mockBcrypt.compare as jest.Mock).mockResolvedValue(true);
+      prisma.tenantSecuritySettings.findUnique.mockResolvedValue({
+        requireSso: false,
+        twoFactorRequiredRoles: ['MANAGER'],
+      });
+
+      const result = await service.login(loginDto);
+
+      expect(result).toEqual({ enrolmentRequired: true, enrolToken: 'mock-enrol-token' });
+      expect(stepTokenService.signEnrol).toHaveBeenCalledWith({
+        sub: 'user-1',
+        tenantId: 'default-tenant-id',
+        tokenVersion: 4,
+      });
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.mfaChallenge.create).not.toHaveBeenCalled();
+    });
+
+    it('issues a normal session when nothing else applies', async () => {
+      prisma.user.findFirst.mockResolvedValue(mockUser);
+      (mockBcrypt.compare as jest.Mock).mockResolvedValue(true);
+      prisma.tenantSecuritySettings.findUnique.mockResolvedValue({
+        requireSso: false,
+        twoFactorRequiredRoles: ['MANAGER'], // EMPLOYEE is not in the list
+      });
+      prisma.user.update.mockResolvedValue(mockUser);
+
+      const result = await service.login(loginDto);
+
+      expect(result).toEqual({
+        accessToken: 'mock-jwt-token',
+        user: expect.objectContaining({ id: 'user-1', permissions: [] }),
+      });
     });
   });
 
