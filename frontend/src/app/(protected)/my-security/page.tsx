@@ -120,9 +120,16 @@ export default function MySecurityPage() {
     return (
       <div className="max-w-2xl">
         <TotpEnrolment
-          onEnabled={(result) =>
-            setView({ name: 'enable-codes', recoveryCodes: result.recoveryCodes, session: result.session })
-          }
+          onEnabled={(result) => {
+            // I4: enabling bumps tokenVersion server-side and signs out
+            // every other session, so this session's own token is stale the
+            // instant enable() succeeds — not when the user later clicks
+            // through the recovery codes screen. Complete the session now,
+            // before that screen even renders, so the user is never logged
+            // out before they've had a chance to save their codes.
+            completeSession(result.session);
+            setView({ name: 'enable-codes', recoveryCodes: result.recoveryCodes, session: result.session });
+          }}
         />
       </div>
     );
@@ -134,9 +141,7 @@ export default function MySecurityPage() {
         <RecoveryCodes
           codes={view.recoveryCodes}
           onContinue={async () => {
-            // Enabling bumps tokenVersion and signs out every other session;
-            // this session's own token is stale too until it is replaced.
-            completeSession(view.session);
+            // The session was already completed in onEnabled above.
             toast.success('Two-factor authentication enabled');
             setView({ name: 'status' });
             await loadStatus();

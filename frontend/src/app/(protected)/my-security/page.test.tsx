@@ -87,7 +87,12 @@ describe('MySecurityPage', () => {
     expect(screen.getByRole('button', { name: /enable/i })).toBeInTheDocument();
   });
 
-  it('walks Enable -> TotpEnrolment -> RecoveryCodes -> completes the session with the new tokenVersion', async () => {
+  // I4: enabling 2FA bumps tokenVersion server-side, so the session's old
+  // access token is stale the instant enable() succeeds — not when the user
+  // later clicks through the recovery codes. completeSession must run
+  // before that screen even renders, or the user can be logged out before
+  // they've saved their codes.
+  it('completes the session as soon as enable succeeds, before the recovery codes screen is even shown', async () => {
     (twoFactorApi.status as jest.Mock).mockResolvedValue({ data: statusDisabled });
     render(<MySecurityPage />);
 
@@ -95,14 +100,22 @@ describe('MySecurityPage', () => {
     expect(await screen.findByTestId('enrol-step')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('simulate-enable'));
+
+    // The recovery codes screen is showing now...
     const codesStep = await screen.findByTestId('recovery-codes-step');
     expect(codesStep).toHaveTextContent('AAAAA-BBBBB');
 
-    fireEvent.click(screen.getByText('simulate-continue'));
+    // ...but completeSession already ran, before the "I have saved these"
+    // click below — the session must never depend on that click.
+    expect(mockCompleteSession).toHaveBeenCalledWith({ accessToken: 'new-tok', user: { id: '1' } });
+    expect(mockCompleteSession).toHaveBeenCalledTimes(1);
 
+    fireEvent.click(screen.getByText('simulate-continue'));
     await waitFor(() => {
-      expect(mockCompleteSession).toHaveBeenCalledWith({ accessToken: 'new-tok', user: { id: '1' } });
+      expect(screen.queryByTestId('recovery-codes-step')).not.toBeInTheDocument();
     });
+    // Not completed a second time on continue.
+    expect(mockCompleteSession).toHaveBeenCalledTimes(1);
   });
 
   it('shows enabled status with Disable and Regenerate actions', async () => {
