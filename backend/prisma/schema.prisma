@@ -149,6 +149,26 @@ model Tenant {
   jobOffers                 JobOffer[]
   preOnboardingInvites      PreOnboardingInvite[]
   preOnboardingDocuments    PreOnboardingDocument[]
+  // Keka wave E (engagement)
+  surveys                   Survey[]
+  surveyQuestions           SurveyQuestion[]
+  surveyParticipants        SurveyParticipant[]
+  surveyResponses           SurveyResponse[]
+  surveyAnswers             SurveyAnswer[]
+  surveyPendingResponses    SurveyPendingResponse[]
+  polls                     Poll[]
+  pollOptions               PollOption[]
+  pollVoters                PollVoter[]
+  pollPendingVotes          PollPendingVote[]
+  badges                    Badge[]
+  recognitions              Recognition[]
+  recognitionRecipients     RecognitionRecipient[]
+  engagementSettings        EngagementSettings?
+  feedItems                 FeedItem[]
+  feedReactions             FeedReaction[]
+  oneOnOneMeetings          OneOnOneMeeting[]
+  oneOnOneActionItems       OneOnOneActionItem[]
+  oneOnOnePrivateNotes      OneOnOnePrivateNote[]
   // Keka wave H1 (security)
   securitySettings          TenantSecuritySettings?
   ssoProviders              TenantSsoProvider[]
@@ -423,6 +443,17 @@ model Employee {
   jobOffersAsManager     JobOffer[]          @relation("OfferReportingManager")
   jobOffersConverted     JobOffer[]          @relation("OfferEmployee")
   preOnboardingInvites   PreOnboardingInvite[]
+  // Keka wave E
+  surveysCreated         Survey[]               @relation("SurveyCreatedBy")
+  surveyParticipations   SurveyParticipant[]    @relation("SurveyParticipantEmployee")
+  pollsCreated           Poll[]                 @relation("PollCreatedBy")
+  recognitionsGiven      Recognition[]          @relation("RecognitionGiver")
+  recognitionsReceived   RecognitionRecipient[] @relation("RecognitionRecipientEmployee")
+  oneOnOnesAsManager     OneOnOneMeeting[]      @relation("OneOnOneManager")
+  oneOnOnesAsEmployee    OneOnOneMeeting[]      @relation("OneOnOneEmployee")
+  oneOnOnesCreated       OneOnOneMeeting[]      @relation("OneOnOneCreatedBy")
+  oneOnOneActionItems    OneOnOneActionItem[]   @relation("OneOnOneActionAssignee")
+  oneOnOnePrivateNotes   OneOnOnePrivateNote[]  @relation("OneOnOnePrivateNoteAuthor")
 
   @@unique([tenantId, employeeCode])
   @@unique([tenantId, email])
@@ -1041,6 +1072,10 @@ enum NotificationType {
   OFFER_ACCEPTED
   OFFER_DECLINED
   PRE_ONBOARDING_SUBMITTED
+  // Keka wave E
+  SURVEY_LAUNCHED
+  RECOGNITION_RECEIVED
+  ONE_ON_ONE_SCHEDULED
   GENERAL
 }
 
@@ -3383,6 +3418,411 @@ model PreOnboardingDocument {
   @@unique([inviteId, documentKey])
   @@index([tenantId])
   @@map("pre_onboarding_documents")
+}
+
+// ============================================
+// ENGAGEMENT (Wave E)
+// Spec: docs/superpowers/specs/2026-09-28-keka-wave-e-design.md
+// ============================================
+
+enum SurveyStatus {
+  DRAFT
+  ACTIVE
+  CLOSED
+}
+
+enum EngagementAudience {
+  ALL
+  DEPARTMENT
+  BRANCH
+}
+
+enum SurveyQuestionType {
+  TEXT
+  SINGLE_CHOICE
+  MULTI_CHOICE
+  RATING
+  ENPS
+}
+
+enum PollStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum FeedReactionKind {
+  LIKE
+  CELEBRATE
+}
+
+enum OneOnOneStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+model Survey {
+  id           String             @id @default(uuid())
+  tenantId     String
+  title        String
+  description  String?            @db.Text
+  isAnonymous  Boolean            @default(false)
+  status       SurveyStatus       @default(DRAFT)
+  audienceType EngagementAudience @default(ALL)
+  /// Department ids or branch ids, per `audienceType`; [] for ALL.
+  audienceIds  String[]           @default([])
+  closesAt     DateTime?
+  launchedAt   DateTime?
+  closedAt     DateTime?
+  createdById  String
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  tenant       Tenant              @relation(fields: [tenantId], references: [id])
+  createdBy    Employee            @relation("SurveyCreatedBy", fields: [createdById], references: [id])
+  questions    SurveyQuestion[]
+  participants SurveyParticipant[]
+  responses    SurveyResponse[]
+  pending      SurveyPendingResponse[]
+
+  @@index([tenantId, status])
+  @@map("surveys")
+}
+
+model SurveyQuestion {
+  id       String             @id @default(uuid())
+  tenantId String
+  surveyId String
+  order    Int
+  type     SurveyQuestionType
+  text     String
+  required Boolean            @default(true)
+  /// Choice labels; [] for non-choice types.
+  options  String[]           @default([])
+
+  tenant  Tenant         @relation(fields: [tenantId], references: [id])
+  survey  Survey         @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  answers SurveyAnswer[]
+
+  @@index([surveyId])
+  @@map("survey_questions")
+}
+
+/// Audience snapshot taken at launch. No timestamps, by design: a submit time
+/// here could be correlated with an anonymous response.
+model SurveyParticipant {
+  id         String  @id @default(uuid())
+  tenantId   String
+  surveyId   String
+  employeeId String
+  submitted  Boolean @default(false)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  survey   Survey   @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  employee Employee @relation("SurveyParticipantEmployee", fields: [employeeId], references: [id])
+
+  @@unique([surveyId, employeeId])
+  @@index([tenantId, employeeId])
+  @@map("survey_participants")
+}
+
+/// `employeeId` and `submittedAt` are null when the survey is anonymous.
+/// `employeeId` is a plain string (no FK) so no join path exists from a
+/// response to an employee. No createdAt/updatedAt, by design.
+model SurveyResponse {
+  id          String    @id @default(uuid())
+  tenantId    String
+  surveyId    String
+  employeeId  String?
+  submittedAt DateTime?
+
+  tenant  Tenant         @relation(fields: [tenantId], references: [id])
+  survey  Survey         @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+  answers SurveyAnswer[]
+
+  @@index([surveyId])
+  @@map("survey_responses")
+}
+
+/// No timestamps, by design.
+model SurveyAnswer {
+  id           String   @id @default(uuid())
+  tenantId     String
+  responseId   String
+  questionId   String
+  textValue    String?  @db.Text
+  choiceValues String[] @default([])
+  numericValue Int?
+
+  tenant   Tenant         @relation(fields: [tenantId], references: [id])
+  response SurveyResponse @relation(fields: [responseId], references: [id], onDelete: Cascade)
+  question SurveyQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
+  @@map("survey_answers")
+}
+
+/// Anonymous submissions waiting to be released into survey_responses in a
+/// shuffled batch. `payload` is AES-256-GCM ciphertext (FieldEncryptionService)
+/// of the normalised answers, so a row that shares xmin with its participant
+/// row reveals nothing readable.
+model SurveyPendingResponse {
+  id       String @id @default(uuid())
+  tenantId String
+  surveyId String
+  payload  String @db.Text
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  survey Survey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+
+  @@index([surveyId])
+  @@map("survey_pending_responses")
+}
+
+model Poll {
+  id          String     @id @default(uuid())
+  tenantId    String
+  question    String
+  status      PollStatus @default(ACTIVE)
+  closesAt    DateTime?
+  closedAt    DateTime?
+  createdById String
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  tenant    Tenant       @relation(fields: [tenantId], references: [id])
+  createdBy Employee     @relation("PollCreatedBy", fields: [createdById], references: [id])
+  options   PollOption[]
+  voters    PollVoter[]
+  pending   PollPendingVote[]
+
+  @@index([tenantId, status])
+  @@map("polls")
+}
+
+model PollOption {
+  id        String @id @default(uuid())
+  tenantId  String
+  pollId    String
+  order     Int
+  label     String
+  voteCount Int    @default(0)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  poll   Poll   @relation(fields: [pollId], references: [id], onDelete: Cascade)
+
+  @@index([pollId])
+  @@map("poll_options")
+}
+
+/// Who voted — never which option. `employeeId` is a plain string (no FK).
+/// No timestamps, by design.
+model PollVoter {
+  id         String @id @default(uuid())
+  tenantId   String
+  pollId     String
+  employeeId String
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  poll   Poll   @relation(fields: [pollId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, employeeId])
+  @@map("poll_voters")
+}
+
+/// Votes waiting to be applied to poll_options.voteCount in a batch.
+/// `payload` is AES-256-GCM ciphertext (FieldEncryptionService) of the chosen
+/// option id, so a row sharing xmin with its PollVoter row reveals nothing
+/// readable. No timestamps and no employee column, by design.
+model PollPendingVote {
+  id       String @id @default(uuid())
+  tenantId String
+  pollId   String
+  payload  String @db.Text
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  poll   Poll   @relation(fields: [pollId], references: [id], onDelete: Cascade)
+
+  @@index([pollId])
+  @@map("poll_pending_votes")
+}
+
+model Badge {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  description String?
+  /// An emoji.
+  icon        String
+  points      Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id])
+  recognitions Recognition[]
+
+  @@unique([tenantId, name])
+  @@map("badges")
+}
+
+model Recognition {
+  id                 String   @id @default(uuid())
+  tenantId           String
+  giverId            String
+  badgeId            String?
+  message            String   @db.Text
+  pointsPerRecipient Int      @default(0)
+  createdAt          DateTime @default(now())
+
+  tenant     Tenant                 @relation(fields: [tenantId], references: [id])
+  giver      Employee               @relation("RecognitionGiver", fields: [giverId], references: [id])
+  badge      Badge?                 @relation(fields: [badgeId], references: [id], onDelete: SetNull)
+  recipients RecognitionRecipient[]
+
+  @@index([tenantId, createdAt])
+  @@index([giverId, createdAt])
+  @@map("recognitions")
+}
+
+/// `createdAt` copies the recognition time so leaderboard queries filter one table.
+model RecognitionRecipient {
+  id            String   @id @default(uuid())
+  tenantId      String
+  recognitionId String
+  employeeId    String
+  points        Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id])
+  recognition Recognition @relation(fields: [recognitionId], references: [id], onDelete: Cascade)
+  employee    Employee    @relation("RecognitionRecipientEmployee", fields: [employeeId], references: [id])
+
+  @@unique([recognitionId, employeeId])
+  @@index([tenantId, employeeId, createdAt])
+  @@map("recognition_recipients")
+}
+
+model EngagementSettings {
+  id                     String   @id @default(uuid())
+  tenantId               String   @unique
+  pointsEnabled          Boolean  @default(false)
+  monthlyPointsAllowance Int      @default(100)
+  showBirthdays          Boolean  @default(true)
+  showAnniversaries      Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("engagement_settings")
+}
+
+/// `type` is one of FEED_ITEM_TYPES (code constant). `actorEmployeeId` /
+/// `subjectEmployeeId` are plain strings (no FK) so later producers never need
+/// a relation change; the read side joins names.
+model FeedItem {
+  id                String   @id @default(uuid())
+  tenantId          String
+  type              String
+  sourceType        String
+  sourceId          String?
+  actorEmployeeId   String?
+  subjectEmployeeId String?
+  title             String
+  body              String?  @db.Text
+  payload           Json     @default("{}")
+  dedupeKey         String
+  occurredAt        DateTime
+  isHidden          Boolean  @default(false)
+  createdAt         DateTime @default(now())
+
+  tenant    Tenant         @relation(fields: [tenantId], references: [id])
+  reactions FeedReaction[]
+
+  @@unique([tenantId, dedupeKey])
+  @@index([tenantId, occurredAt])
+  @@index([tenantId, sourceType, sourceId])
+  @@map("feed_items")
+}
+
+/// `employeeId` is a plain string (no FK).
+model FeedReaction {
+  id         String           @id @default(uuid())
+  tenantId   String
+  feedItemId String
+  employeeId String
+  kind       FeedReactionKind
+  createdAt  DateTime         @default(now())
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  feedItem FeedItem @relation(fields: [feedItemId], references: [id], onDelete: Cascade)
+
+  @@unique([feedItemId, employeeId, kind])
+  @@map("feed_reactions")
+}
+
+model OneOnOneMeeting {
+  id          String         @id @default(uuid())
+  tenantId    String
+  managerId   String
+  employeeId  String
+  scheduledAt DateTime
+  status      OneOnOneStatus @default(SCHEDULED)
+  agenda      String?        @db.Text
+  sharedNotes String?        @db.Text
+  createdById String
+  completedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  tenant       Tenant                @relation(fields: [tenantId], references: [id])
+  manager      Employee              @relation("OneOnOneManager", fields: [managerId], references: [id])
+  employee     Employee              @relation("OneOnOneEmployee", fields: [employeeId], references: [id])
+  createdBy    Employee              @relation("OneOnOneCreatedBy", fields: [createdById], references: [id])
+  actionItems  OneOnOneActionItem[]
+  privateNotes OneOnOnePrivateNote[]
+
+  @@index([tenantId, managerId, scheduledAt])
+  @@index([tenantId, employeeId, scheduledAt])
+  @@map("one_on_one_meetings")
+}
+
+model OneOnOneActionItem {
+  id         String    @id @default(uuid())
+  tenantId   String
+  meetingId  String
+  text       String
+  assigneeId String
+  isDone     Boolean   @default(false)
+  dueDate    DateTime? @db.Date
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id])
+  meeting  OneOnOneMeeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  assignee Employee        @relation("OneOnOneActionAssignee", fields: [assigneeId], references: [id])
+
+  @@index([meetingId])
+  @@map("one_on_one_action_items")
+}
+
+/// Author-only. HR/admin cannot read it.
+model OneOnOnePrivateNote {
+  id        String   @id @default(uuid())
+  tenantId  String
+  meetingId String
+  authorId  String
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant  Tenant          @relation(fields: [tenantId], references: [id])
+  meeting OneOnOneMeeting @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  author  Employee        @relation("OneOnOnePrivateNoteAuthor", fields: [authorId], references: [id])
+
+  @@unique([meetingId, authorId])
+  @@map("one_on_one_private_notes")
 }
 
 // ============================================================================

@@ -68,6 +68,10 @@ import {
   History,
   ListOrdered,
   Globe,
+  Newspaper,
+  Award,
+  MessagesSquare,
+  Vote,
   // Keka wave H1
   KeyRound,
   ShieldCheck,
@@ -131,6 +135,17 @@ const sections: NavSection[] = [
       { name: 'My Interviews', href: '/recruitment/interviews', icon: <CalendarSearch className="h-[18px] w-[18px]" /> },
       // Keka wave H1: every user manages their own two-factor authentication.
       { name: 'My Security', href: '/my-security', icon: <KeyRound className="h-[18px] w-[18px]" /> },
+    ],
+  },
+  // Keka wave E: engagement
+  {
+    label: 'ENGAGEMENT',
+    items: [
+      { name: 'Feed', href: '/engagement/feed', icon: <Newspaper className="h-[18px] w-[18px]" /> },
+      { name: 'Recognition', href: '/engagement/recognition', icon: <Award className="h-[18px] w-[18px]" /> },
+      { name: 'Surveys', href: '/engagement/surveys', icon: <ClipboardCheck className="h-[18px] w-[18px]" /> },
+      { name: 'One-on-ones', href: '/one-on-ones', icon: <MessagesSquare className="h-[18px] w-[18px]" /> },
+      { name: 'Polls', href: '/engagement/polls', icon: <Vote className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
     ],
   },
   {

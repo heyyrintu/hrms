@@ -95,6 +95,15 @@ jest.mock('@/lib/api', () => ({
   },
 }));
 
+// Mock the polls API so PollWidget renders nothing (no active polls) and does
+// not make a real network call.
+jest.mock('@/lib/api-polls', () => ({
+  pollsApi: {
+    active: jest.fn().mockResolvedValue({ data: [] }),
+    vote: jest.fn(),
+  },
+}));
+
 // Mock date-utils
 jest.mock('@/lib/date-utils', () => ({
   formatMinutesToHoursMinutes: jest.fn().mockReturnValue('0h 0m'),

@@ -9,6 +9,7 @@ import toast from 'react-hot-toast';
 import { api, attendanceApi, adminApi } from '@/lib/api';
 import { formatMinutesToHoursMinutes, formatTime, formatDateForApi, getStartOfMonth } from '@/lib/date-utils';
 import { AttendanceRecord, AttendanceSummary, DashboardStats, TodayAttendance } from '@/types';
+import { PollWidget } from '@/components/engagement/PollWidget';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -344,6 +345,8 @@ export default function DashboardPage() {
           />
         </div>
       </div>
+
+      <PollWidget />
 
       {/* Manager/Admin Section */}
       {(isManager || isAdmin) && dashboardStats && (
