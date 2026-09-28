@@ -4,6 +4,8 @@ import { SurveysController } from './surveys.controller';
 import { SurveysService } from './surveys.service';
 import { SurveySubmissionService } from './survey-submission.service';
 import { SurveyResultsService } from './survey-results.service';
+import { SurveyReleaseService } from './survey-release.service';
+import { SurveyReleaseCronService } from './survey-release-cron.service';
 
 /**
  * Pulse surveys (Wave E, WS1). Frozen after the scaffold: WS1 fills the
@@ -12,6 +14,12 @@ import { SurveyResultsService } from './survey-results.service';
 @Module({
   imports: [NotificationsModule],
   controllers: [SurveysController],
-  providers: [SurveysService, SurveySubmissionService, SurveyResultsService],
+  providers: [
+    SurveysService,
+    SurveySubmissionService,
+    SurveyResultsService,
+    SurveyReleaseService,
+    SurveyReleaseCronService,
+  ],
 })
 export class SurveysModule {}

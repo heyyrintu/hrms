@@ -35,12 +35,20 @@ export class SurveyResultsService {
       throw new BadRequestException('Results are not available for a draft survey');
     }
 
-    const [participantCount, responseCount] = await Promise.all([
+    // `responseCount` (and so the withholding threshold) counts released
+    // responses only; anonymous submissions still in the pending buffer are
+    // not visible yet and are reported as `pendingCount`. The response rate
+    // is about participation, so it uses the participants' submitted flag.
+    const [participantCount, submittedCount, responseCount, pendingCount] = await Promise.all([
       this.prisma.surveyParticipant.count({ where: { tenantId, surveyId: id } }),
+      this.prisma.surveyParticipant.count({ where: { tenantId, surveyId: id, submitted: true } }),
       this.prisma.surveyResponse.count({ where: { tenantId, surveyId: id } }),
+      survey.isAnonymous
+        ? this.prisma.surveyPendingResponse.count({ where: { tenantId, surveyId: id } })
+        : Promise.resolve(0),
     ]);
     const responseRate =
-      participantCount === 0 ? 0 : round1(responseCount / participantCount * 100);
+      participantCount === 0 ? 0 : round1(submittedCount / participantCount * 100);
 
     if (survey.isAnonymous && responseCount < MIN_ANONYMOUS_RESPONSES) {
       return {
@@ -50,6 +58,7 @@ export class SurveyResultsService {
         participantCount,
         responseCount,
         responseRate,
+        pendingCount,
       };
     }
 
@@ -76,6 +85,7 @@ export class SurveyResultsService {
       participantCount,
       responseCount,
       responseRate,
+      pendingCount,
       questions,
     };
   }

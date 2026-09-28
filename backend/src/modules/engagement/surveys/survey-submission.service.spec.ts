@@ -2,16 +2,21 @@ import { Test, TestingModule } from '@nestjs/testing';
 import {
   BadRequestException,
   ConflictException,
+  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
 import { SurveyQuestionType, SurveyStatus } from '@prisma/client';
 import { SurveySubmissionService } from './survey-submission.service';
+import { SurveyReleaseService } from './survey-release.service';
+import { FieldEncryptionService } from '../../../common/crypto/field-encryption.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { createMockPrismaService } from '../../../test/helpers';
 
 describe('SurveySubmissionService', () => {
   let service: SurveySubmissionService;
   let prisma: any;
+  let encryption: { encrypt: jest.Mock };
+  let release: { release: jest.Mock };
 
   const tenantId = 'tenant-1';
   const employeeId = 'emp-1';
@@ -40,8 +45,15 @@ describe('SurveySubmissionService', () => {
 
   beforeEach(async () => {
     prisma = createMockPrismaService();
+    encryption = { encrypt: jest.fn((plain: string) => `cipher:${plain}`) };
+    release = { release: jest.fn().mockResolvedValue(0) };
     const module: TestingModule = await Test.createTestingModule({
-      providers: [SurveySubmissionService, { provide: PrismaService, useValue: prisma }],
+      providers: [
+        SurveySubmissionService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: FieldEncryptionService, useValue: encryption },
+        { provide: SurveyReleaseService, useValue: release },
+      ],
     }).compile();
     service = module.get<SurveySubmissionService>(SurveySubmissionService);
   });
@@ -99,18 +111,77 @@ describe('SurveySubmissionService', () => {
     );
   });
 
-  it('creates an anonymous response with employeeId and submittedAt null', async () => {
-    prisma.survey.findFirst.mockResolvedValue(activeSurvey({ isAnonymous: true }));
-    prisma.surveyParticipant.updateMany.mockResolvedValue({ count: 1 });
-    prisma.surveyResponse.create.mockResolvedValue({ id: 'response-1' });
-
-    const result = await service.submit(tenantId, employeeId, surveyId, dto);
-
-    expect(prisma.surveyResponse.create).toHaveBeenCalledWith({
-      data: { tenantId, surveyId, employeeId: null, submittedAt: null },
-      select: { id: true },
+  describe('anonymous survey', () => {
+    beforeEach(() => {
+      prisma.survey.findFirst.mockResolvedValue(activeSurvey({ isAnonymous: true }));
+      prisma.surveyParticipant.updateMany.mockResolvedValue({ count: 1 });
     });
-    expect(result).toEqual({ submitted: true });
+
+    it('buffers one encrypted pending row and writes no response or answer rows', async () => {
+      const result = await service.submit(tenantId, employeeId, surveyId, dto);
+
+      const expectedPlain = JSON.stringify([
+        { questionId: 'q-1', textValue: 'Great', choiceValues: [], numericValue: null },
+      ]);
+      expect(encryption.encrypt).toHaveBeenCalledWith(expectedPlain);
+      expect(prisma.surveyPendingResponse.create).toHaveBeenCalledWith({
+        data: { tenantId, surveyId, payload: `cipher:${expectedPlain}` },
+        select: { id: true },
+      });
+      const pendingData = prisma.surveyPendingResponse.create.mock.calls[0][0].data;
+      expect(pendingData).not.toHaveProperty('employeeId');
+      expect(prisma.surveyResponse.create).not.toHaveBeenCalled();
+      expect(prisma.surveyAnswer.createMany).not.toHaveBeenCalled();
+      expect(result).toEqual({ submitted: true });
+    });
+
+    it('flips the participant flag in the same transaction as the pending row', async () => {
+      await service.submit(tenantId, employeeId, surveyId, dto);
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.surveyParticipant.updateMany).toHaveBeenCalledWith({
+        where: { tenantId, surveyId, employeeId, submitted: false },
+        data: { submitted: true },
+      });
+    });
+
+    it('triggers a non-forced release after the submit commits', async () => {
+      await service.submit(tenantId, employeeId, surveyId, dto);
+
+      expect(release.release).toHaveBeenCalledWith(tenantId, surveyId, { force: false });
+    });
+
+    it('still succeeds when the release fails', async () => {
+      release.release.mockRejectedValue(new Error('db blip'));
+
+      await expect(service.submit(tenantId, employeeId, surveyId, dto)).resolves.toEqual({
+        submitted: true,
+      });
+    });
+
+    it('fails before any write when the encryption key is missing', async () => {
+      encryption.encrypt.mockImplementation(() => {
+        throw new InternalServerErrorException('FIELD_ENCRYPTION_KEY is not configured');
+      });
+
+      await expect(service.submit(tenantId, employeeId, surveyId, dto)).rejects.toThrow(
+        InternalServerErrorException,
+      );
+      expect(prisma.surveyParticipant.updateMany).not.toHaveBeenCalled();
+      expect(prisma.surveyPendingResponse.create).not.toHaveBeenCalled();
+      expect(release.release).not.toHaveBeenCalled();
+    });
+
+    it('does not release when the participant already responded', async () => {
+      prisma.surveyParticipant.updateMany.mockResolvedValue({ count: 0 });
+      prisma.surveyParticipant.findFirst.mockResolvedValue({ id: 'participant-1' });
+
+      await expect(service.submit(tenantId, employeeId, surveyId, dto)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(prisma.surveyPendingResponse.create).not.toHaveBeenCalled();
+      expect(release.release).not.toHaveBeenCalled();
+    });
   });
 
   it('creates a named response with employeeId and submittedAt set', async () => {
@@ -123,6 +194,9 @@ describe('SurveySubmissionService', () => {
     const data = prisma.surveyResponse.create.mock.calls[0][0].data;
     expect(data.employeeId).toBe(employeeId);
     expect(data.submittedAt).toBeInstanceOf(Date);
+    expect(prisma.surveyPendingResponse.create).not.toHaveBeenCalled();
+    expect(encryption.encrypt).not.toHaveBeenCalled();
+    expect(release.release).not.toHaveBeenCalled();
   });
 
   it('writes the normalized answers against the created response', async () => {

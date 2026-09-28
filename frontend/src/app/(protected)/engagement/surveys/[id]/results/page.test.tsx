@@ -76,4 +76,47 @@ describe('SurveyResultsPage', () => {
     await waitFor(() => expect(screen.getByTestId('enps-score')).toHaveTextContent('20'));
     expect(screen.getByText('5 promoters · 2 passives · 3 detractors')).toBeInTheDocument();
   });
+
+  it('shows how many anonymous responses are waiting for a batch release', async () => {
+    (surveysApi.results as jest.Mock).mockResolvedValue({
+      data: {
+        surveyId: 'survey-1',
+        isAnonymous: true,
+        withheld: true,
+        participantCount: 10,
+        responseCount: 2,
+        responseRate: 40,
+        pendingCount: 2,
+      },
+    });
+
+    render(<SurveyResultsPage />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('2 responses are waiting to be released in a batch.'),
+      ).toBeInTheDocument(),
+    );
+    // Submitted = released + pending, matching the participation-based rate.
+    expect(screen.getByText('4 / 10 (40%)')).toBeInTheDocument();
+  });
+
+  it('shows no pending notice when nothing is waiting', async () => {
+    (surveysApi.results as jest.Mock).mockResolvedValue({
+      data: {
+        surveyId: 'survey-1',
+        isAnonymous: true,
+        withheld: true,
+        participantCount: 10,
+        responseCount: 2,
+        responseRate: 20,
+        pendingCount: 0,
+      },
+    });
+
+    render(<SurveyResultsPage />);
+
+    await waitFor(() => expect(screen.getByText('2 / 10 (20%)')).toBeInTheDocument());
+    expect(screen.queryByText(/waiting to be released/)).not.toBeInTheDocument();
+  });
 });

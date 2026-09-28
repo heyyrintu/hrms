@@ -8,6 +8,7 @@ import {
 import { EngagementAudience, NotificationType, SurveyStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { NotificationsService } from '../../notifications/notifications.service';
+import { SurveyReleaseService } from './survey-release.service';
 import {
   CreateSurveyDto,
   ListSurveysDto,
@@ -38,6 +39,7 @@ export class SurveysService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly release: SurveyReleaseService,
   ) {}
 
   /** `audienceIds` must belong to the tenant for DEPARTMENT/BRANCH audiences. */
@@ -174,8 +176,11 @@ export class SurveysService {
     const questionOptions = dto.questions?.map((q) => normalizeQuestionOptions(q));
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.survey.update({
-        where: { id },
+      // Guarded write: the DRAFT check above is a snapshot, and a launch can
+      // commit in between. Matching on status here means an edit can never
+      // flip `isAnonymous` or replace questions once the survey is live.
+      const updated = await tx.survey.updateMany({
+        where: { id, tenantId, status: SurveyStatus.DRAFT },
         data: {
           title: dto.title,
           description: dto.description,
@@ -186,6 +191,9 @@ export class SurveysService {
             dto.closesAt === undefined ? undefined : dto.closesAt ? new Date(dto.closesAt) : null,
         },
       });
+      if (updated.count === 0) {
+        throw new ConflictException('Only a draft survey can be edited');
+      }
 
       if (dto.questions && questionOptions) {
         await tx.surveyQuestion.deleteMany({ where: { surveyId: id } });
@@ -249,8 +257,16 @@ export class SurveysService {
         throw new ConflictException('Survey is not a draft');
       }
 
+      // Re-read the audience after the guarded flip: the pre-transaction
+      // snapshot may predate an edit that committed just before the launch.
+      const fresh = await tx.survey.findFirst({
+        where: { id, tenantId },
+        select: { audienceType: true, audienceIds: true },
+      });
+      if (!fresh) throw new NotFoundException('Survey not found');
+
       const audienceEmployees = await tx.employee.findMany({
-        where: this.audienceWhere(tenantId, survey),
+        where: this.audienceWhere(tenantId, fresh),
         select: { id: true },
       });
       if (audienceEmployees.length === 0) {
@@ -309,6 +325,15 @@ export class SurveysService {
     });
     if (closed.count === 0) {
       throw new BadRequestException('Only an active survey can be closed');
+    }
+    // Flush any anonymous responses still waiting for a batch, even a lone
+    // one: the survey is closed, so no later submit can join the batch.
+    try {
+      await this.release.release(tenantId, id, { force: true });
+    } catch (err) {
+      this.logger.error(
+        `Failed to release pending responses on close of survey ${id}: ${(err as Error).message}`,
+      );
     }
     return this.findById(tenantId, id);
   }

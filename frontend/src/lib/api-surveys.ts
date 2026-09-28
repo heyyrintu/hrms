@@ -119,8 +119,12 @@ export interface SurveyResults {
   isAnonymous: boolean;
   withheld: boolean;
   participantCount: number;
+  /** Released responses only (anonymous submissions still pending are excluded). */
   responseCount: number;
+  /** Share of participants who have submitted, including pending submissions. */
   responseRate: number;
+  /** Anonymous submissions waiting to be released in a batch; 0 for named surveys. */
+  pendingCount?: number;
   questions?: QuestionResult[];
 }
 

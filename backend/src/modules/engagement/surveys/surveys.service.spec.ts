@@ -13,6 +13,7 @@ import {
 import { SurveysService } from './surveys.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { NotificationsService } from '../../notifications/notifications.service';
+import { SurveyReleaseService } from './survey-release.service';
 import { createMockPrismaService, createMockNotificationsService } from '../../../test/helpers';
 import { CreateSurveyDto } from './dto/survey.dto';
 
@@ -20,6 +21,7 @@ describe('SurveysService', () => {
   let service: SurveysService;
   let prisma: any;
   let notifications: any;
+  let release: { release: jest.Mock };
 
   const tenantId = 'tenant-1';
   const employeeId = 'emp-hr';
@@ -37,12 +39,15 @@ describe('SurveysService', () => {
   beforeEach(async () => {
     prisma = createMockPrismaService();
     notifications = createMockNotificationsService();
+    release = { release: jest.fn().mockResolvedValue(0) };
+    prisma.survey.updateMany.mockResolvedValue({ count: 1 });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         SurveysService,
         { provide: PrismaService, useValue: prisma },
         { provide: NotificationsService, useValue: notifications },
+        { provide: SurveyReleaseService, useValue: release },
       ],
     }).compile();
 
@@ -177,8 +182,8 @@ describe('SurveysService', () => {
       expect(prisma.department.count).toHaveBeenCalledWith({
         where: { tenantId, id: { in: ['dept-new'] } },
       });
-      expect(prisma.survey.update).toHaveBeenCalledWith({
-        where: { id: surveyId },
+      expect(prisma.survey.updateMany).toHaveBeenCalledWith({
+        where: { id: surveyId, tenantId, status: SurveyStatus.DRAFT },
         data: expect.objectContaining({
           audienceType: EngagementAudience.DEPARTMENT,
           audienceIds: ['dept-new'],
@@ -198,8 +203,8 @@ describe('SurveysService', () => {
 
       await service.update(tenantId, surveyId, { audienceType: EngagementAudience.ALL });
 
-      expect(prisma.survey.update).toHaveBeenCalledWith({
-        where: { id: surveyId },
+      expect(prisma.survey.updateMany).toHaveBeenCalledWith({
+        where: { id: surveyId, tenantId, status: SurveyStatus.DRAFT },
         data: expect.objectContaining({
           audienceType: EngagementAudience.ALL,
           audienceIds: [],
@@ -220,7 +225,33 @@ describe('SurveysService', () => {
       await expect(
         service.update(tenantId, surveyId, { audienceIds: ['dept-1'] }),
       ).rejects.toThrow(BadRequestException);
-      expect(prisma.survey.update).not.toHaveBeenCalled();
+      expect(prisma.survey.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('409s without touching questions when the survey stops being a draft mid-update', async () => {
+      prisma.survey.findFirst.mockResolvedValue({
+        id: surveyId,
+        tenantId,
+        status: SurveyStatus.DRAFT,
+        audienceType: EngagementAudience.ALL,
+        audienceIds: [],
+        questions: [],
+      });
+      // A concurrent launch won the race: the guarded write matches nothing.
+      prisma.survey.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.update(tenantId, surveyId, {
+          isAnonymous: true,
+          questions: [{ type: SurveyQuestionType.TEXT, text: 'Sneaky' }],
+        }),
+      ).rejects.toThrow(ConflictException);
+      expect(prisma.survey.updateMany).toHaveBeenCalledWith({
+        where: { id: surveyId, tenantId, status: SurveyStatus.DRAFT },
+        data: expect.objectContaining({ isAnonymous: true }),
+      });
+      expect(prisma.surveyQuestion.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.surveyQuestion.createMany).not.toHaveBeenCalled();
     });
 
     it('rejects deleting a non-DRAFT survey', async () => {
@@ -356,6 +387,30 @@ describe('SurveysService', () => {
       prisma.survey.findFirst.mockResolvedValue(null);
       await expect(service.launch(tenantId, surveyId)).rejects.toThrow(NotFoundException);
     });
+
+    it('builds the audience from a fresh read inside the transaction, not the pre-read snapshot', async () => {
+      prisma.survey.updateMany.mockResolvedValue({ count: 1 });
+      prisma.employee.findMany.mockResolvedValue([{ id: 'emp-a' }]);
+      prisma.user.findMany.mockResolvedValue([]);
+      prisma.survey.findFirst
+        .mockResolvedValueOnce(draftSurvey) // pre-transaction read
+        .mockResolvedValueOnce({
+          audienceType: EngagementAudience.BRANCH,
+          audienceIds: ['branch-9'],
+        }) // fresh read after the guarded flip
+        .mockResolvedValueOnce({ ...draftSurvey, status: SurveyStatus.ACTIVE, questions: [] });
+
+      await service.launch(tenantId, surveyId);
+
+      expect(prisma.survey.findFirst.mock.calls[1][0]).toEqual({
+        where: { id: surveyId, tenantId },
+        select: { audienceType: true, audienceIds: true },
+      });
+      expect(prisma.employee.findMany).toHaveBeenCalledWith({
+        where: { tenantId, status: 'ACTIVE', branchId: { in: ['branch-9'] } },
+        select: { id: true },
+      });
+    });
   });
 
   describe('close', () => {
@@ -374,6 +429,30 @@ describe('SurveysService', () => {
     it('rejects closing when the survey is not ACTIVE', async () => {
       prisma.survey.updateMany.mockResolvedValue({ count: 0 });
       await expect(service.close(tenantId, surveyId)).rejects.toThrow(BadRequestException);
+      expect(release.release).not.toHaveBeenCalled();
+    });
+
+    it('force-releases pending anonymous responses after the close commits', async () => {
+      prisma.survey.updateMany.mockResolvedValue({ count: 1 });
+      prisma.survey.findFirst.mockResolvedValue({ id: surveyId, questions: [] });
+
+      await service.close(tenantId, surveyId);
+
+      expect(release.release).toHaveBeenCalledWith(tenantId, surveyId, { force: true });
+      expect(prisma.survey.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+        release.release.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('still closes when the release fails (the cron retries it)', async () => {
+      prisma.survey.updateMany.mockResolvedValue({ count: 1 });
+      prisma.survey.findFirst.mockResolvedValue({ id: surveyId, questions: [] });
+      release.release.mockRejectedValue(new Error('db blip'));
+
+      await expect(service.close(tenantId, surveyId)).resolves.toEqual({
+        id: surveyId,
+        questions: [],
+      });
     });
   });
 

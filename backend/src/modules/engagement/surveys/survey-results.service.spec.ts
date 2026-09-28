@@ -62,7 +62,14 @@ describe('SurveyResultsService', () => {
     prisma.surveyParticipant.count.mockResolvedValue(0);
     prisma.surveyResponse.count.mockResolvedValue(0);
     prisma.surveyAnswer.findMany.mockResolvedValue([]);
+    prisma.surveyPendingResponse.count.mockResolvedValue(0);
   });
+
+  /** participant.count answers `participants` in general and `submitted` for `submitted: true`. */
+  const participantCounts = (participants: number, submitted: number) =>
+    prisma.surveyParticipant.count.mockImplementation(async (args: any) =>
+      args?.where?.submitted === true ? submitted : participants,
+    );
 
   describe('results', () => {
     it('404s a missing survey', async () => {
@@ -77,7 +84,7 @@ describe('SurveyResultsService', () => {
 
     it('withholds results for an anonymous survey below the minimum', async () => {
       prisma.survey.findFirst.mockResolvedValue(surveyWith([ratingQuestion], { isAnonymous: true }));
-      prisma.surveyParticipant.count.mockResolvedValue(10);
+      participantCounts(10, 2);
       prisma.surveyResponse.count.mockResolvedValue(MIN_ANONYMOUS_RESPONSES - 1);
 
       const result = await service.results(tenantId, surveyId);
@@ -89,7 +96,61 @@ describe('SurveyResultsService', () => {
         participantCount: 10,
         responseCount: 2,
         responseRate: 20,
+        pendingCount: 0,
       });
+    });
+
+    it('counts only released responses toward the threshold and reports pendingCount', async () => {
+      prisma.survey.findFirst.mockResolvedValue(surveyWith([ratingQuestion], { isAnonymous: true }));
+      // 4 submitted: 2 released + 2 still waiting in the pending buffer.
+      participantCounts(10, 4);
+      prisma.surveyResponse.count.mockResolvedValue(2);
+      prisma.surveyPendingResponse.count.mockResolvedValue(2);
+
+      const result = await service.results(tenantId, surveyId);
+
+      expect(prisma.surveyPendingResponse.count).toHaveBeenCalledWith({
+        where: { tenantId, surveyId },
+      });
+      expect(result).toEqual({
+        surveyId,
+        isAnonymous: true,
+        withheld: true,
+        participantCount: 10,
+        responseCount: 2,
+        responseRate: 40,
+        pendingCount: 2,
+      });
+    });
+
+    it('bases the response rate on participants who submitted', async () => {
+      prisma.survey.findFirst.mockResolvedValue(surveyWith([ratingQuestion], { isAnonymous: true }));
+      participantCounts(10, 5);
+      prisma.surveyResponse.count.mockResolvedValue(3);
+      prisma.surveyPendingResponse.count.mockResolvedValue(2);
+
+      const result = await service.results(tenantId, surveyId);
+
+      expect(prisma.surveyParticipant.count).toHaveBeenCalledWith({
+        where: { tenantId, surveyId, submitted: true },
+      });
+      expect(result).toMatchObject({
+        withheld: false,
+        responseCount: 3,
+        responseRate: 50,
+        pendingCount: 2,
+      });
+    });
+
+    it('does not query the pending buffer for a named survey', async () => {
+      prisma.survey.findFirst.mockResolvedValue(surveyWith([ratingQuestion]));
+      participantCounts(4, 4);
+      prisma.surveyResponse.count.mockResolvedValue(4);
+
+      const result = await service.results(tenantId, surveyId);
+
+      expect(prisma.surveyPendingResponse.count).not.toHaveBeenCalled();
+      expect(result.pendingCount).toBe(0);
     });
 
     it('shows results for an anonymous survey once the minimum is met', async () => {

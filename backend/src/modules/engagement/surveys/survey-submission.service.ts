@@ -2,22 +2,37 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { SurveyStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { FieldEncryptionService } from '../../../common/crypto/field-encryption.service';
 import { SubmitSurveyDto } from './dto/survey.dto';
 import { validateAnswers } from './survey-answer-validation';
+import { SurveyReleaseService } from './survey-release.service';
 
 /**
  * Submitting a survey response. Kept separate from `SurveysService` so the
  * anonymity-sensitive path is small and easy to review: no `@Audit()`
  * decorator anywhere near it, and no logging that could pair a user with a
  * response id.
+ *
+ * Anonymous surveys never write a response in the submit transaction: that
+ * transaction also flips the participant flag (which names the employee), and
+ * rows written by one transaction share PostgreSQL's `xmin`. Instead the
+ * answers go into an encrypted pending buffer that `SurveyReleaseService`
+ * later moves into `survey_responses` in shuffled batches.
  */
 @Injectable()
 export class SurveySubmissionService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(SurveySubmissionService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly fieldEncryption: FieldEncryptionService,
+    private readonly release: SurveyReleaseService,
+  ) {}
 
   async submit(
     tenantId: string,
@@ -35,6 +50,11 @@ export class SurveySubmissionService {
     }
 
     const rows = validateAnswers(survey.questions, dto.answers);
+    // Encrypt before any write: a missing FIELD_ENCRYPTION_KEY fails with a
+    // 500 here and nothing is recorded.
+    const payload = survey.isAnonymous
+      ? this.fieldEncryption.encrypt(JSON.stringify(rows))
+      : null;
 
     await this.prisma.$transaction(async (tx) => {
       const marked = await tx.surveyParticipant.updateMany({
@@ -50,13 +70,16 @@ export class SurveySubmissionService {
         throw new NotFoundException('Survey not found');
       }
 
+      if (payload !== null) {
+        await tx.surveyPendingResponse.create({
+          data: { tenantId, surveyId, payload },
+          select: { id: true },
+        });
+        return;
+      }
+
       const response = await tx.surveyResponse.create({
-        data: {
-          tenantId,
-          surveyId,
-          employeeId: survey.isAnonymous ? null : employeeId,
-          submittedAt: survey.isAnonymous ? null : new Date(),
-        },
+        data: { tenantId, surveyId, employeeId, submittedAt: new Date() },
         select: { id: true },
       });
 
@@ -64,6 +87,18 @@ export class SurveySubmissionService {
         data: rows.map((r) => ({ tenantId, responseId: response.id, ...r })),
       });
     });
+
+    if (payload !== null) {
+      // The submission is already recorded; a failed release is retried on
+      // close and by the cron. Log without any user or employee identifier.
+      try {
+        await this.release.release(tenantId, surveyId, { force: false });
+      } catch (err) {
+        this.logger.error(
+          `Anonymous response release failed for survey ${surveyId}: ${(err as Error).message}`,
+        );
+      }
+    }
 
     return { submitted: true };
   }

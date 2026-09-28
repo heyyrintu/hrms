@@ -46,14 +46,23 @@ export default function SurveyResultsPage() {
   if (loading) return <p className="text-sm text-warm-400">Loading...</p>;
   if (!results) return <p className="text-sm text-warm-400">Results not found.</p>;
 
+  const pendingCount = results.pendingCount ?? 0;
+  const submittedCount = results.responseCount + pendingCount;
+
   return (
     <div className="space-y-4">
       <Card>
         <CardContent className="py-4">
           <p className="text-sm text-warm-500">Response rate</p>
           <p className="text-2xl font-semibold">
-            {results.responseCount} / {results.participantCount} ({results.responseRate}%)
+            {submittedCount} / {results.participantCount} ({results.responseRate}%)
           </p>
+          {pendingCount > 0 && (
+            <p className="mt-1 text-sm text-warm-500">
+              {pendingCount} {pendingCount === 1 ? 'response is' : 'responses are'} waiting to be
+              released in a batch.
+            </p>
+          )}
         </CardContent>
       </Card>
 

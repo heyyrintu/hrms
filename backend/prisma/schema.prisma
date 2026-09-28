@@ -155,9 +155,11 @@ model Tenant {
   surveyParticipants        SurveyParticipant[]
   surveyResponses           SurveyResponse[]
   surveyAnswers             SurveyAnswer[]
+  surveyPendingResponses    SurveyPendingResponse[]
   polls                     Poll[]
   pollOptions               PollOption[]
   pollVoters                PollVoter[]
+  pollPendingVotes          PollPendingVote[]
   badges                    Badge[]
   recognitions              Recognition[]
   recognitionRecipients     RecognitionRecipient[]
@@ -3464,6 +3466,7 @@ model Survey {
   questions    SurveyQuestion[]
   participants SurveyParticipant[]
   responses    SurveyResponse[]
+  pending      SurveyPendingResponse[]
 
   @@index([tenantId, status])
   @@map("surveys")
@@ -3542,6 +3545,23 @@ model SurveyAnswer {
   @@map("survey_answers")
 }
 
+/// Anonymous submissions waiting to be released into survey_responses in a
+/// shuffled batch. `payload` is AES-256-GCM ciphertext (FieldEncryptionService)
+/// of the normalised answers, so a row that shares xmin with its participant
+/// row reveals nothing readable.
+model SurveyPendingResponse {
+  id       String @id @default(uuid())
+  tenantId String
+  surveyId String
+  payload  String @db.Text
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  survey Survey @relation(fields: [surveyId], references: [id], onDelete: Cascade)
+
+  @@index([surveyId])
+  @@map("survey_pending_responses")
+}
+
 model Poll {
   id          String     @id @default(uuid())
   tenantId    String
@@ -3557,6 +3577,7 @@ model Poll {
   createdBy Employee     @relation("PollCreatedBy", fields: [createdById], references: [id])
   options   PollOption[]
   voters    PollVoter[]
+  pending   PollPendingVote[]
 
   @@index([tenantId, status])
   @@map("polls")
@@ -3590,6 +3611,23 @@ model PollVoter {
 
   @@unique([pollId, employeeId])
   @@map("poll_voters")
+}
+
+/// Votes waiting to be applied to poll_options.voteCount in a batch.
+/// `payload` is AES-256-GCM ciphertext (FieldEncryptionService) of the chosen
+/// option id, so a row sharing xmin with its PollVoter row reveals nothing
+/// readable. No timestamps and no employee column, by design.
+model PollPendingVote {
+  id       String @id @default(uuid())
+  tenantId String
+  pollId   String
+  payload  String @db.Text
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  poll   Poll   @relation(fields: [pollId], references: [id], onDelete: Cascade)
+
+  @@index([pollId])
+  @@map("poll_pending_votes")
 }
 
 model Badge {
