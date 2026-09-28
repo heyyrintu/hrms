@@ -25,6 +25,7 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { RequirePermissions } from '../../common/permissions/require-permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { UserRole, AccrualTriggerType } from '@prisma/client';
@@ -34,6 +35,7 @@ import { UserRole, AccrualTriggerType } from '@prisma/client';
 @Controller('leave/admin/accrual')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+@RequirePermissions('leave.config.manage')
 export class LeaveAccrualController {
   constructor(private accrualService: LeaveAccrualService) {}
 

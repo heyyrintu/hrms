@@ -15,6 +15,7 @@ import type { Response } from 'express';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequirePermissions } from '../../../common/permissions/require-permissions.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../../common/types/jwt-payload.type';
 import { StorageService } from '../../../common/storage/storage.service';
@@ -69,6 +70,7 @@ export class ProofsController {
 
   @Get()
   @Roles(...PAYROLL_STAFF)
+  @RequirePermissions('payroll.proofs.review')
   @ApiOperation({
     summary: 'The review queue',
     description:
@@ -85,6 +87,7 @@ export class ProofsController {
 
   @Get('employees/:employeeId/summary')
   @Roles(...PAYROLL_STAFF)
+  @RequirePermissions('payroll.proofs.review')
   @ApiOperation({
     summary: "Declared against claimed against approved, for one employee",
     description: 'FY 2026-27 is 2026. Defaults to the financial year in progress.',
@@ -214,6 +217,7 @@ export class ProofsController {
 
   @Post(':id/approve')
   @Roles(...PAYROLL_STAFF)
+  @RequirePermissions('payroll.proofs.review')
   @ApiOperation({
     summary: 'Accept a proof, in whole or in part',
     description:
@@ -232,6 +236,7 @@ export class ProofsController {
 
   @Post(':id/reject')
   @Roles(...PAYROLL_STAFF)
+  @RequirePermissions('payroll.proofs.review')
   @ApiOperation({
     summary: 'Refuse a proof, with a reason',
     description:

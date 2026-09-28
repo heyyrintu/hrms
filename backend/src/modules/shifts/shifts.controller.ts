@@ -21,6 +21,7 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { RequirePermissions } from '../../common/permissions/require-permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 
@@ -39,6 +40,7 @@ export class ShiftsController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
+  @RequirePermissions('org.manage')
   async getAssignments(
     @CurrentUser() user: AuthenticatedUser,
     @Query('activeOnly') activeOnly?: boolean,
@@ -64,6 +66,7 @@ export class ShiftsController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('org.manage')
   async assignShift(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: AssignShiftDto,
@@ -77,6 +80,7 @@ export class ShiftsController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('org.manage')
   async bulkAssignShift(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: BulkAssignShiftDto,
@@ -118,6 +122,7 @@ export class ShiftsController {
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('org.manage')
   async create(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateShiftDto,
@@ -132,6 +137,7 @@ export class ShiftsController {
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('org.manage')
   async update(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
@@ -147,6 +153,7 @@ export class ShiftsController {
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 404, description: 'Not found' })
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('org.manage')
   async delete(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,

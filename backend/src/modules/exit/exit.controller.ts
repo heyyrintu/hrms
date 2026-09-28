@@ -19,6 +19,7 @@ import {
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { RequirePermissions } from '../../common/permissions/require-permissions.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 
@@ -31,6 +32,7 @@ export class ExitController {
 
   @Post('separations')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('exit.manage')
   @ApiOperation({ summary: 'Initiate employee separation' })
   @ApiResponse({ status: 201, description: 'Separation initiated' })
   async initiate(
@@ -42,6 +44,7 @@ export class ExitController {
 
   @Get('separations')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('exit.manage')
   @ApiOperation({ summary: 'List all separations' })
   @ApiResponse({ status: 200, description: 'Success' })
   async findAll(
@@ -53,6 +56,7 @@ export class ExitController {
 
   @Get('separations/:id')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('exit.manage')
   @ApiOperation({ summary: 'Get separation by ID' })
   @ApiResponse({ status: 200, description: 'Success' })
   async findOne(
@@ -64,6 +68,7 @@ export class ExitController {
 
   @Put('separations/:id')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('exit.manage')
   @ApiOperation({ summary: 'Update separation details' })
   @ApiResponse({ status: 200, description: 'Updated' })
   async update(
@@ -76,6 +81,7 @@ export class ExitController {
 
   @Post('separations/:id/notice-period')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('exit.manage')
   @ApiOperation({ summary: 'Move to notice period' })
   @ApiResponse({ status: 200, description: 'Moved to notice period' })
   async moveToNoticePeriod(
@@ -87,6 +93,7 @@ export class ExitController {
 
   @Post('separations/:id/clearance')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('exit.manage')
   @ApiOperation({ summary: 'Move to clearance pending' })
   @ApiResponse({ status: 200, description: 'Moved to clearance' })
   async moveToClearance(
@@ -98,6 +105,7 @@ export class ExitController {
 
   @Post('separations/:id/complete')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('exit.manage')
   @ApiOperation({ summary: 'Complete separation (marks employee inactive)' })
   @ApiResponse({ status: 200, description: 'Completed' })
   async complete(
@@ -109,6 +117,7 @@ export class ExitController {
 
   @Post('separations/:id/cancel')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('exit.manage')
   @ApiOperation({ summary: 'Cancel separation' })
   @ApiResponse({ status: 200, description: 'Cancelled' })
   async cancel(

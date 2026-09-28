@@ -4,6 +4,7 @@ import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequirePermissions } from '../../../common/permissions/require-permissions.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../../common/types/jwt-payload.type';
 import { StatutoryService } from './statutory.service';
@@ -18,6 +19,7 @@ export class StatutoryController {
 
   @Get('config')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('payroll.statutory.manage')
   @ApiOperation({
     summary: 'Read the statutory payroll configuration',
     description:
@@ -30,6 +32,7 @@ export class StatutoryController {
 
   @Put('config')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('payroll.statutory.manage')
   @ApiOperation({
     summary: 'Create or patch the statutory payroll configuration',
     description:
@@ -45,6 +48,7 @@ export class StatutoryController {
 
   @Get('professional-tax-slabs')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('payroll.statutory.manage')
   @ApiOperation({ summary: 'List the professional tax slabs held for a state' })
   @ApiResponse({ status: 200, description: 'Success' })
   async getPtSlabs(
@@ -56,6 +60,7 @@ export class StatutoryController {
 
   @Get('income-tax-config')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('payroll.statutory.manage')
   @ApiOperation({ summary: 'Read the income tax slabs held for a financial year' })
   @ApiResponse({ status: 200, description: 'Success' })
   async getIncomeTaxConfig(
@@ -105,6 +110,7 @@ export class StatutoryController {
 
   @Get('declarations/:employeeId')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('payroll.statutory.manage')
   @ApiOperation({ summary: "Read an employee's tax declaration" })
   @ApiResponse({ status: 200, description: 'Success' })
   async getDeclarationFor(

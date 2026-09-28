@@ -14,6 +14,7 @@ import { ComputeSettlementDto, UpdateSettlementDto } from './dto/settlement.dto'
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
+import { RequirePermissions } from '../../../common/permissions/require-permissions.decorator';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../../common/types/jwt-payload.type';
 
@@ -32,6 +33,7 @@ export class SettlementController {
 
   @Post('separations/:separationId/compute')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('exit.manage')
   @ApiOperation({
     summary: 'Compute a draft settlement for a separation, replacing any existing draft',
   })
@@ -49,6 +51,7 @@ export class SettlementController {
   // Declared before `:id` so the literal segment is not swallowed by it.
   @Get('separations/:separationId')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('exit.manage')
   @ApiOperation({ summary: "Get a separation's settlement" })
   @ApiResponse({ status: 200, description: 'Success' })
   async findBySeparation(
@@ -60,6 +63,7 @@ export class SettlementController {
 
   @Get(':id')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('exit.manage')
   @ApiOperation({ summary: 'Get settlement by ID' })
   @ApiResponse({ status: 200, description: 'Success' })
   async findOne(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
@@ -68,6 +72,7 @@ export class SettlementController {
 
   @Put(':id')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('exit.manage')
   @ApiOperation({
     summary: 'Set the manual figures on a draft settlement and re-derive the totals',
   })
@@ -83,6 +88,7 @@ export class SettlementController {
 
   @Post(':id/approve')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('exit.manage')
   @ApiOperation({ summary: 'Approve a draft settlement' })
   @ApiResponse({ status: 201, description: 'Approved' })
   @ApiResponse({ status: 409, description: 'Settlement is not a draft' })
@@ -95,6 +101,7 @@ export class SettlementController {
 
   @Post(':id/pay')
   @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN)
+  @RequirePermissions('exit.manage')
   @ApiOperation({ summary: 'Mark an approved settlement as paid' })
   @ApiResponse({ status: 201, description: 'Marked paid' })
   @ApiResponse({ status: 409, description: 'Settlement has not been approved' })
