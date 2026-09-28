@@ -67,7 +67,7 @@ export class TwoFactorService {
         ? this.totp.verify(this.fieldEncryption.decrypt(user.totpSecretEnc), code, user.totpLastStep)
         : null;
       if (step === null) {
-        await this.recordFailedAttempt(challenge.id, challenge.attempts);
+        await this.recordFailedAttempt(challenge.id);
         throw new UnauthorizedException(INVALID_CODE_MESSAGE);
       }
 
@@ -79,14 +79,23 @@ export class TwoFactorService {
         if (consumed.count !== 1) {
           throw new UnauthorizedException(INVALID_CODE_MESSAGE);
         }
-        await tx.user.update({ where: { id: user.id }, data: { totpLastStep: step } });
+        // M1: a conditional write, not a plain update — a second request
+        // racing this one for the same TOTP step (replay) loses, because by
+        // the time it runs totpLastStep is no longer < step.
+        const stepWrite = await tx.user.updateMany({
+          where: { id: user.id, OR: [{ totpLastStep: null }, { totpLastStep: { lt: step } }] },
+          data: { totpLastStep: step },
+        });
+        if (stepWrite.count !== 1) {
+          throw new UnauthorizedException(INVALID_CODE_MESSAGE);
+        }
       });
 
       return this.authService.issueSession(user);
     }
 
     if (!this.recoveryCodes.looksLikeRecoveryCode(code)) {
-      await this.recordFailedAttempt(challenge.id, challenge.attempts);
+      await this.recordFailedAttempt(challenge.id);
       throw new UnauthorizedException(INVALID_CODE_MESSAGE);
     }
 
@@ -99,7 +108,7 @@ export class TwoFactorService {
       },
     });
     if (!recoveryCode) {
-      await this.recordFailedAttempt(challenge.id, challenge.attempts);
+      await this.recordFailedAttempt(challenge.id);
       throw new UnauthorizedException(INVALID_CODE_MESSAGE);
     }
 
@@ -111,24 +120,43 @@ export class TwoFactorService {
       if (consumed.count !== 1) {
         throw new UnauthorizedException(INVALID_CODE_MESSAGE);
       }
-      await tx.userRecoveryCode.update({
-        where: { id: recoveryCode.id },
+      // M1: conditional on usedAt: null, so two concurrent requests racing
+      // to spend the same recovery code cannot both succeed.
+      const codeConsumed = await tx.userRecoveryCode.updateMany({
+        where: { id: recoveryCode.id, usedAt: null },
         data: { usedAt: new Date() },
       });
+      if (codeConsumed.count !== 1) {
+        throw new UnauthorizedException(INVALID_CODE_MESSAGE);
+      }
     });
 
     return this.authService.issueSession(user);
   }
 
-  private async recordFailedAttempt(challengeId: string, currentAttempts: number): Promise<void> {
-    const attempts = currentAttempts + 1;
-    const data: { attempts: { increment: number }; consumedAt?: Date } = {
-      attempts: { increment: 1 },
-    };
-    if (attempts >= MAX_MFA_ATTEMPTS) {
-      data.consumedAt = new Date();
+  /**
+   * Records one failed 2FA attempt against the challenge, atomically.
+   *
+   * M2: this used to read `challenge.attempts` and pass it in, then write
+   * `attempts + 1` — two parallel wrong-code requests could both read the
+   * same stale count and both increment from it, letting attempts overshoot
+   * MAX_MFA_ATTEMPTS. Reserving the attempt with a conditional `updateMany`
+   * (`attempts: { lt: MAX_MFA_ATTEMPTS }`) makes the increment atomic: once
+   * the count is already at the max, further calls match zero rows and
+   * simply no-op instead of incrementing further.
+   */
+  private async recordFailedAttempt(challengeId: string): Promise<void> {
+    const reserved = await this.prisma.mfaChallenge.updateMany({
+      where: { id: challengeId, consumedAt: null, attempts: { lt: MAX_MFA_ATTEMPTS } },
+      data: { attempts: { increment: 1 } },
+    });
+    if (reserved.count !== 1) {
+      return;
     }
-    await this.prisma.mfaChallenge.update({ where: { id: challengeId }, data });
+    await this.prisma.mfaChallenge.updateMany({
+      where: { id: challengeId, consumedAt: null, attempts: { gte: MAX_MFA_ATTEMPTS } },
+      data: { consumedAt: new Date() },
+    });
   }
 
   /** Start (or restart) TOTP enrolment. Only the newest pending secret is live. */

@@ -105,6 +105,7 @@ describe('TwoFactorService', () => {
       totp.verify.mockReturnValue(11);
       prisma.$transaction.mockImplementation(async (fn: any) => fn(prisma));
       prisma.mfaChallenge.updateMany.mockResolvedValue({ count: 1 });
+      prisma.user.updateMany.mockResolvedValue({ count: 1 });
 
       const result = await service.verify('mfa-token', '123456');
 
@@ -114,12 +115,30 @@ describe('TwoFactorService', () => {
         where: { id: 'challenge-1', consumedAt: null },
         data: { consumedAt: expect.any(Date) },
       });
-      expect(prisma.user.update).toHaveBeenCalledWith({
-        where: { id: 'user-1' },
+      // M1: a conditional updateMany, not a plain update, so a second,
+      // concurrent request replaying the same code cannot also succeed.
+      expect(prisma.user.updateMany).toHaveBeenCalledWith({
+        where: { id: 'user-1', OR: [{ totpLastStep: null }, { totpLastStep: { lt: 11 } }] },
         data: { totpLastStep: 11 },
       });
       expect(authService.issueSession).toHaveBeenCalled();
       expect(result).toEqual({ accessToken: 'tok', user: {} });
+    });
+
+    // M1: a second request racing the first for the same TOTP code loses —
+    // the conditional write's WHERE no longer matches once the first
+    // request already advanced totpLastStep, so count comes back 0.
+    it('M1: rejects a TOTP replay when the conditional totpLastStep write loses the race (count !== 1)', async () => {
+      stepTokenService.verify.mockReturnValue(mfaPayload);
+      prisma.mfaChallenge.findFirst.mockResolvedValue(challenge);
+      prisma.user.findUnique.mockResolvedValue({ ...baseUser, totpSecretEnc: 'enc:SECRET', totpLastStep: 10 });
+      totp.verify.mockReturnValue(11);
+      prisma.$transaction.mockImplementation(async (fn: any) => fn(prisma));
+      prisma.mfaChallenge.updateMany.mockResolvedValue({ count: 1 });
+      prisma.user.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.verify('mfa-token', '123456')).rejects.toThrow(UnauthorizedException);
+      expect(authService.issueSession).not.toHaveBeenCalled();
     });
 
     it('consumes the challenge and an unused recovery code, and issues a session', async () => {
@@ -129,18 +148,34 @@ describe('TwoFactorService', () => {
       prisma.userRecoveryCode.findFirst.mockResolvedValue({ id: 'rc-1', usedAt: null });
       prisma.$transaction.mockImplementation(async (fn: any) => fn(prisma));
       prisma.mfaChallenge.updateMany.mockResolvedValue({ count: 1 });
+      prisma.userRecoveryCode.updateMany.mockResolvedValue({ count: 1 });
 
       const result = await service.verify('mfa-token', 'ABCDE-FGHJK');
 
       expect(prisma.userRecoveryCode.findFirst).toHaveBeenCalledWith({
         where: { userId: 'user-1', tenantId: 'tenant-1', codeHash: expect.any(String), usedAt: null },
       });
-      expect(prisma.userRecoveryCode.update).toHaveBeenCalledWith({
-        where: { id: 'rc-1' },
+      // M1: a conditional updateMany keyed on usedAt: null, not a plain
+      // update, so two concurrent requests can't both consume the same code.
+      expect(prisma.userRecoveryCode.updateMany).toHaveBeenCalledWith({
+        where: { id: 'rc-1', usedAt: null },
         data: { usedAt: expect.any(Date) },
       });
       expect(authService.issueSession).toHaveBeenCalled();
       expect(result).toEqual({ accessToken: 'tok', user: {} });
+    });
+
+    it('M1: rejects a recovery-code reuse when the conditional consume loses the race (count !== 1)', async () => {
+      stepTokenService.verify.mockReturnValue(mfaPayload);
+      prisma.mfaChallenge.findFirst.mockResolvedValue(challenge);
+      prisma.user.findUnique.mockResolvedValue({ ...baseUser, totpSecretEnc: 'enc:SECRET' });
+      prisma.userRecoveryCode.findFirst.mockResolvedValue({ id: 'rc-1', usedAt: null });
+      prisma.$transaction.mockImplementation(async (fn: any) => fn(prisma));
+      prisma.mfaChallenge.updateMany.mockResolvedValue({ count: 1 });
+      prisma.userRecoveryCode.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.verify('mfa-token', 'ABCDE-FGHJK')).rejects.toThrow(UnauthorizedException);
+      expect(authService.issueSession).not.toHaveBeenCalled();
     });
 
     it('accepts a recovery code typed with different casing/spacing once (Review Focus 3)', async () => {
@@ -150,22 +185,31 @@ describe('TwoFactorService', () => {
       prisma.userRecoveryCode.findFirst.mockResolvedValue({ id: 'rc-1', usedAt: null });
       prisma.$transaction.mockImplementation(async (fn: any) => fn(prisma));
       prisma.mfaChallenge.updateMany.mockResolvedValue({ count: 1 });
+      prisma.userRecoveryCode.updateMany.mockResolvedValue({ count: 1 });
 
       await service.verify('mfa-token', 'abcde fghjk');
 
       expect(recoveryCodes.hash).toHaveBeenCalledWith('abcde fghjk');
     });
 
-    it('rejects a wrong TOTP code and increments attempts', async () => {
+    it('rejects a wrong TOTP code and reserves the attempt atomically (M2)', async () => {
       stepTokenService.verify.mockReturnValue(mfaPayload);
       prisma.mfaChallenge.findFirst.mockResolvedValue(challenge);
       prisma.user.findUnique.mockResolvedValue({ ...baseUser, totpSecretEnc: 'enc:SECRET' });
       totp.verify.mockReturnValue(null);
+      // reserve succeeds (attempts 0 -> 1); the reached-5 check is a no-op.
+      prisma.mfaChallenge.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 });
 
       await expect(service.verify('mfa-token', '000000')).rejects.toThrow(UnauthorizedException);
-      expect(prisma.mfaChallenge.update).toHaveBeenCalledWith({
-        where: { id: 'challenge-1' },
+      expect(prisma.mfaChallenge.updateMany).toHaveBeenNthCalledWith(1, {
+        where: { id: 'challenge-1', consumedAt: null, attempts: { lt: 5 } },
         data: { attempts: { increment: 1 } },
+      });
+      expect(prisma.mfaChallenge.updateMany).toHaveBeenNthCalledWith(2, {
+        where: { id: 'challenge-1', consumedAt: null, attempts: { gte: 5 } },
+        data: { consumedAt: expect.any(Date) },
       });
     });
 
@@ -174,11 +218,15 @@ describe('TwoFactorService', () => {
       prisma.mfaChallenge.findFirst.mockResolvedValue({ ...challenge, attempts: 4 });
       prisma.user.findUnique.mockResolvedValue({ ...baseUser, totpSecretEnc: 'enc:SECRET' });
       totp.verify.mockReturnValue(null);
+      // reserve succeeds (attempts 4 -> 5); the reached-5 check then consumes.
+      prisma.mfaChallenge.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 1 });
 
       await expect(service.verify('mfa-token', '000000')).rejects.toThrow(UnauthorizedException);
-      expect(prisma.mfaChallenge.update).toHaveBeenCalledWith({
-        where: { id: 'challenge-1' },
-        data: { attempts: { increment: 1 }, consumedAt: expect.any(Date) },
+      expect(prisma.mfaChallenge.updateMany).toHaveBeenNthCalledWith(2, {
+        where: { id: 'challenge-1', consumedAt: null, attempts: { gte: 5 } },
+        data: { consumedAt: expect.any(Date) },
       });
 
       // 6th call: the challenge is now consumed.
@@ -189,6 +237,29 @@ describe('TwoFactorService', () => {
       });
       totp.verify.mockReturnValue(42); // even the right code now
       await expect(service.verify('mfa-token', '111111')).rejects.toThrow(UnauthorizedException);
+    });
+
+    // M2: two parallel wrong-code requests can both read the challenge at
+    // attempts: 4 (passing the top-of-verify guard) before either writes.
+    // The reservation is what actually serialises them: by the time this
+    // request's updateMany runs, a concurrent request has already pushed
+    // attempts to 5 in the DB, so `attempts: { lt: 5 }` no longer matches
+    // and this one gets count 0 — it must not increment further (a
+    // read-then-increment would have incremented from its own stale read
+    // and overshot 5).
+    it('M2: a reservation that loses the race (DB already at 5) does not increment further', async () => {
+      stepTokenService.verify.mockReturnValue(mfaPayload);
+      prisma.mfaChallenge.findFirst.mockResolvedValue({ ...challenge, attempts: 4 });
+      prisma.user.findUnique.mockResolvedValue({ ...baseUser, totpSecretEnc: 'enc:SECRET' });
+      totp.verify.mockReturnValue(null);
+      prisma.mfaChallenge.updateMany.mockResolvedValueOnce({ count: 0 }); // lt: 5 no longer matches
+
+      await expect(service.verify('mfa-token', '000000')).rejects.toThrow(UnauthorizedException);
+      expect(prisma.mfaChallenge.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.mfaChallenge.updateMany).toHaveBeenCalledWith({
+        where: { id: 'challenge-1', consumedAt: null, attempts: { lt: 5 } },
+        data: { attempts: { increment: 1 } },
+      });
     });
 
     it('401s when the challenge does not exist, is expired, or belongs to another user/tenant', async () => {

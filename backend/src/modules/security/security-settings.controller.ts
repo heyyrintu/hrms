@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -43,7 +43,10 @@ export class SecuritySettingsController {
 
   @Post('users/:id/2fa/reset')
   @ApiOperation({ summary: "Clear a user's TOTP secret and recovery codes and sign out their sessions" })
-  async resetTwoFactor(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+  async resetTwoFactor(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return this.twoFactorService.resetForUser(user.tenantId, id, user);
   }
 }

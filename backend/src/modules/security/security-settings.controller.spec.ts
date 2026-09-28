@@ -1,4 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ParseUUIDPipe } from '@nestjs/common';
+import { ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { SecuritySettingsController } from './security-settings.controller';
 import { SecuritySettingsService } from './security-settings.service';
 import { TwoFactorService } from '../auth/two-factor/two-factor.service';
@@ -60,5 +62,21 @@ describe('SecuritySettingsController', () => {
 
     expect(mockTwoFactorService.resetForUser).toHaveBeenCalledWith('tenant-1', 'user-2', actor);
     expect(result).toEqual({ message: 'ok' });
+  });
+
+  // M8: the sibling security routes (custom-roles, security-users) validate
+  // their :id param as a UUID; resetTwoFactor's :id was missing the same
+  // guard, so a malformed id fell through to the service instead of a 400.
+  it('validates the :id param as a UUID on resetTwoFactor, like the sibling security routes', () => {
+    const metadata = Reflect.getMetadata(
+      ROUTE_ARGS_METADATA,
+      SecuritySettingsController,
+      'resetTwoFactor',
+    );
+    const idParam = Object.values(metadata ?? {}).find(
+      (entry: any) => entry.data === 'id',
+    ) as { pipes: unknown[] } | undefined;
+
+    expect(idParam?.pipes).toContain(ParseUUIDPipe);
   });
 });
