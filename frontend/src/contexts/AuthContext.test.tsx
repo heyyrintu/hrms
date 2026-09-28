@@ -41,7 +41,7 @@ function TestComponent() {
       <span data-testid="is-admin">{String(auth.isAdmin)}</span>
       <span data-testid="is-super-admin">{String(auth.isSuperAdmin)}</span>
       <span data-testid="user-email">{auth.user?.email || 'none'}</span>
-      <button onClick={() => auth.login({ email: 'test@test.com', password: 'pass' })}>Login</button>
+      <button onClick={() => auth.login('test@test.com', 'pass')}>Login</button>
       <button onClick={auth.logout}>Logout</button>
     </div>
   );
@@ -212,5 +212,94 @@ describe('AuthContext', () => {
     expect(screen.getByTestId('org').textContent).toBe('true');
     expect(screen.getByTestId('audit').textContent).toBe('false');
     expect(screen.getByTestId('none').textContent).toBe('false');
+  });
+
+  describe('login result (Keka wave H1)', () => {
+    function LoginResultProbe() {
+      const auth = useAuth();
+      const [result, setResult] = React.useState<string>('none');
+      return (
+        <div>
+          <span data-testid="result">{result}</span>
+          <span data-testid="authed">{String(auth.isAuthenticated)}</span>
+          <button
+            onClick={async () => {
+              const outcome = await auth.login('user@test.com', 'pass', 'acme');
+              setResult(JSON.stringify(outcome));
+            }}
+          >
+            Go
+          </button>
+        </div>
+      );
+    }
+
+    it('returns { status: "done" } and completes the session on a normal login', async () => {
+      (authApi.login as jest.Mock).mockResolvedValue({
+        data: { accessToken: 'tok', user: { id: '1', email: 'user@test.com', role: 'EMPLOYEE', tenantId: 't1' } },
+      });
+
+      render(
+        <AuthProvider>
+          <LoginResultProbe />
+        </AuthProvider>
+      );
+      await waitFor(() => expect(screen.getByTestId('authed').textContent).toBe('false'));
+
+      await act(async () => {
+        screen.getByText('Go').click();
+      });
+
+      expect(authApi.login).toHaveBeenCalledWith('user@test.com', 'pass', 'acme');
+      expect(JSON.parse(screen.getByTestId('result').textContent!)).toEqual({ status: 'done' });
+      expect(screen.getByTestId('authed').textContent).toBe('true');
+    });
+
+    it('returns { status: "mfa", mfaToken } without completing a session', async () => {
+      (authApi.login as jest.Mock).mockResolvedValue({
+        data: { mfaRequired: true, mfaToken: 'mfa-tok-1' },
+      });
+
+      render(
+        <AuthProvider>
+          <LoginResultProbe />
+        </AuthProvider>
+      );
+      await waitFor(() => expect(screen.getByTestId('authed').textContent).toBe('false'));
+
+      await act(async () => {
+        screen.getByText('Go').click();
+      });
+
+      expect(JSON.parse(screen.getByTestId('result').textContent!)).toEqual({
+        status: 'mfa',
+        mfaToken: 'mfa-tok-1',
+      });
+      expect(screen.getByTestId('authed').textContent).toBe('false');
+      expect(mockLocalStorage.setItem).not.toHaveBeenCalledWith('hrms_token', expect.anything());
+    });
+
+    it('returns { status: "enrol", enrolToken } without completing a session', async () => {
+      (authApi.login as jest.Mock).mockResolvedValue({
+        data: { enrolmentRequired: true, enrolToken: 'enrol-tok-1' },
+      });
+
+      render(
+        <AuthProvider>
+          <LoginResultProbe />
+        </AuthProvider>
+      );
+      await waitFor(() => expect(screen.getByTestId('authed').textContent).toBe('false'));
+
+      await act(async () => {
+        screen.getByText('Go').click();
+      });
+
+      expect(JSON.parse(screen.getByTestId('result').textContent!)).toEqual({
+        status: 'enrol',
+        enrolToken: 'enrol-tok-1',
+      });
+      expect(screen.getByTestId('authed').textContent).toBe('false');
+    });
   });
 });
