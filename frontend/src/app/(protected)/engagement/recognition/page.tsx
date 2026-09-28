@@ -24,13 +24,15 @@ import toast from 'react-hot-toast';
 type Tab = 'wall' | 'leaderboard' | 'badges' | 'settings';
 
 export default function RecognitionPage() {
-  const { hasRole } = useAuth();
+  const { hasRole, user } = useAuth();
   const isHr = hasRole(UserRole.HR_ADMIN, UserRole.SUPER_ADMIN);
+  const hasEmployee = !!user?.employeeId;
 
   const [tab, setTab] = useState<Tab>('wall');
 
   const [wall, setWall] = useState<Recognition[]>([]);
   const [summary, setSummary] = useState<RecognitionSummary | null>(null);
+  const [meFailed, setMeFailed] = useState(false);
   const [wallLoading, setWallLoading] = useState(true);
   const [giveOpen, setGiveOpen] = useState(false);
 
@@ -38,18 +40,35 @@ export default function RecognitionPage() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardRow[]>([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
 
+  // The wall is for everyone; `me()` 400s for a caller with no employee record
+  // (e.g. SUPER_ADMIN). The two must not share a failure: losing `me()` should
+  // never take the wall down with it.
   const loadWall = useCallback(async () => {
     setWallLoading(true);
     try {
-      const [wallRes, meRes] = await Promise.all([recognitionApi.wall(), recognitionApi.me()]);
+      const wallRes = await recognitionApi.wall();
       setWall(wallRes.data?.data ?? []);
-      setSummary(meRes.data ?? null);
     } catch {
       toast.error('Failed to load the recognition wall');
     } finally {
       setWallLoading(false);
     }
   }, []);
+
+  const loadMe = useCallback(async () => {
+    if (!hasEmployee) {
+      setMeFailed(true);
+      return;
+    }
+    try {
+      const meRes = await recognitionApi.me();
+      setSummary(meRes.data ?? null);
+      setMeFailed(false);
+    } catch {
+      setSummary(null);
+      setMeFailed(true);
+    }
+  }, [hasEmployee]);
 
   const loadLeaderboard = useCallback(async (p: LeaderboardPeriod) => {
     setLeaderboardLoading(true);
@@ -68,10 +87,18 @@ export default function RecognitionPage() {
   }, [loadWall]);
 
   useEffect(() => {
+    loadMe();
+  }, [loadMe]);
+
+  useEffect(() => {
     if (tab === 'leaderboard') {
       loadLeaderboard(period);
     }
   }, [tab, period, loadLeaderboard]);
+
+  const handleGiven = async () => {
+    await Promise.all([loadWall(), loadMe()]);
+  };
 
   const deleteRecognition = async (id: string) => {
     try {
@@ -82,6 +109,11 @@ export default function RecognitionPage() {
       toast.error('Failed to delete the recognition');
     }
   };
+
+  // Giving requires an employee record; hide the entry point rather than let
+  // the modal open onto a 400. A `me()` failure hides it too, out of caution,
+  // even though the two only actually share the "no employee record" cause.
+  const canGive = hasEmployee && !meFailed;
 
   const tabs: { id: Tab; label: string; visible: boolean }[] = [
     { id: 'wall', label: 'Wall', visible: true },
@@ -107,10 +139,12 @@ export default function RecognitionPage() {
                 <RefreshCw className={cn('mr-2 h-4 w-4', wallLoading && 'animate-spin')} />
                 Refresh
               </Button>
-              <Button onClick={() => setGiveOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" />
-                Give Recognition
-              </Button>
+              {canGive && (
+                <Button onClick={() => setGiveOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Give Recognition
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -164,10 +198,12 @@ export default function RecognitionPage() {
                   <Award className="mx-auto mb-4 h-16 w-16 text-warm-300" />
                   <h3 className="mb-2 text-lg font-semibold text-warm-900">No recognitions yet</h3>
                   <p className="mb-4 text-warm-600">Be the first to give someone kudos.</p>
-                  <Button onClick={() => setGiveOpen(true)}>
-                    <Plus className="mr-2 h-4 w-4" />
-                    Give Recognition
-                  </Button>
+                  {canGive && (
+                    <Button onClick={() => setGiveOpen(true)}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Give Recognition
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
             ) : (
@@ -203,7 +239,7 @@ export default function RecognitionPage() {
       <GiveRecognitionModal
         isOpen={giveOpen}
         onClose={() => setGiveOpen(false)}
-        onGiven={loadWall}
+        onGiven={handleGiven}
       />
     </>
   );

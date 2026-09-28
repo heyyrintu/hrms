@@ -124,4 +124,16 @@ describe('RecognitionPage', () => {
 
     expect(screen.getByRole('dialog', { name: 'Give Recognition' })).toBeInTheDocument();
   });
+
+  it('still renders the wall, and hides Give Recognition, when me() 400s (no linked employee record)', async () => {
+    (recognitionApi.me as jest.Mock).mockRejectedValue({
+      response: { status: 400, data: { message: 'No employee record linked to this user' } },
+    });
+
+    render(<RecognitionPage />);
+
+    await waitFor(() => expect(screen.getByTestId('recognition-card-rec-1')).toBeInTheDocument());
+    expect(screen.getByText(/Great work this sprint/)).toBeInTheDocument();
+    expect(screen.queryByText('Give Recognition')).not.toBeInTheDocument();
+  });
 });
