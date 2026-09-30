@@ -1076,6 +1076,8 @@ enum NotificationType {
   SURVEY_LAUNCHED
   RECOGNITION_RECEIVED
   ONE_ON_ONE_SCHEDULED
+  // Wave E follow-ups
+  ENGAGEMENT_RELEASE_FAILED
   GENERAL
 }
 
@@ -3734,6 +3736,7 @@ model FeedItem {
   payload           Json     @default("{}")
   dedupeKey         String
   occurredAt        DateTime
+  expiresAt         DateTime?
   isHidden          Boolean  @default(false)
   createdAt         DateTime @default(now())
 
@@ -3743,6 +3746,7 @@ model FeedItem {
   @@unique([tenantId, dedupeKey])
   @@index([tenantId, occurredAt])
   @@index([tenantId, sourceType, sourceId])
+  @@index([tenantId, expiresAt])
   @@map("feed_items")
 }
 
