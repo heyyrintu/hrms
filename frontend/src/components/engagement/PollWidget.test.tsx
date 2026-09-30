@@ -6,6 +6,7 @@ import { pollsApi } from '@/lib/api-polls';
 jest.mock('@/lib/api-polls', () => ({
   pollsApi: {
     active: jest.fn(),
+    recentClosed: jest.fn(),
     vote: jest.fn(),
   },
 }));
@@ -27,6 +28,7 @@ const openPoll = {
 describe('PollWidget', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    (pollsApi.recentClosed as jest.Mock).mockResolvedValue({ data: [] });
   });
 
   it('renders nothing when there are no active polls', async () => {
@@ -105,5 +107,67 @@ describe('PollWidget', () => {
     await waitFor(() =>
       expect(screen.getByText('Some votes are still being counted')).toBeInTheDocument(),
     );
+  });
+
+  describe('recent results', () => {
+    const closed = {
+      id: 'poll-old',
+      question: 'Office music?',
+      closedAt: '2026-03-10T12:00:00Z',
+      totalVotes: 4,
+      pendingVotes: 0,
+      options: [
+        { id: 'o1', order: 0, label: 'Jazz', voteCount: 3 },
+        { id: 'o2', order: 1, label: 'Rock', voteCount: 1 },
+      ],
+    };
+
+    it('shows a collapsed Recent results section and expands to percentage bars', async () => {
+      (pollsApi.active as jest.Mock).mockResolvedValue({ data: [openPoll] });
+      (pollsApi.recentClosed as jest.Mock).mockResolvedValue({ data: [closed] });
+
+      render(<PollWidget />);
+
+      const toggle = await screen.findByRole('button', { name: /Recent results/ });
+      expect(screen.queryByText('Office music?')).not.toBeInTheDocument();
+
+      fireEvent.click(toggle);
+
+      expect(screen.getByText('Office music?')).toBeInTheDocument();
+      expect(screen.getByText('75%')).toBeInTheDocument();
+      expect(screen.getByText('25%')).toBeInTheDocument();
+      expect(screen.queryByText('Some votes are still being counted')).not.toBeInTheDocument();
+    });
+
+    it('says some votes are still being counted when a closed poll has pending votes', async () => {
+      (pollsApi.active as jest.Mock).mockResolvedValue({ data: [] });
+      (pollsApi.recentClosed as jest.Mock).mockResolvedValue({
+        data: [{ ...closed, pendingVotes: 2 }],
+      });
+
+      render(<PollWidget />);
+
+      fireEvent.click(await screen.findByRole('button', { name: /Recent results/ }));
+
+      expect(screen.getByText('Some votes are still being counted')).toBeInTheDocument();
+    });
+
+    it('renders no Recent results section when the list is empty', async () => {
+      (pollsApi.active as jest.Mock).mockResolvedValue({ data: [openPoll] });
+
+      render(<PollWidget />);
+
+      await waitFor(() => expect(screen.getByText('Best snack?')).toBeInTheDocument());
+      expect(screen.queryByRole('button', { name: /Recent results/ })).not.toBeInTheDocument();
+    });
+
+    it('still shows open polls when the recent results request fails', async () => {
+      (pollsApi.active as jest.Mock).mockResolvedValue({ data: [openPoll] });
+      (pollsApi.recentClosed as jest.Mock).mockRejectedValue(new Error('boom'));
+
+      render(<PollWidget />);
+
+      await waitFor(() => expect(screen.getByText('Best snack?')).toBeInTheDocument());
+    });
   });
 });

@@ -32,6 +32,20 @@ export interface ActivePollView {
   options: PollOptionView[];
 }
 
+export interface RecentClosedPollView {
+  id: string;
+  question: string;
+  /** When the poll stopped accepting votes: `closedAt`, else the passed `closesAt`. */
+  closedAt: Date;
+  totalVotes: number;
+  /** Votes cast but not yet applied to the option counts. */
+  pendingVotes: number;
+  options: { id: string; order: number; label: string; voteCount: number }[];
+}
+
+const RECENT_CLOSED_WINDOW_DAYS = 30;
+const RECENT_CLOSED_LIMIT = 5;
+
 /**
  * Anonymous, single-choice, whole-tenant polls.
  *
@@ -137,6 +151,47 @@ export class PollsService {
         })),
       };
     });
+  }
+
+  /**
+   * Polls that stopped accepting votes in the last 30 days: explicitly CLOSED,
+   * or still ACTIVE with a `closesAt` that has passed. The poll is over, so
+   * counts are visible to every caller; no voter lookup is needed.
+   */
+  async recentClosed(tenantId: string): Promise<RecentClosedPollView[]> {
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - RECENT_CLOSED_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const polls = await this.prisma.poll.findMany({
+      where: {
+        tenantId,
+        OR: [
+          { status: PollStatus.CLOSED, closedAt: { gte: cutoff } },
+          { status: PollStatus.ACTIVE, closesAt: { gte: cutoff, lte: now } },
+        ],
+      },
+      include: {
+        options: { orderBy: { order: 'asc' } },
+        _count: { select: { pending: true } },
+      },
+    });
+
+    return polls
+      .map((poll) => ({ poll, endedAt: (poll.closedAt ?? poll.closesAt) as Date }))
+      .sort((a, b) => b.endedAt.getTime() - a.endedAt.getTime())
+      .slice(0, RECENT_CLOSED_LIMIT)
+      .map(({ poll, endedAt }) => ({
+        id: poll.id,
+        question: poll.question,
+        closedAt: endedAt,
+        totalVotes: poll.options.reduce((sum, o) => sum + o.voteCount, 0),
+        pendingVotes: poll._count?.pending ?? 0,
+        options: poll.options.map((o) => ({
+          id: o.id,
+          order: o.order,
+          label: o.label,
+          voteCount: o.voteCount,
+        })),
+      }));
   }
 
   async list(tenantId: string, page: number, limit: number) {

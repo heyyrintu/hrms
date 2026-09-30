@@ -27,6 +27,13 @@ describe('polls API requests', () => {
     expect(sent[0].url).toBe('/engagement/polls/active');
   });
 
+  it('reads recently closed polls with GET /engagement/polls/recent-closed', async () => {
+    await pollsApi.recentClosed();
+
+    expect(sent[0].method).toBe('get');
+    expect(sent[0].url).toBe('/engagement/polls/recent-closed');
+  });
+
   it('lists all polls with GET /engagement/polls and forwards pagination', async () => {
     await pollsApi.list({ page: 2, limit: 5 });
 

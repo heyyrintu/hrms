@@ -22,6 +22,17 @@ export interface Poll {
   options: PollOption[];
 }
 
+/** A poll that stopped accepting votes in the last 30 days; counts are always released. */
+export interface RecentClosedPoll {
+  id: string;
+  question: string;
+  /** When voting ended: closedAt, else the passed closesAt. */
+  closedAt: string;
+  totalVotes: number;
+  pendingVotes: number;
+  options: { id: string; order: number; label: string; voteCount: number }[];
+}
+
 export interface CreatePollPayload {
   question: string;
   options: string[];
@@ -42,6 +53,9 @@ export interface PollsListPage {
 export const pollsApi = {
   /** Up to 3 rendered by PollWidget; the full list is HR/SUPER's job. */
   active: () => api.get<Poll[]>('/engagement/polls/active'),
+
+  /** Polls that closed in the last 30 days, newest first (max 5), with final counts. */
+  recentClosed: () => api.get<RecentClosedPoll[]>('/engagement/polls/recent-closed'),
 
   list: (params?: ListPollsParams) => api.get<PollsListPage>('/engagement/polls', { params }),
 

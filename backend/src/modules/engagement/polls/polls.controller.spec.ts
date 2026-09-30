@@ -9,6 +9,7 @@ describe('PollsController', () => {
   let controller: PollsController;
   let pollsService: {
     active: jest.Mock;
+    recentClosed: jest.Mock;
     list: jest.Mock;
     create: jest.Mock;
     vote: jest.Mock;
@@ -31,6 +32,7 @@ describe('PollsController', () => {
   beforeEach(async () => {
     pollsService = {
       active: jest.fn().mockResolvedValue([]),
+      recentClosed: jest.fn().mockResolvedValue([]),
       list: jest.fn().mockResolvedValue({ data: [], meta: { total: 0, page: 1, limit: 20, totalPages: 0 } }),
       create: jest.fn().mockResolvedValue({ id: 'poll-1' }),
       vote: jest.fn().mockResolvedValue({ success: true }),
@@ -54,6 +56,17 @@ describe('PollsController', () => {
   it('active passes isAdmin=true for HR', async () => {
     await controller.active(hrUser);
     expect(pollsService.active).toHaveBeenCalledWith('tenant-1', 'emp-hr', true);
+  });
+
+  it('recentClosed passes only the tenant, for any role', async () => {
+    await controller.recentClosed(employee);
+    expect(pollsService.recentClosed).toHaveBeenCalledWith('tenant-1');
+  });
+
+  it('recentClosed is declared before :id routes and has no role restriction', () => {
+    const names = Object.getOwnPropertyNames(PollsController.prototype);
+    expect(names.indexOf('recentClosed')).toBeLessThan(names.indexOf('vote'));
+    expect(Reflect.getMetadata('roles', PollsController.prototype.recentClosed)).toBeUndefined();
   });
 
   it('list forwards pagination', async () => {

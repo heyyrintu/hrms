@@ -39,6 +39,13 @@ export class PollsController {
     return this.pollsService.active(user.tenantId, user.employeeId, isAdmin);
   }
 
+  @Get('recent-closed')
+  @ApiOperation({ summary: 'Polls that closed in the last 30 days, with final results (max 5)' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  async recentClosed(@CurrentUser() user: AuthenticatedUser) {
+    return this.pollsService.recentClosed(user.tenantId);
+  }
+
   @Get()
   @Roles(...ADMIN_ROLES)
   @ApiOperation({ summary: 'List all polls, any status, paginated' })
