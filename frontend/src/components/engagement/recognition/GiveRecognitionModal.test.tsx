@@ -17,7 +17,10 @@ jest.mock('lucide-react', () =>
 );
 
 jest.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { id: 'u-1', employeeId: 'emp-self', tenantId: 't1', role: 'EMPLOYEE' } }),
+  // The REAL stored-user shape: the employee id is nested, never top-level.
+  useAuth: () => ({
+    user: { id: 'u-1', tenantId: 't1', role: 'EMPLOYEE', employee: { id: 'emp-self' } },
+  }),
 }));
 
 jest.mock('@/components/ui/Modal', () => ({

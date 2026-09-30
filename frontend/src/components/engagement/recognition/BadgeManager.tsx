@@ -97,6 +97,16 @@ export function BadgeManager() {
     }
   };
 
+  const reactivate = async (badge: Badge) => {
+    try {
+      await recognitionApi.reactivateBadge(badge.id);
+      toast.success('Badge reactivated');
+      await load();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Failed to reactivate the badge'));
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
@@ -132,9 +142,13 @@ export function BadgeManager() {
                   <Button variant="secondary" size="sm" onClick={() => openEdit(badge)}>
                     <Pencil className="h-4 w-4" />
                   </Button>
-                  {badge.isActive && (
+                  {badge.isActive ? (
                     <Button variant="danger" size="sm" onClick={() => deactivate(badge)}>
                       <Power className="h-4 w-4" />
+                    </Button>
+                  ) : (
+                    <Button variant="secondary" size="sm" onClick={() => reactivate(badge)}>
+                      Reactivate
                     </Button>
                   )}
                 </div>

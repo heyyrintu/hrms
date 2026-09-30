@@ -36,10 +36,11 @@ jest.mock('react-hot-toast', () => ({
   default: { success: jest.fn(), error: jest.fn() },
 }));
 
-let mockUser: { id: string; role: UserRole; employeeId?: string } = {
+// The REAL stored-user shape: nested employee, no top-level employeeId.
+let mockUser: { id: string; role: UserRole; employee?: { id: string } } = {
   id: 'u-hr',
   role: UserRole.HR_ADMIN,
-  employeeId: 'emp-hr',
+  employee: { id: 'emp-hr' },
 };
 jest.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
@@ -165,7 +166,7 @@ const offer = (overrides: Record<string, unknown> = {}) => ({
 describe('ApplicationDetailPage', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockUser = { id: 'u-hr', role: UserRole.HR_ADMIN, employeeId: 'emp-hr' };
+    mockUser = { id: 'u-hr', role: UserRole.HR_ADMIN, employee: { id: 'emp-hr' } };
     api.getApplication.mockResolvedValue({ data: application() } as any);
     api.listInterviews.mockResolvedValue({ data: [] } as any);
     api.listOffers.mockResolvedValue({ data: [] } as any);
@@ -196,7 +197,7 @@ describe('ApplicationDetailPage', () => {
   });
 
   it('lets the hiring manager schedule interviews but hides offers and CTC', async () => {
-    mockUser = { id: 'u-mgr', role: UserRole.MANAGER, employeeId: 'emp-mgr' };
+    mockUser = { id: 'u-mgr', role: UserRole.MANAGER, employee: { id: 'emp-mgr' } };
     render(<ApplicationDetailPage />);
 
     expect(await screen.findByText('Schedule interview')).toBeInTheDocument();
@@ -206,7 +207,7 @@ describe('ApplicationDetailPage', () => {
   });
 
   it('does not offer scheduling to a manager who is not the hiring manager', async () => {
-    mockUser = { id: 'u-m2', role: UserRole.MANAGER, employeeId: 'emp-other' };
+    mockUser = { id: 'u-m2', role: UserRole.MANAGER, employee: { id: 'emp-other' } };
     render(<ApplicationDetailPage />);
     await screen.findByRole('heading', { name: 'Asha Rao' });
     await waitFor(() => expect(api.listInterviews).toHaveBeenCalled());
@@ -214,7 +215,7 @@ describe('ApplicationDetailPage', () => {
   });
 
   it('blocks employees without calling the API', () => {
-    mockUser = { id: 'u-e', role: UserRole.EMPLOYEE, employeeId: 'emp-e' };
+    mockUser = { id: 'u-e', role: UserRole.EMPLOYEE, employee: { id: 'emp-e' } };
     render(<ApplicationDetailPage />);
     expect(screen.getByText('You do not have access to recruitment.')).toBeInTheDocument();
     expect(api.getApplication).not.toHaveBeenCalled();

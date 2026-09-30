@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
+import { currentEmployeeId } from '@/lib/current-employee';
 import { UserRole } from '@/types';
 import {
   recognitionApi,
@@ -26,7 +27,7 @@ type Tab = 'wall' | 'leaderboard' | 'badges' | 'settings';
 export default function RecognitionPage() {
   const { hasRole, user } = useAuth();
   const isHr = hasRole(UserRole.HR_ADMIN, UserRole.SUPER_ADMIN);
-  const hasEmployee = !!user?.employeeId;
+  const hasEmployee = !!currentEmployeeId(user);
 
   const [tab, setTab] = useState<Tab>('wall');
 

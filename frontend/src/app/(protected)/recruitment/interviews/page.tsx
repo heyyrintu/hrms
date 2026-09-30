@@ -8,6 +8,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { useAuth } from '@/contexts/AuthContext';
+import { currentEmployeeId } from '@/lib/current-employee';
 import { UserRole } from '@/types';
 import { recruitmentApi, type Interview, type InterviewFeedback } from '@/lib/api-recruitment';
 import { FeedbackFormModal } from '@/components/recruitment/interviews/FeedbackFormModal';
@@ -24,6 +25,7 @@ type Tab = 'upcoming' | 'past';
 /** Interviews the signed-in employee is on the panel of, and their scorecards. */
 export default function MyInterviewsPage() {
   const { user, hasRole } = useAuth();
+  const myEmployeeId = currentEmployeeId(user);
   const canOpenApplication = hasRole(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER);
 
   const [interviews, setInterviews] = useState<Interview[]>([]);
@@ -67,14 +69,14 @@ export default function MyInterviewsPage() {
   }, [interviews]);
 
   const openFeedback = async (interview: Interview) => {
-    const submitted = !!user?.employeeId && interview.feedbackSubmittedBy.includes(user.employeeId);
+    const submitted = !!myEmployeeId && interview.feedbackSubmittedBy.includes(myEmployeeId);
     if (!submitted) {
       setFeedbackFor({ interview, existing: null });
       return;
     }
     try {
       const res = await recruitmentApi.getFeedback(interview.id);
-      const mine = res.data.items.find((f) => f.interviewer.id === user?.employeeId) ?? null;
+      const mine = res.data.items.find((f) => f.interviewer.id === myEmployeeId) ?? null;
       setFeedbackFor({ interview, existing: mine });
     } catch {
       toast.error('Failed to load your feedback');
@@ -131,7 +133,7 @@ export default function MyInterviewsPage() {
       {!loading &&
         !error &&
         list.map((iv) => {
-          const submitted = !!user?.employeeId && iv.feedbackSubmittedBy.includes(user.employeeId);
+          const submitted = !!myEmployeeId && iv.feedbackSubmittedBy.includes(myEmployeeId);
           return (
             <Card key={iv.id}>
               <CardContent className="space-y-2 p-5">

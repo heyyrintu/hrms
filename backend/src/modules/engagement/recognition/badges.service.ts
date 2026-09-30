@@ -63,6 +63,7 @@ export class BadgesService {
           ...(dto.description !== undefined && { description: dto.description }),
           ...(dto.icon !== undefined && { icon: dto.icon }),
           ...(dto.points !== undefined && { points: dto.points }),
+          ...(dto.isActive !== undefined && { isActive: dto.isActive }),
         },
       });
     } catch (error) {

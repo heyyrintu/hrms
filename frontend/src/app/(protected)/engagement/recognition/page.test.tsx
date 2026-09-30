@@ -16,9 +16,11 @@ jest.mock('lucide-react', () =>
 );
 
 const mockHasRole = jest.fn().mockReturnValue(false);
+// The REAL stored-user shape: the employee id is nested, never top-level.
+let mockUser: any = { id: 'u-1', tenantId: 't1', role: 'EMPLOYEE', employee: { id: 'emp-1' } };
 jest.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
-    user: { id: 'u-1', employeeId: 'emp-1', tenantId: 't1', role: 'EMPLOYEE' },
+    user: mockUser,
     hasRole: (...roles: string[]) => mockHasRole(...roles),
   }),
 }));
@@ -63,6 +65,7 @@ const wallItem = {
 describe('RecognitionPage', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockUser = { id: 'u-1', tenantId: 't1', role: 'EMPLOYEE', employee: { id: 'emp-1' } };
     mockHasRole.mockReturnValue(false);
     (recognitionApi.wall as jest.Mock).mockResolvedValue({
       data: { data: [wallItem], meta: { total: 1, page: 1, limit: 20, totalPages: 1 } },
@@ -134,6 +137,23 @@ describe('RecognitionPage', () => {
 
     await waitFor(() => expect(screen.getByTestId('recognition-card-rec-1')).toBeInTheDocument());
     expect(screen.getByText(/Great work this sprint/)).toBeInTheDocument();
+    expect(screen.queryByText('Give Recognition')).not.toBeInTheDocument();
+  });
+
+  it('shows Give Recognition and loads me() for a user whose employee id is nested (real shape)', async () => {
+    render(<RecognitionPage />);
+
+    await waitFor(() => expect(recognitionApi.me).toHaveBeenCalled());
+    expect(screen.getByText('Give Recognition')).toBeInTheDocument();
+  });
+
+  it('hides Give Recognition and never calls me() for a user with no employee record', async () => {
+    mockUser = { id: 'u-2', tenantId: 't1', role: 'SUPER_ADMIN' };
+
+    render(<RecognitionPage />);
+
+    await waitFor(() => expect(recognitionApi.wall).toHaveBeenCalled());
+    expect(recognitionApi.me).not.toHaveBeenCalled();
     expect(screen.queryByText('Give Recognition')).not.toBeInTheDocument();
   });
 });

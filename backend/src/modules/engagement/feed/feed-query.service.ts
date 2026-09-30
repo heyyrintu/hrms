@@ -66,10 +66,17 @@ export class FeedQueryService {
     if (!settings.showBirthdays) hiddenTypes.push('BIRTHDAY');
     if (!settings.showAnniversaries) hiddenTypes.push('WORK_ANNIVERSARY');
 
+    // Expired items (e.g. an announcement past its expiresAt) drop off the feed.
+    // AND-ed with the cursor condition so neither clobbers the other's OR.
+    const now = new Date();
+    const and: Prisma.FeedItemWhereInput[] = [
+      { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+    ];
     const where: Prisma.FeedItemWhereInput = {
       tenantId,
       isHidden: false,
       ...(hiddenTypes.length > 0 ? { type: { notIn: hiddenTypes } } : {}),
+      AND: and,
     };
 
     if (cursor) {
@@ -78,10 +85,12 @@ export class FeedQueryService {
         select: { id: true, occurredAt: true },
       });
       if (!cursorItem) throw new NotFoundException('Feed item not found');
-      where.OR = [
-        { occurredAt: { lt: cursorItem.occurredAt } },
-        { occurredAt: cursorItem.occurredAt, id: { lt: cursorItem.id } },
-      ];
+      and.push({
+        OR: [
+          { occurredAt: { lt: cursorItem.occurredAt } },
+          { occurredAt: cursorItem.occurredAt, id: { lt: cursorItem.id } },
+        ],
+      });
     }
 
     const rows = await this.prisma.feedItem.findMany({
@@ -178,13 +187,19 @@ export class FeedQueryService {
     });
 
     if (existing) {
-      await this.prisma.feedReaction.delete({ where: { id: existing.id } });
+      try {
+        await this.prisma.feedReaction.delete({ where: { id: existing.id } });
+      } catch (e) {
+        // P2025: a concurrent toggle already removed it. Same end state, not an error.
+        if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2025')) throw e;
+      }
     } else {
       try {
         await this.prisma.feedReaction.create({
           data: { tenantId, feedItemId: itemId, employeeId, kind },
         });
       } catch (e) {
+        // P2002: a concurrent toggle already added it. Same end state, not an error.
         if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e;
       }
     }

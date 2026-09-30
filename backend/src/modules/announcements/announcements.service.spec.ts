@@ -11,7 +11,7 @@ describe('AnnouncementsService', () => {
   let service: AnnouncementsService;
   let prisma: any;
   let notificationsService: any;
-  let feed: { post: jest.Mock; removeBySource: jest.Mock };
+  let feed: { post: jest.Mock; refresh: jest.Mock; removeBySource: jest.Mock };
 
   const tenantId = 'tenant-1';
   const authorId = 'emp-author';
@@ -19,6 +19,7 @@ describe('AnnouncementsService', () => {
   beforeEach(async () => {
     feed = {
       post: jest.fn().mockResolvedValue({ id: 'feed-1', created: true }),
+      refresh: jest.fn().mockResolvedValue({ id: 'feed-1' }),
       removeBySource: jest.fn().mockResolvedValue(0),
     };
 
@@ -543,7 +544,7 @@ describe('AnnouncementsService', () => {
 
       await service.create(tenantId, authorId, { title: 'Holiday Notice', content: 'x', isPublished: true });
 
-      expect(feed.post).toHaveBeenCalledWith(
+      expect(feed.refresh).toHaveBeenCalledWith(
         expect.objectContaining({
           tenantId,
           type: 'ANNOUNCEMENT',
@@ -572,7 +573,7 @@ describe('AnnouncementsService', () => {
 
       await service.create(tenantId, authorId, { title: 'Draft', content: 'x' });
 
-      expect(feed.post).not.toHaveBeenCalled();
+      expect(feed.refresh).not.toHaveBeenCalled();
       expect(feed.removeBySource).toHaveBeenCalledWith(tenantId, 'Announcement', 'ann-1');
     });
 
@@ -601,7 +602,7 @@ describe('AnnouncementsService', () => {
 
       await service.update(tenantId, 'ann-1', { isPublished: true });
 
-      expect(feed.post).toHaveBeenCalledWith(
+      expect(feed.refresh).toHaveBeenCalledWith(
         expect.objectContaining({ sourceId: 'ann-1', dedupeKey: 'announcement:ann-1' }),
       );
     });
@@ -631,14 +632,97 @@ describe('AnnouncementsService', () => {
       await service.update(tenantId, 'ann-2', { isPublished: false });
 
       expect(feed.removeBySource).toHaveBeenCalledWith(tenantId, 'Announcement', 'ann-2');
-      expect(feed.post).not.toHaveBeenCalled();
+      expect(feed.refresh).not.toHaveBeenCalled();
     });
 
-    it('does not touch the feed on update when isPublished is unchanged', async () => {
+    it('refreshes the feed item when a published announcement is edited (title, body, expiresAt)', async () => {
+      const expiresAt = new Date('2026-04-01T12:00:00Z');
       prisma.announcement.findFirst.mockResolvedValue({
         id: 'ann-2',
         tenantId,
-        title: 'Published',
+        title: 'Old title',
+        content: 'old',
+        isPublished: true,
+        author: { firstName: 'Jane', lastName: 'Smith' },
+      });
+      prisma.announcement.update.mockResolvedValue({
+        id: 'ann-2',
+        tenantId,
+        authorId,
+        title: 'New title',
+        content: 'updated content',
+        priority: 'HIGH',
+        isPublished: true,
+        publishedAt: new Date('2026-03-15T12:00:00Z'),
+        expiresAt,
+      });
+
+      await service.update(tenantId, 'ann-2', { title: 'New title', content: 'updated content' });
+
+      expect(feed.refresh).toHaveBeenCalledTimes(1);
+      expect(feed.refresh).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId,
+          sourceId: 'ann-2',
+          dedupeKey: 'announcement:ann-2',
+          title: 'New title',
+          body: 'updated content',
+          payload: { priority: 'HIGH' },
+          expiresAt,
+        }),
+      );
+      expect(feed.post).not.toHaveBeenCalled();
+      expect(feed.removeBySource).not.toHaveBeenCalled();
+    });
+
+    it('passes a null expiresAt through to the feed item', async () => {
+      prisma.announcement.create.mockResolvedValue({
+        id: 'ann-3',
+        tenantId,
+        authorId,
+        title: 'T',
+        content: 'c',
+        priority: 'NORMAL',
+        isPublished: true,
+        publishedAt: new Date('2026-03-15T12:00:00Z'),
+        expiresAt: null,
+        author: { firstName: 'Jane', lastName: 'Doe' },
+      });
+      prisma.user.findMany.mockResolvedValue([]);
+
+      await service.create(tenantId, authorId, { title: 'T', content: 'c', isPublished: true });
+
+      expect(feed.refresh).toHaveBeenCalledWith(expect.objectContaining({ expiresAt: null }));
+    });
+
+    it('does not touch the feed when an unpublished draft is edited', async () => {
+      prisma.announcement.findFirst.mockResolvedValue({
+        id: 'ann-4',
+        tenantId,
+        title: 'Draft',
+        content: 'x',
+        isPublished: false,
+        author: { firstName: 'Jane', lastName: 'Smith' },
+      });
+      prisma.announcement.update.mockResolvedValue({
+        id: 'ann-4',
+        tenantId,
+        content: 'updated content',
+        isPublished: false,
+      });
+
+      await service.update(tenantId, 'ann-4', { content: 'updated content' });
+
+      expect(feed.refresh).not.toHaveBeenCalled();
+      expect(feed.post).not.toHaveBeenCalled();
+      expect(feed.removeBySource).not.toHaveBeenCalled();
+    });
+
+    it('does not fail update when feed.refresh rejects', async () => {
+      prisma.announcement.findFirst.mockResolvedValue({
+        id: 'ann-2',
+        tenantId,
+        title: 'T',
         content: 'x',
         isPublished: true,
         author: { firstName: 'Jane', lastName: 'Smith' },
@@ -646,14 +730,19 @@ describe('AnnouncementsService', () => {
       prisma.announcement.update.mockResolvedValue({
         id: 'ann-2',
         tenantId,
-        content: 'updated content',
+        authorId,
+        title: 'T2',
+        content: 'y',
+        priority: 'NORMAL',
         isPublished: true,
+        publishedAt: new Date(),
+        expiresAt: null,
       });
+      feed.refresh.mockRejectedValue(new Error('feed is down'));
 
-      await service.update(tenantId, 'ann-2', { content: 'updated content' });
-
-      expect(feed.post).not.toHaveBeenCalled();
-      expect(feed.removeBySource).not.toHaveBeenCalled();
+      await expect(service.update(tenantId, 'ann-2', { title: 'T2' })).resolves.toEqual(
+        expect.objectContaining({ id: 'ann-2' }),
+      );
     });
 
     it('removes the feed item on delete', async () => {

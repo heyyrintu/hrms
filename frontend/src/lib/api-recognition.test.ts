@@ -89,6 +89,14 @@ describe('recognition API requests', () => {
     expect(sent[0].url).toBe('/engagement/recognition/badges/b-1');
   });
 
+  it('reactivates a badge with PUT /engagement/recognition/badges/:id { isActive: true }', async () => {
+    await recognitionApi.reactivateBadge('b-1');
+
+    expect(sent[0].method).toBe('put');
+    expect(sent[0].url).toBe('/engagement/recognition/badges/b-1');
+    expect(JSON.parse(sent[0].data)).toEqual({ isActive: true });
+  });
+
   it('removes a recognition with DELETE /engagement/recognition/:id', async () => {
     await recognitionApi.remove('rec-1');
 

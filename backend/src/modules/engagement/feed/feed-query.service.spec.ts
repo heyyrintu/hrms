@@ -94,7 +94,25 @@ describe('FeedQueryService', () => {
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('builds the OR condition from the cursor item', async () => {
+    it('hides expired items: expiresAt null or in the future', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-03-15T12:00:00Z'));
+      try {
+        prisma.feedItem.findMany.mockResolvedValue([]);
+        prisma.feedReaction.groupBy.mockResolvedValue([]);
+        prisma.feedReaction.findMany.mockResolvedValue([]);
+
+        await service.list(tenantId, employeeId, { limit: 20 });
+
+        const args = prisma.feedItem.findMany.mock.calls[0][0];
+        expect(args.where.AND).toEqual([
+          { OR: [{ expiresAt: null }, { expiresAt: { gt: new Date('2026-03-15T12:00:00Z') } }] },
+        ]);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('builds the cursor OR condition from the cursor item', async () => {
       const cursorItem = { id: 'cursor-1', occurredAt: new Date('2026-03-10T00:00:00Z') };
       prisma.feedItem.findFirst.mockResolvedValue(cursorItem);
       prisma.feedItem.findMany.mockResolvedValue([]);
@@ -104,10 +122,18 @@ describe('FeedQueryService', () => {
       await service.list(tenantId, employeeId, { cursor: 'cursor-1', limit: 20 });
 
       const args = prisma.feedItem.findMany.mock.calls[0][0];
-      expect(args.where.OR).toEqual([
-        { occurredAt: { lt: cursorItem.occurredAt } },
-        { occurredAt: cursorItem.occurredAt, id: { lt: cursorItem.id } },
-      ]);
+      // AND-ed with the expiry filter, so the cursor OR does not replace it.
+      expect(args.where.OR).toBeUndefined();
+      expect(args.where.AND).toHaveLength(2);
+      expect(args.where.AND[0]).toEqual({
+        OR: [{ expiresAt: null }, { expiresAt: { gt: expect.any(Date) } }],
+      });
+      expect(args.where.AND[1]).toEqual({
+        OR: [
+          { occurredAt: { lt: cursorItem.occurredAt } },
+          { occurredAt: cursorItem.occurredAt, id: { lt: cursorItem.id } },
+        ],
+      });
     });
 
     it('returns nextCursor null on the last page', async () => {
@@ -278,6 +304,44 @@ describe('FeedQueryService', () => {
       const result = await service.toggleReaction(tenantId, employeeId, 'item-1', 'LIKE' as any);
 
       expect(result).toEqual({ reactionCounts: { LIKE: 1, CELEBRATE: 0 }, myReactions: ['LIKE'] });
+    });
+  });
+
+  describe('toggleReaction races', () => {
+    const { Prisma } = require('@prisma/client');
+    const known = (code: string) =>
+      new Prisma.PrismaClientKnownRequestError('x', { code, clientVersion: '5' });
+
+    it('treats a P2025 on delete as already-removed and still returns counts', async () => {
+      prisma.feedItem.findFirst.mockResolvedValue({ id: 'item-1' });
+      prisma.feedReaction.findFirst.mockResolvedValue({ id: 'reaction-1' });
+      prisma.feedReaction.delete.mockRejectedValue(known('P2025'));
+      prisma.feedReaction.groupBy.mockResolvedValue([]);
+      prisma.feedReaction.findMany.mockResolvedValue([]);
+
+      const result = await service.toggleReaction(tenantId, employeeId, 'item-1', 'LIKE' as any);
+
+      expect(result).toEqual({ reactionCounts: { LIKE: 0, CELEBRATE: 0 }, myReactions: [] });
+    });
+
+    it('rethrows other delete errors', async () => {
+      prisma.feedItem.findFirst.mockResolvedValue({ id: 'item-1' });
+      prisma.feedReaction.findFirst.mockResolvedValue({ id: 'reaction-1' });
+      prisma.feedReaction.delete.mockRejectedValue(new Error('db down'));
+
+      await expect(
+        service.toggleReaction(tenantId, employeeId, 'item-1', 'LIKE' as any),
+      ).rejects.toThrow('db down');
+    });
+
+    it('rethrows a non-P2002 create error', async () => {
+      prisma.feedItem.findFirst.mockResolvedValue({ id: 'item-1' });
+      prisma.feedReaction.findFirst.mockResolvedValue(null);
+      prisma.feedReaction.create.mockRejectedValue(known('P2003'));
+
+      await expect(
+        service.toggleReaction(tenantId, employeeId, 'item-1', 'LIKE' as any),
+      ).rejects.toBeInstanceOf(Prisma.PrismaClientKnownRequestError);
     });
   });
 

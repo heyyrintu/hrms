@@ -229,6 +229,112 @@ describe('PollsService', () => {
     });
   });
 
+  describe('recentClosed', () => {
+    const now = new Date('2026-03-15T12:00:00Z');
+    const DAY = 24 * 60 * 60 * 1000;
+
+    const row = (id: string, over: Record<string, unknown> = {}) => ({
+      id,
+      question: `Q ${id}`,
+      status: 'CLOSED',
+      closedAt: new Date(now.getTime() - DAY),
+      closesAt: null,
+      createdAt: new Date(now.getTime() - 5 * DAY),
+      options: [
+        { id: `${id}-a`, order: 0, label: 'A', voteCount: 3 },
+        { id: `${id}-b`, order: 1, label: 'B', voteCount: 1 },
+      ],
+      _count: { pending: 2 },
+      ...over,
+    });
+
+    beforeEach(() => jest.useFakeTimers().setSystemTime(now));
+    afterEach(() => jest.useRealTimers());
+
+    it('scopes to the tenant and a 30-day window for CLOSED and expired-ACTIVE polls', async () => {
+      prisma.poll.findMany.mockResolvedValue([]);
+
+      await service.recentClosed(tenantId);
+
+      const cutoff = new Date(now.getTime() - 30 * DAY);
+      expect(prisma.poll.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            tenantId,
+            OR: [
+              { status: 'CLOSED', closedAt: { gte: cutoff } },
+              { status: 'ACTIVE', closesAt: { gte: cutoff, lte: now } },
+            ],
+          },
+        }),
+      );
+    });
+
+    it('does not query voters', async () => {
+      prisma.poll.findMany.mockResolvedValue([row('p1')]);
+
+      await service.recentClosed(tenantId);
+
+      expect(prisma.pollVoter.findMany).not.toHaveBeenCalled();
+    });
+
+    it('returns released counts, total and pending votes, always visible', async () => {
+      prisma.poll.findMany.mockResolvedValue([row('p1')]);
+
+      const result = await service.recentClosed(tenantId);
+
+      expect(result).toEqual([
+        {
+          id: 'p1',
+          question: 'Q p1',
+          closedAt: new Date(now.getTime() - DAY),
+          totalVotes: 4,
+          pendingVotes: 2,
+          options: [
+            { id: 'p1-a', order: 0, label: 'A', voteCount: 3 },
+            { id: 'p1-b', order: 1, label: 'B', voteCount: 1 },
+          ],
+        },
+      ]);
+    });
+
+    it('orders newest first by closedAt, falling back to closesAt for expired ACTIVE polls', async () => {
+      prisma.poll.findMany.mockResolvedValue([
+        row('old-closed', { closedAt: new Date(now.getTime() - 10 * DAY) }),
+        row('expired-active', {
+          status: 'ACTIVE',
+          closedAt: null,
+          closesAt: new Date(now.getTime() - 2 * DAY),
+        }),
+        row('new-closed', { closedAt: new Date(now.getTime() - 1 * DAY) }),
+      ]);
+
+      const result = await service.recentClosed(tenantId);
+
+      expect(result.map((p) => p.id)).toEqual(['new-closed', 'expired-active', 'old-closed']);
+      expect(result[1].closedAt).toEqual(new Date(now.getTime() - 2 * DAY));
+    });
+
+    it('returns at most 5 polls', async () => {
+      prisma.poll.findMany.mockResolvedValue(
+        Array.from({ length: 8 }, (_, i) =>
+          row(`p${i}`, { closedAt: new Date(now.getTime() - (i + 1) * DAY) }),
+        ),
+      );
+
+      const result = await service.recentClosed(tenantId);
+
+      expect(result).toHaveLength(5);
+      expect(result.map((p) => p.id)).toEqual(['p0', 'p1', 'p2', 'p3', 'p4']);
+    });
+
+    it('returns an empty list when nothing closed recently', async () => {
+      prisma.poll.findMany.mockResolvedValue([]);
+
+      await expect(service.recentClosed(tenantId)).resolves.toEqual([]);
+    });
+  });
+
   describe('vote', () => {
     const optionA = { id: 'opt-a', pollId: 'poll-1' };
     const activePoll = {

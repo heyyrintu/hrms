@@ -100,6 +100,7 @@ jest.mock('@/lib/api', () => ({
 jest.mock('@/lib/api-polls', () => ({
   pollsApi: {
     active: jest.fn().mockResolvedValue({ data: [] }),
+    recentClosed: jest.fn().mockResolvedValue({ data: [] }),
     vote: jest.fn(),
   },
 }));

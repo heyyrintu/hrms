@@ -29,4 +29,6 @@ export interface PostFeedItemInput {
   dedupeKey: string;
   /** Defaults to now. */
   occurredAt?: Date;
+  /** When set, the item drops off the feed once this time has passed. */
+  expiresAt?: Date | null;
 }
