@@ -39,11 +39,14 @@ export class AnnouncementsService {
       priority: string;
       isPublished: boolean;
       publishedAt: Date | null;
+      expiresAt: Date | null;
     },
   ): Promise<void> {
     try {
       if (a.isPublished) {
-        await this.feed.post({
+        // refresh, not post: an edit to a published announcement must update
+        // the existing feed item (title, body, priority, expiry).
+        await this.feed.refresh({
           tenantId,
           type: 'ANNOUNCEMENT',
           sourceType: FEED_SOURCE.ANNOUNCEMENT,
@@ -54,6 +57,7 @@ export class AnnouncementsService {
           payload: { priority: a.priority },
           dedupeKey: `announcement:${a.id}`,
           occurredAt: a.publishedAt ?? new Date(),
+          expiresAt: a.expiresAt ?? null,
         });
       } else {
         await this.feed.removeBySource(tenantId, FEED_SOURCE.ANNOUNCEMENT, a.id);
@@ -194,7 +198,10 @@ export class AnnouncementsService {
       await this.notifyAllUsers(tenantId, updated.title);
     }
 
-    if (dto.isPublished !== undefined && dto.isPublished !== wasPublished) {
+    // Sync after any edit of a published announcement (content may have
+    // changed) and on any publish/unpublish transition. A draft edited while
+    // staying a draft has no feed item to touch.
+    if (updated.isPublished || wasPublished) {
       await this.syncFeed(tenantId, updated);
     }
 

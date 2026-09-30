@@ -46,6 +46,7 @@ export class FeedService {
           payload: (input.payload ?? {}) as Prisma.InputJsonValue,
           dedupeKey: input.dedupeKey,
           occurredAt: input.occurredAt ?? new Date(),
+          expiresAt: input.expiresAt ?? null,
         },
         select: { id: true },
       });
@@ -57,6 +58,47 @@ export class FeedService {
       }
       throw e;
     }
+  }
+
+  /**
+   * Upsert by (tenantId, dedupeKey) for items whose content can change after
+   * posting (an edited announcement). An existing item gets its title, body,
+   * payload, expiry and people refreshed; `occurredAt`, `type` and source stay
+   * as first posted so the item keeps its place in the feed. A missing item is
+   * created.
+   */
+  async refresh(
+    input: PostFeedItemInput,
+    tx?: Prisma.TransactionClient,
+  ): Promise<{ id: string }> {
+    if (!(FEED_ITEM_TYPES as readonly string[]).includes(input.type)) {
+      throw new Error(`Unknown feed item type: ${input.type}`);
+    }
+    const db = tx ?? this.prisma;
+    const mutable = {
+      title: input.title,
+      body: input.body ?? null,
+      payload: (input.payload ?? {}) as Prisma.InputJsonValue,
+      expiresAt: input.expiresAt ?? null,
+      actorEmployeeId: input.actorEmployeeId ?? null,
+      subjectEmployeeId: input.subjectEmployeeId ?? null,
+    };
+
+    const row = await db.feedItem.upsert({
+      where: { tenantId_dedupeKey: { tenantId: input.tenantId, dedupeKey: input.dedupeKey } },
+      update: mutable,
+      create: {
+        tenantId: input.tenantId,
+        type: input.type,
+        sourceType: input.sourceType,
+        sourceId: input.sourceId ?? null,
+        dedupeKey: input.dedupeKey,
+        occurredAt: input.occurredAt ?? new Date(),
+        ...mutable,
+      },
+      select: { id: true },
+    });
+    return { id: row.id };
   }
 
   /** Delete every feed item of the tenant produced by the given source. Returns the count. */
