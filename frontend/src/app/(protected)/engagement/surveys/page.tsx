@@ -53,9 +53,11 @@ export default function SurveysPage() {
     }
   }, []);
 
+  // Reload whenever "My surveys" is (re)activated, so a survey launched on the
+  // Manage tab shows up without a page reload.
   useEffect(() => {
-    loadMine();
-  }, [loadMine]);
+    if (tab === 'mine') loadMine();
+  }, [tab, loadMine]);
 
   useEffect(() => {
     if (tab === 'manage' && canManage) loadManage();
@@ -94,6 +96,7 @@ export default function SurveysPage() {
       await surveysApi.launch(id);
       toast.success('Survey launched');
       loadManage();
+      loadMine();
     } catch {
       toast.error('Failed to launch survey');
     }
@@ -156,7 +159,9 @@ export default function SurveysPage() {
               <CardContent className="flex items-center justify-between py-4">
                 <div>
                   <p className="font-medium">{survey.title}</p>
-                  <p className="text-sm text-warm-500">{survey.questionCount} questions</p>
+                  <p className="text-sm text-warm-500">
+                    {survey.questionCount} {survey.questionCount === 1 ? 'question' : 'questions'}
+                  </p>
                 </div>
                 <div className="flex items-center gap-2">
                   {survey.submitted ? (
