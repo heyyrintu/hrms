@@ -121,6 +121,10 @@ export const recognitionApi = {
 
   deactivateBadge: (id: string) => api.delete(`/engagement/recognition/badges/${id}`),
 
+  /** Reverses deactivateBadge: PUT with isActive true. */
+  reactivateBadge: (id: string) =>
+    api.put(`/engagement/recognition/badges/${id}`, { isActive: true }),
+
   /** Delete a recognition (HR/SUPER). */
   remove: (id: string) => api.delete(`/engagement/recognition/${id}`),
 

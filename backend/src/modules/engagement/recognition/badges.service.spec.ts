@@ -109,6 +109,31 @@ describe('BadgesService', () => {
       });
     });
 
+    it('reactivates an inactive badge when isActive is true', async () => {
+      (prisma.badge.findFirst as jest.Mock).mockResolvedValue({ id: 'b-1', isActive: false });
+      (prisma.badge.update as jest.Mock).mockResolvedValue({ id: 'b-1', isActive: true });
+
+      await service.update(tenantId, 'b-1', { isActive: true });
+
+      expect(prisma.badge.findFirst).toHaveBeenCalledWith({ where: { id: 'b-1', tenantId } });
+      expect(prisma.badge.update).toHaveBeenCalledWith({
+        where: { id: 'b-1' },
+        data: { isActive: true },
+      });
+    });
+
+    it('can still deactivate via isActive false, and leaves isActive alone when omitted', async () => {
+      (prisma.badge.findFirst as jest.Mock).mockResolvedValue({ id: 'b-1' });
+      (prisma.badge.update as jest.Mock).mockResolvedValue({ id: 'b-1' });
+
+      await service.update(tenantId, 'b-1', { isActive: false });
+      expect((prisma.badge.update as jest.Mock).mock.calls[0][0].data).toEqual({ isActive: false });
+
+      (prisma.badge.update as jest.Mock).mockClear();
+      await service.update(tenantId, 'b-1', { name: 'N' });
+      expect((prisma.badge.update as jest.Mock).mock.calls[0][0].data).toEqual({ name: 'N' });
+    });
+
     it('rejects a rename onto a duplicate name with 409', async () => {
       (prisma.badge.findFirst as jest.Mock).mockResolvedValue({ id: 'b-1' });
       (prisma.badge.update as jest.Mock).mockRejectedValue(uniqueViolation());

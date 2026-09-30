@@ -31,6 +31,7 @@ jest.mock('@/lib/api-recognition', () => ({
     createBadge: jest.fn(),
     updateBadge: jest.fn(),
     deactivateBadge: jest.fn(),
+    reactivateBadge: jest.fn(),
   },
 }));
 
@@ -68,6 +69,23 @@ describe('BadgeManager', () => {
         expect.objectContaining({ name: 'Rising Star', icon: '⭐' }),
       ),
     );
+  });
+
+  it('offers Reactivate only on inactive badges and reactivates then reloads', async () => {
+    (recognitionApi.reactivateBadge as jest.Mock).mockResolvedValue({ data: {} });
+    render(<BadgeManager />);
+    await waitFor(() => expect(screen.getByTestId('badge-b-2')).toBeInTheDocument());
+
+    expect(screen.getAllByRole('button', { name: 'Reactivate' })).toHaveLength(1);
+    const inactiveCard = screen.getByTestId('badge-b-2');
+    const activeCard = screen.getByTestId('badge-b-1');
+    expect(inactiveCard).toContainElement(screen.getByRole('button', { name: 'Reactivate' }));
+    expect(activeCard).not.toHaveTextContent('Reactivate');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reactivate' }));
+
+    await waitFor(() => expect(recognitionApi.reactivateBadge).toHaveBeenCalledWith('b-2'));
+    await waitFor(() => expect(recognitionApi.badges).toHaveBeenCalledTimes(2));
   });
 
   it('deactivates an active badge', async () => {

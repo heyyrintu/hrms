@@ -101,6 +101,11 @@ export class UpdateBadgeDto {
   @Min(0)
   @Max(1000)
   points?: number;
+
+  @ApiPropertyOptional({ description: 'Set true to reactivate a deactivated badge' })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }
 
 export class BadgesQueryDto {
