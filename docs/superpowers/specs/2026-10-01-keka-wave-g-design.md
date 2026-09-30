@@ -740,8 +740,8 @@ implementers may not change them): `api-attendance-requests.ts`,
   `attendance.module.ts`, `workflow.defaults.ts`, `workflow.types.ts`,
   `approval-engine.service.ts` (`TYPE_LABELS` only),
   `payroll-calculation.service.ts`, `employees.service.ts`, `permissions.ts`
-  and its specs, `permission-coverage.spec.ts` (the scaffold adds the roster
-  row), `roster/roster.types.ts`, `roster/roster.module.ts`,
+  and its specs (WS-R adds only the roster row to
+  `permission-coverage.spec.ts`), `roster/roster.types.ts`, `roster/roster.module.ts`,
   `attendance/requests/attendance-requests.types.ts`, and every module file of
   the new modules.
 - Frontend: `Sidebar.tsx`, `permission-paths.ts`, every `api-*.ts` above,
