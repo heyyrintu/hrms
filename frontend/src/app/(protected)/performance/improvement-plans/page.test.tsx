@@ -25,7 +25,8 @@ const managerAuth = {
     email: 'manager@test.com',
     role: 'MANAGER',
     tenantId: 't1',
-    employeeId: 'emp-manager',
+    // The REAL stored-user shape: nested employee, no top-level employeeId.
+    employee: { id: 'emp-manager' },
   },
   isAuthenticated: true,
   isLoading: false,

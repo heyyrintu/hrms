@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { feedbackApi, employeesApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { currentEmployeeId } from '@/lib/current-employee';
 import { cn } from '@/lib/utils';
 import {
   MessageSquare,
@@ -81,6 +82,7 @@ const personName = (p?: FeedbackParticipant) =>
 
 export default function FeedbackPage() {
   const { user, isManager } = useAuth();
+  const myEmployeeId = currentEmployeeId(user);
 
   const [activeTab, setActiveTab] = useState<TabKey>('received');
   const [items, setItems] = useState<FeedbackItem[]>([]);
@@ -134,7 +136,7 @@ export default function FeedbackPage() {
     try {
       const res = await employeesApi.getAll({ status: 'ACTIVE', limit: 500 });
       const list: EmployeeOption[] = res.data?.data ?? res.data ?? [];
-      setEmployees(list.filter((e) => e.id !== user?.employeeId));
+      setEmployees(list.filter((e) => e.id !== myEmployeeId));
     } catch {
       toast.error('Failed to load employees');
     }
@@ -319,7 +321,7 @@ export default function FeedbackPage() {
                         {visibilityLabels[item.visibility]}
                       </p>
                     </div>
-                    {item.senderId === user?.employeeId && (
+                    {item.senderId === myEmployeeId && (
                       <button
                         onClick={() => openDeleteModal(item)}
                         className="p-2 self-start text-warm-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"

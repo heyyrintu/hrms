@@ -9,6 +9,7 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { useAuth } from '@/contexts/AuthContext';
+import { currentEmployeeId } from '@/lib/current-employee';
 import { UserRole } from '@/types';
 import { recruitmentApi, type ApplicationDetail, type JobApplicationStatus } from '@/lib/api-recruitment';
 import { InterviewPanel } from '@/components/recruitment/interviews/InterviewPanel';
@@ -40,6 +41,7 @@ export default function ApplicationDetailPage() {
   const params = useParams<{ id: string }>();
   const applicationId = params?.id as string;
   const { user, hasRole } = useAuth();
+  const myEmployeeId = currentEmployeeId(user);
   const isHr = hasRole(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN);
   const allowed = hasRole(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER);
 
@@ -88,7 +90,7 @@ export default function ApplicationDetailPage() {
   const active = application.status === 'ACTIVE';
   const canManageInterviews =
     isHr ||
-    (!!user?.employeeId && user.employeeId === application.jobOpening.hiringManagerId);
+    (!!myEmployeeId && myEmployeeId === application.jobOpening.hiringManagerId);
 
   return (
     <div className="space-y-6">

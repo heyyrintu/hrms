@@ -23,7 +23,8 @@ const mockAuth = {
     email: 'manager@test.com',
     role: 'MANAGER',
     tenantId: 't1',
-    employeeId: 'emp-mgr-1',
+    // The REAL stored-user shape: nested employee, no top-level employeeId.
+    employee: { id: 'emp-mgr-1' },
   },
   isAuthenticated: true,
   isLoading: false,
@@ -214,6 +215,24 @@ describe('FeedbackPage', () => {
     expect(
       screen.queryByLabelText('Delete feedback'),
     ).not.toBeInTheDocument();
+  });
+
+  it('offers delete on feedback the signed-in user sent (employee id is nested in the stored user)', async () => {
+    (feedbackApi.getReceived as jest.Mock).mockResolvedValue({
+      data: {
+        data: [
+          feedbackItem({ id: 'fb-mine', senderId: 'emp-mgr-1' }),
+          feedbackItem({ id: 'fb-other', senderId: 'emp-2' }),
+        ],
+        meta: { total: 2, page: 1, limit: 10, totalPages: 1 },
+      },
+    });
+
+    render(<FeedbackPage />);
+
+    await waitFor(() => {
+      expect(screen.getAllByTitle('Delete feedback')).toHaveLength(1);
+    });
   });
 
   it('opens the give-feedback form and posts the entered feedback', async () => {

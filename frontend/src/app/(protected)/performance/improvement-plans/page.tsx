@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { improvementPlansApi, employeesApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { currentEmployeeId } from '@/lib/current-employee';
 import toast from 'react-hot-toast';
 import {
   ClipboardCheck,
@@ -106,6 +107,7 @@ const emptyPlanForm = {
 
 export default function ImprovementPlansPage() {
   const { user, isManager, isAdmin } = useAuth();
+  const myEmployeeId = currentEmployeeId(user);
 
   const defaultTab: TabKey = isAdmin ? 'all' : isManager ? 'team' : 'mine';
   const [activeTab, setActiveTab] = useState<TabKey>(defaultTab);
@@ -135,8 +137,8 @@ export default function ImprovementPlansPage() {
   const canRaise = isManager || isAdmin;
   // The manager who owns the plan, and HR, may reshape it.
   const canManageDetail =
-    !!detailPlan && (isAdmin || detailPlan.manager?.id === user?.employeeId);
-  const isMyPlan = !!detailPlan && detailPlan.employee?.id === user?.employeeId;
+    !!detailPlan && (isAdmin || detailPlan.manager?.id === myEmployeeId);
+  const isMyPlan = !!detailPlan && detailPlan.employee?.id === myEmployeeId;
 
   const loadPlans = useCallback(
     async (page = 1) => {
@@ -725,7 +727,7 @@ export default function ImprovementPlansPage() {
                 className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
               >
                 <option value="">
-                  {user?.employeeId ? 'Default (you)' : "Default (employee's reporting manager)"}
+                  {myEmployeeId ? 'Default (you)' : "Default (employee's reporting manager)"}
                 </option>
                 {employees
                   .filter((emp) => emp.id !== planForm.employeeId)

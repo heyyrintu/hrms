@@ -31,7 +31,7 @@ jest.mock('react-hot-toast', () => ({
 
 const mockHasRole = jest.fn();
 jest.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { id: 'u1', employeeId: 'emp-p1' }, hasRole: mockHasRole }),
+  useAuth: () => ({ user: { id: 'u1', employee: { id: 'emp-p1' } }, hasRole: mockHasRole }),
 }));
 
 jest.mock('@/lib/api-recruitment', () => {
