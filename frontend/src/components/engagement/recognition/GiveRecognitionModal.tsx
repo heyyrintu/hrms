@@ -8,6 +8,7 @@ import { Select } from '@/components/ui/Select';
 import { employeesApi } from '@/lib/api';
 import { recognitionApi, type Badge } from '@/lib/api-recognition';
 import { useAuth } from '@/contexts/AuthContext';
+import { currentEmployeeId } from '@/lib/current-employee';
 import toast from 'react-hot-toast';
 
 interface EmployeeOption {
@@ -43,6 +44,8 @@ export function GiveRecognitionModal({ isOpen, onClose, onGiven }: GiveRecogniti
   const [points, setPoints] = useState('0');
   const [saving, setSaving] = useState(false);
 
+  const selfId = currentEmployeeId(user);
+
   const loadContext = useCallback(async () => {
     try {
       const [employeesRes, badgesRes, meRes] = await Promise.all([
@@ -51,14 +54,14 @@ export function GiveRecognitionModal({ isOpen, onClose, onGiven }: GiveRecogniti
         recognitionApi.me(),
       ]);
       const list: EmployeeOption[] = employeesRes.data?.data ?? employeesRes.data ?? [];
-      setEmployees(list.filter((e) => e.id !== user?.employeeId));
+      setEmployees(list.filter((e) => e.id !== selfId));
       setBadges(badgesRes.data?.data ?? badgesRes.data ?? []);
       setPointsEnabled(!!meRes.data?.pointsEnabled);
       setRemainingThisMonth(meRes.data?.remainingThisMonth ?? null);
     } catch {
       toast.error('Failed to load employees and badges');
     }
-  }, [user?.employeeId]);
+  }, [selfId]);
 
   useEffect(() => {
     if (isOpen) {
