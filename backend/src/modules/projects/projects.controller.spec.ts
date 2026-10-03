@@ -32,4 +32,38 @@ describe('ProjectsController routing', () => {
   it.each(['list', 'loggable', 'get'])('%s has no role restriction', (name) => {
     expect(Reflect.getMetadata(ROLES_KEY, proto[name])).toBeUndefined();
   });
+
+  it('keeps loggable ahead of every :id route', () => {
+    const paths = routes().map((r) => String(r[1]));
+    const first = paths.indexOf('loggable');
+    paths.forEach((p, i) => {
+      if (p.startsWith(':id')) expect(i).toBeGreaterThan(first);
+    });
+  });
+
+  it.each([
+    ['listMembers', 'list'],
+    ['addMember', 'add'],
+    ['updateMember', 'update'],
+    ['removeMember', 'remove'],
+  ])('%s delegates to members.%s without a role gate', (handler, method) => {
+    expect(Reflect.getMetadata(ROLES_KEY, proto[handler])).toBeUndefined();
+    const members: any = { list: jest.fn(), add: jest.fn(), update: jest.fn(), remove: jest.fn() };
+    const ctrl: any = new ProjectsController({} as any, members, {} as any);
+    ctrl[handler]({ tenantId: 't' }, 'p1', 'm1', {});
+    expect(members[method]).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['listTasks', 'list'],
+    ['createTask', 'create'],
+    ['updateTask', 'update'],
+    ['deleteTask', 'remove'],
+  ])('%s delegates to tasks.%s without a role gate', async (handler, method) => {
+    expect(Reflect.getMetadata(ROLES_KEY, proto[handler])).toBeUndefined();
+    const tasks: any = { list: jest.fn(), create: jest.fn(), update: jest.fn(), remove: jest.fn() };
+    const ctrl: any = new ProjectsController({} as any, {} as any, tasks);
+    await ctrl[handler]({ tenantId: 't' }, 'p1', 't1', {});
+    expect(tasks[method]).toHaveBeenCalled();
+  });
 });
