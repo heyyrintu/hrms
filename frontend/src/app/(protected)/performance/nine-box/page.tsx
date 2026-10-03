@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Select } from '@/components/ui/Select';
@@ -38,6 +39,8 @@ function errorMessage(err: unknown, fallback: string): string {
 }
 
 export default function NineBoxPage() {
+  const { isManager } = useAuth();
+  const requestId = useRef(0);
   const [cycles, setCycles] = useState<CycleOption[]>([]);
   const [departments, setDepartments] = useState<Array<{ id: string; name: string }>>([]);
   const [cycleId, setCycleId] = useState('');
@@ -47,6 +50,7 @@ export default function NineBoxPage() {
   const [error, setError] = useState(false);
 
   useEffect(() => {
+    if (!isManager) return;
     (async () => {
       try {
         const res = await performanceApi.getCycles({ limit: '100' });
@@ -65,27 +69,38 @@ export default function NineBoxPage() {
         /* the department filter simply stays empty */
       }
     })();
-  }, []);
+  }, [isManager]);
 
   const load = useCallback(async () => {
-    if (!cycleId) return;
+    if (!cycleId || !isManager) return;
+    const id = ++requestId.current;
     setLoading(true);
     setError(false);
     try {
       const res = await calibrationApi.nineBox({ cycleId, ...(departmentId ? { departmentId } : {}) });
+      if (id !== requestId.current) return;
       setView(res.data);
     } catch (err) {
+      if (id !== requestId.current) return;
       setError(true);
       setView(null);
       toast.error(errorMessage(err, 'Failed to load the 9-box grid'));
     } finally {
-      setLoading(false);
+      if (id === requestId.current) setLoading(false);
     }
-  }, [cycleId, departmentId]);
+  }, [cycleId, departmentId, isManager]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  if (!isManager) {
+    return (
+      <Card>
+        <CardContent className="p-8 text-center text-warm-600">You do not have access</CardContent>
+      </Card>
+    );
+  }
 
   const employeesIn = (performance: Band, potential: Band) =>
     view?.cells.find((c) => c.performance === performance && c.potential === potential)?.employees ?? [];

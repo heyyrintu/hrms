@@ -95,4 +95,11 @@ describe('CalibrationPage', () => {
     render(<CalibrationPage />);
     await waitFor(() => expect(screen.getByText('Normalising across teams')).toBeInTheDocument());
   });
+
+  it('shows no access to a plain employee and loads nothing', async () => {
+    mockFlags = { isAdmin: false, isManager: false };
+    render(<CalibrationPage />);
+    expect(screen.getByText('You do not have access')).toBeInTheDocument();
+    expect(calibrationApi.get).not.toHaveBeenCalled();
+  });
 });

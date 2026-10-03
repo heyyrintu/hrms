@@ -9,8 +9,9 @@ jest.mock('lucide-react', () => new Proxy({}, {
     return (props: any) => <span data-testid={`icon-${String(prop)}`} {...props} />;
   },
 }));
+let mockIsManager = true;
 jest.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { role: 'MANAGER', employee: { id: 'e1' } }, isAdmin: false, isManager: true }),
+  useAuth: () => ({ user: { role: 'MANAGER', employee: { id: 'e1' } }, isAdmin: false, isManager: mockIsManager }),
 }));
 jest.mock('@/lib/api', () => ({
   api: {},
@@ -28,6 +29,8 @@ const person = (id: string, name: string) => ({
 });
 
 beforeEach(() => {
+  mockIsManager = true;
+  jest.clearAllMocks();
   const cells = [];
   for (const potential of bands) for (const performance of bands) {
     let employees: any[] = [];
@@ -66,5 +69,12 @@ describe('NineBoxPage', () => {
     const cells = screen.getAllByTestId(/^cell-/).map((c) => c.getAttribute('data-testid'));
     expect(cells.slice(0, 3)).toEqual(['cell-LOW-HIGH', 'cell-MEDIUM-HIGH', 'cell-HIGH-HIGH']);
     expect(cells.slice(6)).toEqual(['cell-LOW-LOW', 'cell-MEDIUM-LOW', 'cell-HIGH-LOW']);
+  });
+
+  it('shows no access to a plain employee and loads nothing', async () => {
+    mockIsManager = false;
+    render(<NineBoxPage />);
+    expect(screen.getByText('You do not have access')).toBeInTheDocument();
+    expect(calibrationApi.nineBox).not.toHaveBeenCalled();
   });
 });

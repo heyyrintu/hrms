@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Plus, RefreshCw, Trash2, Pencil } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -48,22 +48,29 @@ export default function GoalsPage() {
   const [detail, setDetail] = useState<GoalDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
 
+  // Only the most recent request may write state: a slow earlier tab must not overwrite a later one.
+  const requestId = useRef(0);
+
   const load = useCallback(async () => {
+    const id = ++requestId.current;
     setLoading(true);
     setError(false);
     try {
       if (tab === 'tree') {
         const res = await goalsApi.tree();
+        if (id !== requestId.current) return;
         setTree(res.data);
       } else {
         const res = await goalsApi.list({ scope: tab });
+        if (id !== requestId.current) return;
         setGoals(res.data);
       }
     } catch {
+      if (id !== requestId.current) return;
       setError(true);
       toast.error('Failed to load goals');
     } finally {
-      setLoading(false);
+      if (id === requestId.current) setLoading(false);
     }
   }, [tab]);
 

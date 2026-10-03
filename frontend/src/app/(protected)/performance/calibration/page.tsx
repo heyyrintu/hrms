@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -24,7 +24,8 @@ function errorMessage(err: unknown, fallback: string): string {
 const dash = (v: number | null | undefined) => (v === null || v === undefined ? '-' : String(v));
 
 export default function CalibrationPage() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, isManager } = useAuth();
+  const requestId = useRef(0);
 
   const [cycles, setCycles] = useState<CycleOption[]>([]);
   const [departments, setDepartments] = useState<Array<{ id: string; name: string }>>([]);
@@ -39,6 +40,7 @@ export default function CalibrationPage() {
   const [overriding, setOverriding] = useState<CalibrationRow | null>(null);
 
   useEffect(() => {
+    if (!isManager) return;
     (async () => {
       try {
         const res = await performanceApi.getCycles({ limit: '100' });
@@ -57,10 +59,11 @@ export default function CalibrationPage() {
         /* the department filter simply stays empty */
       }
     })();
-  }, []);
+  }, [isManager]);
 
   const load = useCallback(async () => {
-    if (!cycleId) return;
+    if (!cycleId || !isManager) return;
+    const id = ++requestId.current;
     setLoading(true);
     setError(false);
     try {
@@ -69,6 +72,7 @@ export default function CalibrationPage() {
         ...(departmentId ? { departmentId } : {}),
         ...(managerId ? { managerId } : {}),
       });
+      if (id !== requestId.current) return;
       setView(res.data);
       // Remember every manager we have seen so the filter keeps its options once narrowed.
       setManagers((prev) => {
@@ -77,17 +81,26 @@ export default function CalibrationPage() {
         return Array.from(map, ([id, name]) => ({ id, name }));
       });
     } catch (err) {
+      if (id !== requestId.current) return;
       setError(true);
       setView(null);
       toast.error(errorMessage(err, 'Failed to load calibration data'));
     } finally {
-      setLoading(false);
+      if (id === requestId.current) setLoading(false);
     }
-  }, [cycleId, departmentId, managerId]);
+  }, [cycleId, departmentId, managerId, isManager]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  if (!isManager) {
+    return (
+      <Card>
+        <CardContent className="p-8 text-center text-warm-600">You do not have access</CardContent>
+      </Card>
+    );
+  }
 
   const completed = view?.cycle.status === 'COMPLETED';
 

@@ -89,4 +89,25 @@ describe('GoalsPage', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'My goals' }));
     await waitFor(() => expect(goalsApi.list).toHaveBeenCalledWith({ scope: 'mine' }));
   });
+
+  it('ignores a slow earlier response that resolves after a later tab load', async () => {
+    mockUser = { role: 'EMPLOYEE', employee: { id: 'e1' } };
+    mockFlags = { isAdmin: false, isManager: false };
+    let resolveCompany!: (v: unknown) => void;
+    (goalsApi.list as jest.Mock).mockImplementation(({ scope }: { scope: string }) =>
+      scope === 'company'
+        ? new Promise((r) => { resolveCompany = r; })
+        : Promise.resolve({ data: [{ ...base, id: 'gd', title: 'Department goal row', ownerType: 'DEPARTMENT' }] }),
+    );
+    render(<GoalsPage />);
+    await waitFor(() => expect(goalsApi.tree).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('tab', { name: 'Company' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Department' }));
+    await waitFor(() => expect(screen.getByText('Department goal row')).toBeInTheDocument());
+    resolveCompany({ data: [{ ...base, id: 'gc', title: 'Stale company row' }] });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(screen.queryByText('Stale company row')).not.toBeInTheDocument();
+    expect(screen.getByText('Department goal row')).toBeInTheDocument();
+  });
 });
