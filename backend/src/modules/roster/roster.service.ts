@@ -17,6 +17,10 @@ export const ROSTER_MANAGE_PERMISSION = 'attendance.roster.manage';
 const MAX_APPLY_DAYS = 366;
 const MAX_GRID_DAYS = 42;
 const MAX_CELLS = 1000;
+const MAX_CELL_SPAN_DAYS = 42;
+const MAX_EMPLOYEE_IDS = 500;
+const DEFAULT_GRID_LIMIT = 50;
+const MAX_GRID_LIMIT = 200;
 const UPDATE_CHUNK = 500;
 const CREATE_CHUNK = 1000;
 
@@ -38,6 +42,7 @@ export interface RosterRowView {
 export interface RosterGridView {
   days: string[];
   rows: RosterRowView[];
+  meta: { total: number; page: number; limit: number; totalPages: number };
 }
 
 export interface ApplyRosterInput {
@@ -246,7 +251,14 @@ export class RosterService {
   /** The roster grid for a date range, scoped to the actor. */
   async getGrid(
     actor: AuthenticatedUser,
-    query: { from: string; to: string; departmentId?: string; employeeIds?: string },
+    query: {
+      from: string;
+      to: string;
+      departmentId?: string;
+      employeeIds?: string;
+      page?: number;
+      limit?: number;
+    },
   ): Promise<RosterGridView> {
     const range = parseRange(query.from, query.to, MAX_GRID_DAYS);
     const { tenantId } = actor;
@@ -264,16 +276,31 @@ export class RosterService {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
+    if (requested.length > MAX_EMPLOYEE_IDS) {
+      throw new BadRequestException(`At most ${MAX_EMPLOYEE_IDS} employeeIds can be requested`);
+    }
     if (requested.length > 0) where.id = { in: requested };
 
-    const employees = (await this.prisma.employee.findMany({
-      where,
-      select: EMPLOYEE_SELECT,
-      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
-    })) as EmployeeRow[];
+    const page = Math.max(1, Math.floor(Number(query.page) || 1));
+    const limit = Math.min(
+      MAX_GRID_LIMIT,
+      Math.max(1, Math.floor(Number(query.limit) || DEFAULT_GRID_LIMIT)),
+    );
+
+    const [total, employees] = await Promise.all([
+      this.prisma.employee.count({ where }),
+      this.prisma.employee.findMany({
+        where,
+        select: EMPLOYEE_SELECT,
+        orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }, { id: 'asc' }],
+        skip: (page - 1) * limit,
+        take: limit,
+      }) as Promise<EmployeeRow[]>,
+    ]);
+    const meta = { total, page, limit, totalPages: Math.ceil(total / limit) };
 
     const days = eachDate(range.from, range.to).map(toIsoDate);
-    if (employees.length === 0) return { days, rows: [] };
+    if (employees.length === 0) return { days, rows: [], meta };
 
     const resolved = await this.shiftResolver.daysFor(
       tenantId,
@@ -294,6 +321,7 @@ export class RosterService {
         employee: toEmployeeView(e),
         cells: byEmployee.get(e.id) ?? [],
       })),
+      meta,
     };
   }
 
@@ -331,6 +359,17 @@ export class RosterService {
         clear,
       };
     });
+
+    // Bound the work before any write: the result step resolves every day in
+    // the span for every employee, so scattered dates must not widen it.
+    const spanTimes = parsed.map((c) => c.date.getTime());
+    const spanStart = new Date(Math.min(...spanTimes));
+    const spanEnd = new Date(Math.max(...spanTimes));
+    if (daysBetween(spanStart, spanEnd) > MAX_CELL_SPAN_DAYS) {
+      throw new BadRequestException(
+        `The cells must fall within ${MAX_CELL_SPAN_DAYS} days of each other`,
+      );
+    }
 
     const employeeIds = [...new Set(parsed.map((c) => c.employeeId))];
     const shiftIds = [...new Set(parsed.filter((c) => c.shiftId).map((c) => c.shiftId as string))];
@@ -395,13 +434,7 @@ export class RosterService {
     );
 
     // Report what each touched cell now resolves to (a cleared cell shows its fallback).
-    const times = parsed.map((c) => c.date.getTime());
-    const resolved = await this.shiftResolver.daysFor(
-      tenantId,
-      employeeIds,
-      new Date(Math.min(...times)),
-      new Date(Math.max(...times)),
-    );
+    const resolved = await this.shiftResolver.daysFor(tenantId, employeeIds, spanStart, spanEnd);
     const touched = new Set(parsed.map((c) => `${c.employeeId}|${toIsoDate(c.date)}`));
     const byEmployee = new Map<string, RosterCellView[]>();
     for (const day of resolved) {

@@ -38,6 +38,7 @@ export interface RosterRow {
 export interface RosterGrid {
   days: string[];
   rows: RosterRow[];
+  meta?: { total: number; page: number; limit: number; totalPages: number };
 }
 
 export interface ApplyPatternInput {
@@ -66,7 +67,14 @@ export const rosterApi = {
   deletePattern: (id: string) => api.delete<void>(`/roster/patterns/${id}`),
   apply: (input: ApplyPatternInput) =>
     api.post<{ created: number; updated: number; skippedManual: number }>('/roster/apply', input),
-  getGrid: (params: { from: string; to: string; departmentId?: string; employeeIds?: string }) =>
+  getGrid: (params: {
+    from: string;
+    to: string;
+    departmentId?: string;
+    employeeIds?: string;
+    page?: number;
+    limit?: number;
+  }) =>
     api.get<RosterGrid>('/roster', { params }),
   updateCells: (cells: CellUpdate[]) => api.put<RosterRow[]>('/roster/cells', { cells }),
   getMine: (params: { from: string; to: string }) =>

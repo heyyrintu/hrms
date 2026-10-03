@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 
+import { GridPager } from '@/components/roster/GridPager';
 import { RosterGrid } from '@/components/roster/RosterGrid';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent } from '@/components/ui/Card';
@@ -112,6 +113,7 @@ function RosterTab({ shifts }: { shifts: Shift[] }) {
   const [start, setStart] = useState(() => mondayOf(todayLocalIso()));
   const [span, setSpan] = useState<7 | 14>(7);
   const [departmentId, setDepartmentId] = useState('');
+  const [page, setPage] = useState(1);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [grid, setGrid] = useState<RosterGridData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -132,6 +134,7 @@ function RosterTab({ shifts }: { shifts: Shift[] }) {
         from: start,
         to: addDays(start, span - 1),
         ...(departmentId ? { departmentId } : {}),
+        ...(page > 1 ? { page } : {}),
       });
       setGrid(res.data);
     } catch {
@@ -139,7 +142,7 @@ function RosterTab({ shifts }: { shifts: Shift[] }) {
     } finally {
       setLoading(false);
     }
-  }, [start, span, departmentId]);
+  }, [start, span, departmentId, page]);
 
   useEffect(() => {
     load();
@@ -160,10 +163,16 @@ function RosterTab({ shifts }: { shifts: Shift[] }) {
     <Card>
       <CardContent className="space-y-4 pt-6">
         <div className="flex flex-wrap items-end gap-3">
-          <Button variant="secondary" onClick={() => setStart(addDays(start, -span))}>
+          <Button variant="secondary" onClick={() => {
+              setPage(1);
+              setStart(addDays(start, -span));
+            }}>
             Previous
           </Button>
-          <Button variant="secondary" onClick={() => setStart(addDays(start, span))}>
+          <Button variant="secondary" onClick={() => {
+              setPage(1);
+              setStart(addDays(start, span));
+            }}>
             Next
           </Button>
           <div className="w-44">
@@ -189,7 +198,10 @@ function RosterTab({ shifts }: { shifts: Shift[] }) {
             <Select
               label="Department"
               value={departmentId}
-              onChange={(e) => setDepartmentId(e.target.value)}
+              onChange={(e) => {
+                setPage(1);
+                setDepartmentId(e.target.value);
+              }}
             >
               <option value="">All departments</option>
               {departments.map((d) => (
@@ -214,7 +226,10 @@ function RosterTab({ shifts }: { shifts: Shift[] }) {
             </Button>
           </div>
         ) : grid ? (
-          <RosterGrid grid={grid} shifts={shifts} editable onSave={save} />
+          <>
+            <RosterGrid grid={grid} shifts={shifts} editable onSave={save} />
+            <GridPager meta={grid.meta} onPage={setPage} />
+          </>
         ) : null}
       </CardContent>
     </Card>

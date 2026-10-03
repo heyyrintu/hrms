@@ -126,10 +126,23 @@ export class RosterGridQueryDto {
   @IsString()
   departmentId?: string;
 
-  @ApiPropertyOptional({ description: 'Comma-separated employee ids.' })
+  @ApiPropertyOptional({ description: 'Comma-separated employee ids (at most 500).' })
   @IsOptional()
   @IsString()
   employeeIds?: string;
+
+  @ApiPropertyOptional({ default: 1 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  page?: number;
+
+  @ApiPropertyOptional({ default: 50, maximum: 200 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  limit?: number;
 }
 
 export class MyRosterQueryDto {

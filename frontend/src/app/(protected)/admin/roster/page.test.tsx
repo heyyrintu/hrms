@@ -152,6 +152,29 @@ describe('AdminRosterPage', () => {
     expect(screen.getByTestId('pick-off')).toBeInTheDocument();
   });
 
+  it('pages through employees when there are more than one page', async () => {
+    rosterApi.getGrid.mockResolvedValue({
+      data: { ...grid, meta: { total: 120, page: 1, limit: 50, totalPages: 3 } },
+    });
+    render(<AdminRosterPage />);
+    await screen.findByText('Asha Rao');
+    expect(rosterApi.getGrid.mock.calls[0][0].page).toBeUndefined();
+    expect(screen.getByText('Page 1 of 3 (120 employees)')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(rosterApi.getGrid).toHaveBeenCalledTimes(2));
+    expect(rosterApi.getGrid.mock.calls[1][0].page).toBe(2);
+  });
+
+  it('shows no pager when everything fits one page', async () => {
+    rosterApi.getGrid.mockResolvedValue({
+      data: { ...grid, meta: { total: 1, page: 1, limit: 50, totalPages: 1 } },
+    });
+    render(<AdminRosterPage />);
+    await screen.findByText('Asha Rao');
+    expect(screen.queryByRole('button', { name: 'Next page' })).not.toBeInTheDocument();
+  });
+
   it('shows a loading state, then an error with retry', async () => {
     rosterApi.getGrid.mockRejectedValueOnce(new Error('boom'));
     render(<AdminRosterPage />);

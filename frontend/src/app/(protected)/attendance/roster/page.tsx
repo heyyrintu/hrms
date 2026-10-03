@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import { GridPager } from '@/components/roster/GridPager';
 import { RosterGrid } from '@/components/roster/RosterGrid';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
@@ -47,6 +48,7 @@ export default function MyShiftsPage() {
   const [teamShifts, setTeamShifts] = useState<Shift[]>([]);
   const [teamLoading, setTeamLoading] = useState(false);
   const [teamError, setTeamError] = useState(false);
+  const [teamPage, setTeamPage] = useState(1);
 
   const range = useCallback(() => {
     const from = todayLocalIso();
@@ -71,7 +73,7 @@ export default function MyShiftsPage() {
     setTeamError(false);
     try {
       const [grid, shifts] = await Promise.all([
-        rosterApi.getGrid(range()),
+        rosterApi.getGrid({ ...range(), ...(teamPage > 1 ? { page: teamPage } : {}) }),
         shiftsApi.getAll().catch(() => ({ data: [] as Shift[] })),
       ]);
       setTeam(grid.data);
@@ -81,7 +83,7 @@ export default function MyShiftsPage() {
     } finally {
       setTeamLoading(false);
     }
-  }, [range]);
+  }, [range, teamPage]);
 
   useEffect(() => {
     if (employeeId) loadMine();
@@ -171,7 +173,10 @@ export default function MyShiftsPage() {
                 </Button>
               </div>
             ) : team ? (
-              <RosterGrid grid={team} shifts={teamShifts} editable={false} />
+              <>
+                <RosterGrid grid={team} shifts={teamShifts} editable={false} />
+                <GridPager meta={team.meta} onPage={setTeamPage} />
+              </>
             ) : null}
           </CardContent>
         </Card>

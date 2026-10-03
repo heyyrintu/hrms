@@ -320,6 +320,34 @@ describe('RosterService', () => {
       expect(prisma.employee.findMany).not.toHaveBeenCalled();
     });
 
+    it('rejects more than 500 employeeIds', async () => {
+      const ids = Array.from({ length: 501 }, (_, i) => `e${i}`).join(',');
+      await expect(service.getGrid(mockHrAdmin, { ...q, employeeIds: ids })).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(prisma.employee.findMany).not.toHaveBeenCalled();
+    });
+
+    it('pages employees (default limit 50, max 200) and returns meta', async () => {
+      prisma.employee.count.mockResolvedValue(450);
+      prisma.employee.findMany.mockResolvedValue([]);
+      let grid = await service.getGrid(mockHrAdmin, q);
+      let args = prisma.employee.findMany.mock.calls[0][0];
+      expect([args.skip, args.take]).toEqual([0, 50]);
+      expect(prisma.employee.count).toHaveBeenCalledWith({
+        where: { tenantId: TENANT, status: 'ACTIVE' },
+      });
+      expect(grid.meta).toEqual({ total: 450, page: 1, limit: 50, totalPages: 9 });
+
+      grid = await service.getGrid(mockHrAdmin, { ...q, page: 3, limit: 100 });
+      args = prisma.employee.findMany.mock.calls[1][0];
+      expect([args.skip, args.take]).toEqual([200, 100]);
+      expect(grid.meta).toEqual({ total: 450, page: 3, limit: 100, totalPages: 5 });
+
+      await service.getGrid(mockHrAdmin, { ...q, limit: 5000 });
+      expect(prisma.employee.findMany.mock.calls[2][0].take).toBe(200);
+    });
+
     it('narrows to the requested employeeIds', async () => {
       prisma.employee.findMany.mockResolvedValue([]);
       await service.getGrid(mockHrAdmin, { ...q, employeeIds: 'e1, e2' });
@@ -416,6 +444,49 @@ describe('RosterService', () => {
       await expect(
         service.updateCells(mockHrAdmin, [cell({ clear: true, isOff: true })]),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects cells spread over more than 42 days before writing anything', async () => {
+      prime();
+      await expect(
+        service.updateCells(mockHrAdmin, [
+          cell({ date: '2026-01-01', isOff: true }),
+          cell({ date: '2026-02-20', isOff: true }),
+        ]),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        service.updateCells(mockHrAdmin, [
+          cell({ date: '0001-01-01', isOff: true }),
+          cell({ date: '9999-12-31', isOff: true }),
+        ]),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(prisma.rosterEntry.upsert).not.toHaveBeenCalled();
+      expect(resolver.daysFor).not.toHaveBeenCalled();
+    });
+
+    it('accepts a 42-day span and reports only the submitted pairs', async () => {
+      prime();
+      resolver.daysFor.mockResolvedValue(
+        ['2026-03-01', '2026-03-02', '2026-04-12'].map((d) => ({
+          employeeId: 'e1',
+          date: day(d),
+          shift: general,
+          isOff: false,
+          source: 'ROSTER',
+        })),
+      );
+      const rows = await service.updateCells(mockHrAdmin, [
+        cell({ date: '2026-03-01', isOff: true }),
+        cell({ date: '2026-04-12', isOff: true }),
+      ]);
+      expect(resolver.daysFor).toHaveBeenCalledWith(
+        TENANT,
+        ['e1'],
+        day('2026-03-01'),
+        day('2026-04-12'),
+      );
+      expect(rows[0].cells.map((c) => c.date)).toEqual(['2026-03-01', '2026-04-12']);
     });
 
     it('rejects a malformed date', async () => {
