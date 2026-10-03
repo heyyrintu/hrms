@@ -1,11 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { DEFAULT_ATTENDANCE_TIME_ZONE, isOvernightShift, zonedDateOnlyUtc } from './late-mark';
-import {
-  coveringAssignmentWhere,
-  effectiveShift,
-  NEWEST_ASSIGNMENT_FIRST,
-} from './shift-lookup';
+import { ShiftResolverService } from '../../roster/shift-resolver.service';
 
 /** What one day's sweep did for one tenant. */
 export interface AutoAbsentResult {
@@ -49,7 +45,10 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 export class AutoAbsentService {
   private readonly logger = new Logger(AutoAbsentService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private shiftResolver: ShiftResolverService,
+  ) {}
 
   /**
    * Sweep one day for one tenant. Safe to re-run: the unique key on
@@ -172,10 +171,11 @@ export class AutoAbsentService {
   }
 
   /**
-   * Narrow the roster to the sweep's scope, using the same shift-lookup rule
-   * as clock-in (see `shift-lookup.ts`). Overnight-ness is derived from the
-   * shift times, not `Shift.isOvernight`, because rows that predate that
-   * column all default to false.
+   * Narrow the roster to the sweep's scope, using the same shift resolution
+   * as clock-in (`ShiftResolverService`: a roster entry first, then the
+   * covering assignment). A rostered OFF day is never an absence, whatever the
+   * scope. Overnight-ness comes from the shift times or the `isOvernight`
+   * flag, because rows that predate that column all default to false.
    */
   private async filterByScope(
     tenantId: string,
@@ -183,29 +183,26 @@ export class AutoAbsentService {
     employees: { id: string }[],
     scope: AutoAbsentScope,
   ): Promise<{ id: string }[]> {
-    if (scope === 'ALL' || employees.length === 0) return employees;
+    if (employees.length === 0) return employees;
 
-    const assignments = await this.prisma.shiftAssignment.findMany({
-      where: coveringAssignmentWhere(tenantId, day),
-      select: {
-        employeeId: true,
-        shift: { select: { startTime: true, endTime: true, isActive: true } },
-      },
-      orderBy: NEWEST_ASSIGNMENT_FIRST,
-    });
-
-    const overnight = new Set<string>();
-    const seen = new Set<string>();
-    for (const a of assignments) {
-      if (seen.has(a.employeeId)) continue;
-      seen.add(a.employeeId);
-      const shift = effectiveShift(a);
-      if (shift && isOvernightShift(shift.startTime, shift.endTime)) overnight.add(a.employeeId);
-    }
-
-    return employees.filter((e) =>
-      scope === 'NIGHT_SHIFTS' ? overnight.has(e.id) : !overnight.has(e.id),
+    const days = await this.shiftResolver.daysFor(
+      tenantId,
+      employees.map((e) => e.id),
+      day,
+      day,
     );
+    const byEmployee = new Map(days.map((d) => [d.employeeId, d]));
+
+    return employees.filter((e) => {
+      const resolved = byEmployee.get(e.id);
+      if (resolved?.isOff) return false;
+      if (scope === 'ALL') return true;
+
+      const shift = resolved?.shift;
+      const isNight =
+        !!shift && (shift.isOvernight || isOvernightShift(shift.startTime, shift.endTime));
+      return scope === 'NIGHT_SHIFTS' ? isNight : !isNight;
+    });
   }
 
   /**
