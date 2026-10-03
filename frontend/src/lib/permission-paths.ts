@@ -39,6 +39,9 @@ export const PERMISSION_PATHS: Record<string, string> = {
   '/admin/audit': 'audit.view',
   '/admin/webhooks': 'integrations.manage',
   '/admin/workflows': 'integrations.manage',
+  // Keka wave G (time and attendance)
+  '/admin/roster': 'attendance.roster.manage',
+  '/reports/utilisation': 'projects.reports.view',
 };
 
 export function permissionForPath(path: string | null | undefined): string | undefined {

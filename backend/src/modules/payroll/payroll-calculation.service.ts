@@ -1056,7 +1056,7 @@ export class PayrollCalculationService {
         tenantId,
         employeeId,
         date: { gte: startDate, lte: endDate },
-        status: { in: ['PRESENT', 'WFH', 'HALF_DAY', 'ABSENT'] },
+        status: { in: ['PRESENT', 'WFH', 'ON_DUTY', 'HALF_DAY', 'ABSENT'] },
       },
     });
 

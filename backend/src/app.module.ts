@@ -46,6 +46,10 @@ import { RecruitmentModule } from './modules/recruitment/recruitment.module';
 import { EngagementModule } from './modules/engagement/engagement.module';
 // Keka wave H1 (security)
 import { SecurityModule } from './modules/security/security.module';
+// Keka wave G (time and attendance)
+import { RosterModule } from './modules/roster/roster.module';
+import { ProjectsModule } from './modules/projects/projects.module';
+import { TimesheetsModule } from './modules/timesheets/timesheets.module';
 
 @Module({
   imports: [
@@ -102,6 +106,10 @@ import { SecurityModule } from './modules/security/security.module';
     EngagementModule,
     // Keka wave H1 (security)
     SecurityModule,
+    // Keka wave G (time and attendance)
+    RosterModule,
+    ProjectsModule,
+    TimesheetsModule,
   ],
 })
 export class AppModule {}

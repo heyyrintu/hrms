@@ -320,6 +320,7 @@ export class EmployeesService {
       absentDays: attendanceRecords.filter((r) => r.status === 'ABSENT').length,
       leaveDays: attendanceRecords.filter((r) => r.status === 'LEAVE').length,
       wfhDays: attendanceRecords.filter((r) => r.status === 'WFH').length,
+      onDutyDays: attendanceRecords.filter((r) => r.status === 'ON_DUTY').length,
       totalWorkedMinutes: attendanceRecords.reduce((sum, r) => sum + r.workedMinutes, 0),
       totalOtMinutes: attendanceRecords.reduce((sum, r) => sum + r.otMinutesCalculated, 0),
       totalApprovedOtMinutes: attendanceRecords.reduce(

@@ -142,6 +142,16 @@ const prismaModels = [
   'userIdentity',
   'ssoLoginState',
   'ssoExchangeCode',
+  // Keka wave G (time and attendance)
+  'attendanceRequest',
+  'shiftRotationPattern',
+  'shiftRotationPatternDay',
+  'rosterEntry',
+  'project',
+  'projectMember',
+  'projectTask',
+  'timesheet',
+  'timesheetEntry',
 ];
 
 function createModelMock() {

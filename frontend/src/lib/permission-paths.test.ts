@@ -58,6 +58,9 @@ describe('PERMISSION_PATHS entries (Keka wave H1, plan Task 1.5)', () => {
       '/admin/audit': 'audit.view',
       '/admin/webhooks': 'integrations.manage',
       '/admin/workflows': 'integrations.manage',
+      // Keka wave G (time and attendance)
+      '/admin/roster': 'attendance.roster.manage',
+      '/reports/utilisation': 'projects.reports.view',
     });
   });
 

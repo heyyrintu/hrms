@@ -6,6 +6,7 @@ import { OtCalculationService } from './ot-calculation.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AttendancePolicyService } from './policy/attendance-policy.service';
+import { ShiftResolverService } from '../roster/shift-resolver.service';
 import { ATTENDANCE_POLICY_DEFAULTS } from './policy/attendance-policy.service';
 import {
   createMockPrismaService,
@@ -78,6 +79,9 @@ describe('AttendanceService', () => {
           provide: AttendancePolicyService,
           useValue: createMockAttendancePolicyService(),
         },
+        // Keka wave G: the real resolver, backed by the same prisma mock, so the
+        // shiftAssignment.findFirst stubs below keep deciding the shift.
+        ShiftResolverService,
       ],
     }).compile();
 

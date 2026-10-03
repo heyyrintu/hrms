@@ -45,11 +45,7 @@ import {
   previousDateOnly,
 } from './rules/overnight-shift';
 import { classifyWorkedDay } from './rules/day-classification';
-import {
-  coveringAssignmentWhere,
-  effectiveShift,
-  NEWEST_ASSIGNMENT_FIRST,
-} from './rules/shift-lookup';
+import { ShiftResolverService } from '../roster/shift-resolver.service';
 
 /** The working day a punch belongs to, and the shift that decided it. */
 interface ShiftDay {
@@ -92,6 +88,7 @@ export class AttendanceService {
     private otCalculation: OtCalculationService,
     private notificationsService: NotificationsService,
     private policyService: AttendancePolicyService,
+    private shiftResolver: ShiftResolverService,
   ) {}
 
   /**
@@ -402,13 +399,7 @@ export class AttendanceService {
     employeeId: string,
     date: Date,
   ): Promise<Shift | null> {
-    const assignment = await this.prisma.shiftAssignment.findFirst({
-      where: { ...coveringAssignmentWhere(tenantId, date), employeeId },
-      orderBy: NEWEST_ASSIGNMENT_FIRST,
-      include: { shift: true },
-    });
-
-    return effectiveShift(assignment);
+    return this.shiftResolver.shiftOn(tenantId, employeeId, date);
   }
 
   /**

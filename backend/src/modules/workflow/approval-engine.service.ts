@@ -65,6 +65,10 @@ const TYPE_LABELS: Record<WorkflowEntityType, string> = {
   PAYROLL_RUN: 'Payroll run',
   JOB_REQUISITION: 'Job requisition',
   OFFER: 'Job offer',
+  // Keka wave G (time and attendance)
+  WFH_REQUEST: 'Work from home',
+  ON_DUTY_REQUEST: 'On duty',
+  TIMESHEET: 'Timesheet',
 };
 
 type Db = Prisma.TransactionClient | PrismaService;

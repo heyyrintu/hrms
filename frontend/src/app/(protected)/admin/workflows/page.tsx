@@ -44,7 +44,13 @@ const AMOUNT_TYPES: WorkflowEntityType[] = [
   'JOB_REQUISITION',
   'OFFER',
 ];
-const DAYS_TYPES: WorkflowEntityType[] = ['LEAVE', 'COMP_OFF'];
+const DAYS_TYPES: WorkflowEntityType[] = [
+  'LEAVE',
+  'COMP_OFF',
+  // Keka wave G (time and attendance)
+  'WFH_REQUEST',
+  'ON_DUTY_REQUEST',
+];
 
 const APPROVER_TYPES = Object.keys(APPROVER_TYPE_LABELS) as WorkflowApproverType[];
 const USER_ROLES = Object.keys(USER_ROLE_LABELS) as WorkflowUserRole[];

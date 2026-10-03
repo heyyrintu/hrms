@@ -18,7 +18,11 @@ export type WorkflowEntityType =
   | 'PAYROLL_RUN'
   // Keka wave D (hiring)
   | 'JOB_REQUISITION'
-  | 'OFFER';
+  | 'OFFER'
+  // Keka wave G (time and attendance)
+  | 'WFH_REQUEST'
+  | 'ON_DUTY_REQUEST'
+  | 'TIMESHEET';
 
 export type WorkflowApproverType =
   | 'REPORTING_MANAGER'
@@ -38,6 +42,10 @@ export const WORKFLOW_ENTITY_TYPES: WorkflowEntityType[] = [
   'PAYROLL_RUN',
   'JOB_REQUISITION',
   'OFFER',
+  // Keka wave G (time and attendance)
+  'WFH_REQUEST',
+  'ON_DUTY_REQUEST',
+  'TIMESHEET',
 ];
 
 export const WORKFLOW_ENTITY_LABELS: Record<WorkflowEntityType, string> = {
@@ -49,6 +57,10 @@ export const WORKFLOW_ENTITY_LABELS: Record<WorkflowEntityType, string> = {
   PAYROLL_RUN: 'Payroll Run',
   JOB_REQUISITION: 'Job Requisition',
   OFFER: 'Job Offer',
+  // Keka wave G (time and attendance)
+  WFH_REQUEST: 'Work From Home',
+  ON_DUTY_REQUEST: 'On Duty',
+  TIMESHEET: 'Timesheet',
 };
 
 export const APPROVER_TYPE_LABELS: Record<WorkflowApproverType, string> = {
