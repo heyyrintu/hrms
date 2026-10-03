@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { Modal, ModalFooter } from "@/components/ui/Modal";
@@ -127,6 +127,8 @@ export default function TimesheetApprovalsPage() {
   const [detail, setDetail] = useState<Timesheet | null>(null);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  // The id the dialog is for now; a slower earlier response must not replace it.
+  const openRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -146,31 +148,37 @@ export default function TimesheetApprovalsPage() {
   }, [load]);
 
   const close = () => {
+    openRef.current = null;
     setOpenId(null);
     setDetail(null);
     setNote("");
   };
 
   const open = async (id: string) => {
+    openRef.current = id;
     setOpenId(id);
     setDetail(null);
     setNote("");
     try {
       const res = await timesheetsApi.get(id);
+      if (openRef.current !== id) return;
       setDetail(res.data);
     } catch (err) {
+      if (openRef.current !== id) return;
       toast.error(errorMessage(err, "Failed to load the timesheet"));
       close();
     }
   };
 
   const decide = async (decision: "approve" | "reject") => {
-    if (!openId) return;
+    // Act on the timesheet the reviewer is looking at, never on a stale selection.
+    if (!detail || detail.id !== openId) return;
+    const id = detail.id;
     setSaving(true);
     try {
       const text = note.trim() || undefined;
-      if (decision === "approve") await timesheetsApi.approve(openId, text);
-      else await timesheetsApi.reject(openId, text);
+      if (decision === "approve") await timesheetsApi.approve(id, text);
+      else await timesheetsApi.reject(id, text);
       toast.success(
         decision === "approve" ? "Timesheet approved" : "Timesheet rejected",
       );

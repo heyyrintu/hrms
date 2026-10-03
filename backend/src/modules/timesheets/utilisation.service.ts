@@ -294,10 +294,9 @@ export class UtilisationService {
 
     const minutesByEmployee = new Map<string, Map<string, number>>();
     for (const day of days) {
-      let minutes: number | null = null;
-      if (day.isOff) minutes = 0;
-      else if (day.shift) minutes = day.shift.standardWorkMinutes;
-      if (minutes === null) continue;
+      // Capacity is Mon-Fri minus holidays and leave; the roster only supplies the hours.
+      if (!day.shift) continue;
+      const minutes = day.shift.standardWorkMinutes;
       const perDay = minutesByEmployee.get(day.employeeId) ?? new Map<string, number>();
       perDay.set(isoDate(day.date), minutes);
       minutesByEmployee.set(day.employeeId, perDay);
@@ -384,6 +383,7 @@ export class UtilisationService {
       },
     });
 
+    const everyone = new Set<string>();
     const perProject = new Map<
       string,
       { hours: number; billable: number; people: Set<string> }
@@ -394,10 +394,11 @@ export class UtilisationService {
       acc.hours += h;
       if (e.billable) acc.billable += h;
       acc.people.add(e.timesheet.employeeId);
+      everyone.add(e.timesheet.employeeId);
       perProject.set(e.projectId, acc);
     }
     if (perProject.size === 0) {
-      return { rows: [], totals: projectTotals([]) };
+      return { rows: [], totals: projectTotals([], 0) };
     }
 
     const projects = await this.prisma.project.findMany({
@@ -422,7 +423,7 @@ export class UtilisationService {
       })
       .sort((a, b) => a.code.localeCompare(b.code));
 
-    return { rows, totals: projectTotals(rows) };
+    return { rows, totals: projectTotals(rows, everyone.size) };
   }
 }
 
@@ -441,15 +442,15 @@ function employeeTotals(rows: EmployeeUtilisationRow[]) {
   };
 }
 
-function projectTotals(rows: ProjectUtilisationRow[]) {
+function projectTotals(rows: ProjectUtilisationRow[], contributors: number) {
   const logged = round2(rows.reduce((s, r) => s + r.loggedHours, 0));
   const billable = round2(rows.reduce((s, r) => s + r.billableHours, 0));
   return {
     loggedHours: logged,
     billableHours: billable,
     billableSharePct: pct(billable, logged),
-    // The sum of the rows: someone on two projects counts once on each.
-    contributors: rows.reduce((s, r) => s + r.contributors, 0),
+    // Distinct employees across the rows, not the sum (someone on two projects counts once).
+    contributors,
   };
 }
 

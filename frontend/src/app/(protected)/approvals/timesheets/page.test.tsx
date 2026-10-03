@@ -191,3 +191,35 @@ describe('Timesheet approvals page', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
 });
+
+describe('Timesheet approvals page (stale detail)', () => {
+  it('decides on the timesheet on screen when an earlier open resolves late', async () => {
+    const second = {
+      ...pending[0],
+      id: 'ts-2',
+      employee: { id: 'emp-2', name: 'Bina Das', code: 'E002' },
+    };
+    api.getPendingApprovals.mockResolvedValue({ data: [pending[0], second] } as any);
+    let resolveFirst!: (v: unknown) => void;
+    api.get.mockImplementation(((id: string) =>
+      id === 'ts-1'
+        ? new Promise((res) => {
+            resolveFirst = res;
+          })
+        : Promise.resolve({ data: { ...detail, id: 'ts-2', employee: second.employee } })) as any);
+
+    render(<TimesheetApprovalsPage />);
+    fireEvent.click(await screen.findByRole('button', { name: /review asha rao/i }));
+    fireEvent.click(screen.getByRole('button', { name: /review bina das/i }));
+
+    const dialog = await screen.findByRole('dialog');
+    await within(dialog).findByText('ALPHA / Build');
+    // The first (slow) response now arrives and must be ignored.
+    resolveFirst({ data: detail });
+    await Promise.resolve();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: /^approve/i }));
+    await waitFor(() => expect(api.approve).toHaveBeenCalledWith('ts-2', undefined));
+    expect(api.approve).not.toHaveBeenCalledWith('ts-1', expect.anything());
+  });
+});

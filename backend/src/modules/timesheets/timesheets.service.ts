@@ -162,7 +162,8 @@ export class TimesheetsService {
       if (!checked.ok) throw new BadRequestException(checked.errors.join('; '));
 
       const total = candidates.reduce((sum, e) => sum.plus(e.hours), new Prisma.Decimal(0));
-      // `update` leaves status alone: a REJECTED timesheet stays REJECTED.
+      // Creates the row when absent; an existing row is changed only by the
+      // status-guarded updateMany below (a REJECTED timesheet stays REJECTED).
       const sheet = await tx.timesheet.upsert({
         where: { tenantId_employeeId_weekStart: { tenantId, employeeId, weekStart } },
         create: {
@@ -172,8 +173,22 @@ export class TimesheetsService {
           status: TimesheetStatus.DRAFT,
           totalHours: total,
         },
-        update: { totalHours: total },
+        update: {},
       });
+
+      // The guard doubles as a row lock: a concurrent submit or save makes this
+      // wait, then match nothing, so entries are never replaced under it.
+      const guarded = await tx.timesheet.updateMany({
+        where: {
+          id: sheet.id,
+          tenantId,
+          status: { in: [TimesheetStatus.DRAFT, TimesheetStatus.REJECTED] },
+        },
+        data: { totalHours: total },
+      });
+      if (guarded.count === 0) {
+        throw new ConflictException('This timesheet was changed by another request; reload and retry');
+      }
 
       await tx.timesheetEntry.deleteMany({ where: { timesheetId: sheet.id } });
       if (candidates.length > 0) {

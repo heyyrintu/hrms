@@ -67,7 +67,7 @@ describe('capacityHours', () => {
       }),
     ).toBe(0));
 
-  it('a standard of 0 minutes (rostered off) gives no capacity', () =>
+  it('a standard of 0 minutes on a day gives no capacity for it', () =>
     expect(
       capacityHours({
         ...base,

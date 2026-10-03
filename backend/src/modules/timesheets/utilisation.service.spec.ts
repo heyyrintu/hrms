@@ -324,7 +324,7 @@ describe('UtilisationService', () => {
       );
     });
 
-    it("uses the resolver's standard minutes and gives a rostered OFF day no capacity", async () => {
+    it("uses the resolver's standard minutes; a rostered OFF weekday still counts", async () => {
       resolver.daysFor.mockResolvedValue([
         {
           employeeId: 'e1',
@@ -337,8 +337,8 @@ describe('UtilisationService', () => {
 
       const report = await service.build(hr, query());
 
-      // Mon 9h, Tue off, Wed to Fri 3 x 8h.
-      expect((report.rows as any[])[0].capacityHours).toBe(33);
+      // Capacity is Mon-Fri minus holidays and leave: Mon 9h, Tue to Fri 4 x 8h.
+      expect((report.rows as any[])[0].capacityHours).toBe(41);
       expect(resolver.daysFor).toHaveBeenCalledWith(
         tenantId,
         ['e1'],
@@ -421,7 +421,7 @@ describe('UtilisationService', () => {
         loggedHours: 25,
         billableHours: 23,
         billableSharePct: 92,
-        contributors: 3,
+        contributors: 2,
       });
       expect(resolver.daysFor).not.toHaveBeenCalled();
     });

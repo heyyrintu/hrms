@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma, UserRole } from '@prisma/client';
 import { TimesheetsService } from './timesheets.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -97,6 +97,7 @@ describe('TimesheetsService (save, submit, recall, my week)', () => {
     prisma.attendanceRecord.findMany.mockResolvedValue([]);
     prisma.timesheet.findUnique.mockResolvedValue(null);
     prisma.timesheet.upsert.mockResolvedValue({ id: 'ts-1' });
+    prisma.timesheet.updateMany.mockResolvedValue({ count: 1 });
     prisma.timesheetEntry.deleteMany.mockResolvedValue({ count: 0 });
     prisma.timesheetEntry.createMany.mockResolvedValue({ count: 1 });
     prisma.user.findFirst.mockResolvedValue({ id: 'user-1' });
@@ -217,8 +218,14 @@ describe('TimesheetsService (save, submit, recall, my week)', () => {
           create: expect.objectContaining({ status: 'DRAFT', weekStart: d(WEEK) }),
         }),
       );
-      expect(prisma.timesheet.upsert.mock.calls[0][0].update).not.toHaveProperty('status');
-      expect(prisma.timesheet.upsert.mock.calls[0][0].update.totalHours.toString()).toBe('7.5');
+      expect(prisma.timesheet.upsert.mock.calls[0][0].update).toEqual({});
+      expect(prisma.timesheet.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'ts-1', tenantId, status: { in: ['DRAFT', 'REJECTED'] } },
+        }),
+      );
+      expect(prisma.timesheet.updateMany.mock.calls[0][0].data.totalHours.toString()).toBe('7.5');
+      expect(prisma.timesheet.updateMany.mock.calls[0][0].data).not.toHaveProperty('status');
       expect(prisma.timesheetEntry.deleteMany).toHaveBeenCalledWith({
         where: { timesheetId: 'ts-1' },
       });
@@ -252,13 +259,21 @@ describe('TimesheetsService (save, submit, recall, my week)', () => {
         entries: [],
       });
       await save([entry()]);
-      expect(prisma.timesheet.upsert.mock.calls[0][0].update).not.toHaveProperty('status');
+      expect(prisma.timesheet.upsert.mock.calls[0][0].update).toEqual({});
+      expect(prisma.timesheet.updateMany.mock.calls[0][0].data).not.toHaveProperty('status');
+    });
+
+    it('409s and writes no entries when a concurrent submit or save won (guard matches nothing)', async () => {
+      prisma.timesheet.updateMany.mockResolvedValue({ count: 0 });
+      await expect(save([entry()])).rejects.toThrow(ConflictException);
+      expect(prisma.timesheetEntry.deleteMany).not.toHaveBeenCalled();
+      expect(prisma.timesheetEntry.createMany).not.toHaveBeenCalled();
     });
 
     it('saves an empty week as a draft with zero hours', async () => {
       await save([]);
       expect(prisma.timesheetEntry.createMany).not.toHaveBeenCalled();
-      expect(prisma.timesheet.upsert.mock.calls[0][0].update.totalHours.toString()).toBe('0');
+      expect(prisma.timesheet.updateMany.mock.calls[0][0].data.totalHours.toString()).toBe('0');
     });
   });
 
