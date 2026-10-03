@@ -85,9 +85,12 @@ export class CalibrationService {
     }
     const tenantId = user.tenantId;
 
-    // Read, check and write inside one transaction so oldValues in the audit
-    // row is the value this write replaced, even under concurrent calibrations.
+    // Lock, read, check and write inside one transaction. The FOR UPDATE row
+    // lock makes a concurrent calibration of the same review wait, then read
+    // the value this one wrote, so oldValues in the audit row is always the
+    // value this write replaced.
     const { review, updated } = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "performance_reviews" WHERE id = ${reviewId} AND "tenantId" = ${tenantId} FOR UPDATE`;
       const review = await tx.performanceReview.findFirst({
         where: { id: reviewId, tenantId },
         include: {

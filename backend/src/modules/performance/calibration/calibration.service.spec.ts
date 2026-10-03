@@ -80,6 +80,19 @@ describe('CalibrationService', () => {
       );
     });
 
+    it('locks the review row (FOR UPDATE, tenant scoped) before reading it', async () => {
+      await service.calibrate(admin, 'rev1', dto);
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      const [strings, ...values] = prisma.$queryRaw.mock.calls[0];
+      const sql = (strings as readonly string[]).join('?');
+      expect(sql).toContain('FROM "performance_reviews"');
+      expect(sql).toContain('FOR UPDATE');
+      expect(values).toEqual(['rev1', 't1']);
+      expect(prisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.performanceReview.findFirst.mock.invocationCallOrder[0],
+      );
+    });
+
     // Review Focus 2
     it('403s an admin calibrating their own review', async () => {
       prisma.performanceReview.findFirst.mockResolvedValue(review({ employeeId: 'emp-admin' }));
