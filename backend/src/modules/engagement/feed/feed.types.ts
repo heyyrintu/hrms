@@ -3,7 +3,7 @@
  * celebrations, later waves). Frozen after the Wave E scaffold; Wave F adds
  * 'GOAL_COMPLETED' to FEED_ITEM_TYPES.
  */
-export const FEED_ITEM_TYPES = ['RECOGNITION', 'ANNOUNCEMENT', 'BIRTHDAY', 'WORK_ANNIVERSARY'] as const;
+export const FEED_ITEM_TYPES = ['RECOGNITION', 'ANNOUNCEMENT', 'BIRTHDAY', 'WORK_ANNIVERSARY', 'GOAL_COMPLETED'] as const;
 export type FeedItemType = (typeof FEED_ITEM_TYPES)[number];
 
 /** `FeedItem.sourceType` values used by Wave E producers. */
@@ -11,6 +11,7 @@ export const FEED_SOURCE = {
   RECOGNITION: 'Recognition',
   ANNOUNCEMENT: 'Announcement',
   EMPLOYEE: 'Employee',
+  GOAL: 'Goal',
 } as const;
 
 export interface PostFeedItemInput {

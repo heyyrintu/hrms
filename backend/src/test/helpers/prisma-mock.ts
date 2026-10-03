@@ -14,6 +14,7 @@ const prismaModelMethods = [
   'count',
   'aggregate',
   'groupBy',
+  'createManyAndReturn',
 ];
 
 const prismaModels = [
@@ -142,6 +143,18 @@ const prismaModels = [
   'userIdentity',
   'ssoLoginState',
   'ssoExchangeCode',
+  // Keka wave F (performance depth)
+  'keyResult',
+  'reviewQuestion',
+  'reviewTemplate',
+  'reviewTemplateQuestion',
+  'reviewCycleQuestion',
+  'reviewAnswer',
+  'competency',
+  'designationCompetency',
+  'reviewCompetencyRating',
+  'peerReview',
+  'peerReviewAnswer',
 ];
 
 function createModelMock() {

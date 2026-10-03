@@ -75,6 +75,8 @@ import {
   // Keka wave H1
   KeyRound,
   ShieldCheck,
+  // Keka wave F
+  Grid3x3,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -212,6 +214,12 @@ const sections: NavSection[] = [
           { name: 'Team Reviews', href: '/performance/team', icon: <Users className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
           { name: 'Review Cycles', href: '/performance/cycles', icon: <Target className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
           { name: 'Improvement Plans', href: '/performance/improvement-plans', icon: <ClipboardCheck className="h-4 w-4" /> },
+          { name: 'Goals', href: '/performance/goals', icon: <Target className="h-4 w-4" /> },
+          { name: 'Feedback Requests', href: '/performance/feedback-requests', icon: <MessageSquare className="h-4 w-4" /> },
+          { name: 'Calibration', href: '/performance/calibration', icon: <BarChart3 className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
+          { name: '9-Box Grid', href: '/performance/nine-box', icon: <Grid3x3 className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
+          { name: 'Review Templates', href: '/performance/templates', icon: <FileText className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
+          { name: 'Competencies', href: '/performance/competencies', icon: <Award className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
         ],
       },
     ],
