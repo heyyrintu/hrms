@@ -13,6 +13,7 @@ import {
   MaxFileSizeValidator,
   FileTypeValidator,
   BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiBearerAuth, ApiConsumes, ApiBody, ApiOperation, ApiResponse } from '@nestjs/swagger';
@@ -25,6 +26,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { UserRole } from '@prisma/client';
+import { ATTENDANCE_SELFIE_ENTITY } from '../attendance/requests/attendance-requests.types';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const ALLOWED_FILE_TYPES =
@@ -69,6 +71,10 @@ export class UploadsController {
     if (!file) {
       throw new BadRequestException('File is required');
     }
+    // Selfies go through POST /attendance-capture/selfie, which checks type and size.
+    if (dto.entityType === ATTENDANCE_SELFIE_ENTITY) {
+      throw new BadRequestException('This entity type cannot be uploaded here');
+    }
 
     return this.uploadsService.upload(
       file,
@@ -90,6 +96,11 @@ export class UploadsController {
     @Res() res: Response,
     @CurrentUser() user: AuthenticatedUser,
   ) {
+    // Attendance selfies are served only by GET /attendance-capture/selfies/...,
+    // which checks who may see them.
+    if (folder === ATTENDANCE_SELFIE_ENTITY) {
+      throw new NotFoundException('File not found');
+    }
     const key = `${folder}/${filename}`;
     const filePath = await this.uploadsService.getFilePath(
       key,
