@@ -471,7 +471,7 @@ export const calibrationApi = {
   `user.employeeId` (400) and sets `employeeId` to it; COMPANY/DEPARTMENT
   need admin (403); DEPARTMENT needs `departmentId` in tenant (404), others
   must not send it (400); `reviewId` (EMPLOYEE only) as today;
-  `createdByUserId = user.id`. Specs for each rule, plus a manager reading a
+  `createdByUserId = user.userId`. Specs for each rule, plus a manager reading a
   direct report's goal (ok) and a peer's goal (404), and an admin editing an
   employee goal (403).
 - [ ] **Step 3: Alignment, TDD.** `validateParent(tenantId, goal: {id?, ownerType, employeeId}, parentGoalId, user, tx)`:
@@ -555,10 +555,10 @@ export const calibrationApi = {
   - `calibrate(user, reviewId, dto)`: admin (403); review in tenant with cycle
     (404); `review.employeeId === user.employeeId` → 403 *(Review Focus 2)*;
     review `COMPLETED` and cycle `ACTIVE` else 400 *(Review Focus 4)*; in one
-    tx: update `calibratedRating`, `calibrationReason`, `calibratedById: user.id`,
+    tx: update `calibratedRating`, `calibrationReason`, `calibratedById: user.userId`,
     `calibratedAt: now` (all null-ed except reason/by/at on revert —
     `calibratedRating: null`, reason kept as the revert reason), then
-    `auditService.log({ tenantId, userId: user.id, action: 'UPDATE',
+    `auditService.log({ tenantId, userId: user.userId, action: 'UPDATE',
     entityType: 'PerformanceReviewCalibration', entityId: reviewId,
     oldValues: { calibratedRating, calibrationReason }, newValues: {...} }, tx)`.
     After commit notify the reviewer `REVIEW_CALIBRATED`, link `/performance/team`.
@@ -686,7 +686,7 @@ export const calibrationApi = {
     for writes (400); review `COMPLETED` → 400 `'Peer feedback is closed'`.
   - `add`: SELF → only while review `PENDING`/`SELF_REVIEW`, status
     `NOMINATED`, `nominatedByEmployeeId = self`; REVIEWER/ADMIN → status
-    `APPROVED`, `decidedAt`, `decidedByUserId`. Peer `ACTIVE` in tenant
+    `APPROVED`, `decidedAt`, `decidedByUserId: user.userId`. Peer `ACTIVE` in tenant
     (404), not the employee nor the reviewer (400); non-REJECTED count <
     `maxPeers` (400); existing row for the peer → 409 (covers re-nominating a
     rejected peer). Notify reviewer (NOMINATED) or peer (APPROVED).
