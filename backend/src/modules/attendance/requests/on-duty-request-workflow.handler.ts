@@ -1,6 +1,5 @@
-import { Injectable, NotImplementedException } from '@nestjs/common';
-import { WorkflowEntityType } from '@prisma/client';
-import { PrismaService } from '../../../prisma/prisma.service';
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { AttendanceRequestType, WorkflowEntityType } from '@prisma/client';
 import { AuthenticatedUser } from '../../../common/types/jwt-payload.type';
 import { WorkflowRegistry } from '../../workflow/workflow-registry.service';
 import {
@@ -10,35 +9,33 @@ import {
 } from '../../workflow/workflow.types';
 import { AttendanceRequestsService } from './attendance-requests.service';
 
-/**
- * Connects on-duty requests to the approval engine (Keka wave G, WS-A).
- *
- * Scaffold stub: it does NOT register with the registry yet. The owning
- * workstream adds `OnModuleInit` / `onModuleInit() { this.registry.register(this); }`.
- */
+/** Connects on-duty requests to the approval engine (Keka wave G, WS-A). */
 @Injectable()
-export class OnDutyRequestWorkflowHandler implements WorkflowEntityHandler {
+export class OnDutyRequestWorkflowHandler implements WorkflowEntityHandler, OnModuleInit {
   readonly entityType = WorkflowEntityType.ON_DUTY_REQUEST;
 
   constructor(
-    private readonly prisma: PrismaService,
     private readonly registry: WorkflowRegistry,
     private readonly requests: AttendanceRequestsService,
   ) {}
 
-  getContext(_tenantId: string, _entityId: string): Promise<WorkflowEntityContext | null> {
-    throw new NotImplementedException();
+  onModuleInit(): void {
+    this.registry.register(this);
   }
 
-  describe(_tenantId: string, _entityIds: string[]): Promise<WorkflowEntitySummary[]> {
-    throw new NotImplementedException();
+  getContext(tenantId: string, entityId: string): Promise<WorkflowEntityContext | null> {
+    return this.requests.getContext(tenantId, entityId, AttendanceRequestType.ON_DUTY);
   }
 
-  approve(_actor: AuthenticatedUser, _entityId: string, _note?: string | null): Promise<unknown> {
-    throw new NotImplementedException();
+  describe(tenantId: string, entityIds: string[]): Promise<WorkflowEntitySummary[]> {
+    return this.requests.describe(tenantId, entityIds, AttendanceRequestType.ON_DUTY);
   }
 
-  reject(_actor: AuthenticatedUser, _entityId: string, _note?: string | null): Promise<unknown> {
-    throw new NotImplementedException();
+  approve(actor: AuthenticatedUser, entityId: string, note?: string | null) {
+    return this.requests.approve(actor, entityId, note);
+  }
+
+  reject(actor: AuthenticatedUser, entityId: string, note?: string | null) {
+    return this.requests.reject(actor, entityId, note);
   }
 }
