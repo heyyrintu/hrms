@@ -452,6 +452,26 @@ describe('PeerReviewsService', () => {
       expect(result.filter((r) => r.closed).map((r) => r.id)).toEqual(['pr-c']);
     });
 
+    it('SELF: closed is true once the CYCLE is COMPLETED even if the review is not', async () => {
+      prisma.performanceReview.findFirst.mockResolvedValue(review({ cycle: cycle({ status: 'COMPLETED' }) }));
+      prisma.peerReview.findMany.mockResolvedValue(rows);
+
+      const result: any[] = await service.listForReview(self, 'rev-1');
+
+      const masked = result.filter((r) => r.status === 'APPROVED');
+      expect(masked).toHaveLength(3);
+      expect(new Set(masked.map((r) => r.closed))).toEqual(new Set([true]));
+    });
+
+    it('reviewer: closed is true for unanswered APPROVED rows once the CYCLE is COMPLETED', async () => {
+      prisma.performanceReview.findFirst.mockResolvedValue(review({ cycle: cycle({ status: 'COMPLETED' }) }));
+      prisma.peerReview.findMany.mockResolvedValue(rows);
+
+      const result: any[] = await service.listForReview(reviewer, 'rev-1');
+
+      expect(result.filter((r) => r.closed).map((r) => r.id)).toEqual(['pr-c']);
+    });
+
     it('works for a viewer even when peer feedback is disabled (read-only)', async () => {
       prisma.performanceReview.findFirst.mockResolvedValue(review({ cycle: cycle({ peerFeedbackEnabled: false }) }));
       prisma.peerReview.findMany.mockResolvedValue([]);
@@ -527,6 +547,19 @@ describe('PeerReviewsService', () => {
       prisma.peerReview.findMany.mockResolvedValue([
         request({ review: { ...request().review, status: 'COMPLETED' } }),
         request({ id: 'pr-2', status: 'SUBMITTED', review: { ...request().review, status: 'COMPLETED' } }),
+      ]);
+      prisma.reviewCycleQuestion.findMany.mockResolvedValue([]);
+
+      const result: any[] = await service.myRequests(peerUser);
+
+      expect(result.map((r) => r.closed)).toEqual([true, false]);
+    });
+
+    it('closed is true for an APPROVED request when only the CYCLE is COMPLETED', async () => {
+      const cyc = { id: 'c1', name: 'Q1', status: 'COMPLETED' };
+      prisma.peerReview.findMany.mockResolvedValue([
+        request({ review: { ...request().review, cycle: cyc } }),
+        request({ id: 'pr-2', status: 'SUBMITTED', review: { ...request().review, cycle: cyc } }),
       ]);
       prisma.reviewCycleQuestion.findMany.mockResolvedValue([]);
 

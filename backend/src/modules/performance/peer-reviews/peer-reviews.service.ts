@@ -86,7 +86,9 @@ export class PeerReviewsService {
   async listForReview(user: AuthenticatedUser, reviewId: string) {
     const review = await this.loadReview(user.tenantId, reviewId);
     const relation = this.relationOr404(review, user);
-    const reviewClosed = review.status === PerformanceReviewStatus.COMPLETED;
+    const reviewClosed =
+      review.status === PerformanceReviewStatus.COMPLETED ||
+      review.cycle.status === ReviewCycleStatus.COMPLETED;
 
     if (relation === 'SELF') {
       // Answers and comments are never loaded for the employee.
@@ -515,7 +517,7 @@ export class PeerReviewsService {
       review: {
         status: PerformanceReviewStatus;
         employee: { id: string; firstName: string; lastName: string };
-        cycle: { id: string; name: string };
+        cycle: { id: string; name: string; status: ReviewCycleStatus };
       };
     },
     questions: Array<{
@@ -532,7 +534,8 @@ export class PeerReviewsService {
       status: row.status,
       closed:
         row.status === PeerReviewStatus.APPROVED &&
-        row.review.status === PerformanceReviewStatus.COMPLETED,
+        (row.review.status === PerformanceReviewStatus.COMPLETED ||
+          row.review.cycle.status === ReviewCycleStatus.COMPLETED),
       reviewee: row.review.employee,
       cycle: { id: row.review.cycle.id, name: row.review.cycle.name },
       questions: questions.map((q) => ({
