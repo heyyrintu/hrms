@@ -45,6 +45,7 @@ const goalRec = (over: Record<string, unknown> = {}) => ({
   department: null,
   keyResults: [] as any[],
   _count: { children: 0 },
+  children: [] as any[],
   ...over,
 });
 const companyGoal = (over: Record<string, unknown> = {}) =>
@@ -161,7 +162,7 @@ describe('GoalsService', () => {
     it('maps Decimals to numbers, computes isDerived/canEdit and hides the manager link', async () => {
       prisma.goal.findMany.mockResolvedValue([
         goalRec({ weight: dec(2.5), keyResults: [kr({ startValue: dec(1), targetValue: dec(9), currentValue: dec(3), weight: dec(2) })] }),
-        goalRec({ id: 'g2', _count: { children: 2 }, review: { id: 'r', status: 'COMPLETED', cycle: { id: 'c', name: 'C' } } }),
+        goalRec({ id: 'g2', _count: { children: 2 }, children: [{ ownerType: 'EMPLOYEE' }, { ownerType: 'EMPLOYEE' }], review: { id: 'r', status: 'COMPLETED', cycle: { id: 'c', name: 'C' } } }),
         goalRec({ id: 'g3' }),
       ]);
       const [a, b, c] = (await service.list(owner, { scope: 'mine' })) as any[];
@@ -174,6 +175,27 @@ describe('GoalsService', () => {
       expect(b.canEdit).toBe(false); // locked by a completed review
       expect(c.isDerived).toBe(false);
       expect(a._count).toBeUndefined();
+      expect(a.children).toBeUndefined(); // the raw child rows stay server-side
+    });
+
+    it('isDerived ignores employee children of an org goal but not of an employee goal', async () => {
+      const empKids = [{ ownerType: 'EMPLOYEE' }];
+      prisma.goal.findMany.mockResolvedValue([
+        companyGoal({ _count: { children: 1 }, children: empKids }),
+        deptGoal({ _count: { children: 1 }, children: empKids }),
+        companyGoal({ id: 'co2', _count: { children: 1 }, children: [{ ownerType: 'DEPARTMENT' }] }),
+        goalRec({ id: 'e1', _count: { children: 1 }, children: empKids }),
+      ]);
+      const out = (await service.list(admin, { scope: 'company' })) as any[];
+      expect(out.map((g) => g.isDerived)).toEqual([false, false, true, true]);
+    });
+
+    it('locks a goal whose review cycle is COMPLETED even if the review is not', async () => {
+      prisma.goal.findMany.mockResolvedValue([
+        goalRec({ review: { id: 'r', status: 'MANAGER_REVIEW', cycle: { id: 'c', name: 'C', status: 'COMPLETED' } } }),
+      ]);
+      const [a] = (await service.list(owner, { scope: 'mine' })) as any[];
+      expect(a.canEdit).toBe(false);
     });
   });
 
@@ -368,6 +390,7 @@ describe('GoalsService', () => {
       await service.createGoal(owner, { ...base, reviewId: 'rev-1' });
       expect(prisma.performanceReview.findFirst).toHaveBeenCalledWith({
         where: { id: 'rev-1', tenantId: 't1', employeeId: 'emp-1' },
+        include: { cycle: { select: { status: true } } },
       });
       expect(prisma.goal.create.mock.calls[0][0].data.reviewId).toBe('rev-1');
     });
@@ -382,6 +405,17 @@ describe('GoalsService', () => {
       prisma.performanceReview.findFirst.mockResolvedValue({ id: 'rev-1', status: 'COMPLETED', employeeId: 'emp-1' });
       await expect(service.createGoal(owner, { ...base, reviewId: 'rev-1' })).rejects.toThrow(BadRequestException);
       expect(prisma.goal.create).not.toHaveBeenCalled();
+    });
+
+    it("400s when the review's cycle is COMPLETED even if the review is not", async () => {
+      prisma.performanceReview.findFirst.mockResolvedValue({
+        id: 'rev-1', status: 'MANAGER_REVIEW', employeeId: 'emp-1', cycle: { status: 'COMPLETED' },
+      });
+      await expect(service.createGoal(owner, { ...base, reviewId: 'rev-1' })).rejects.toThrow(BadRequestException);
+      expect(prisma.goal.create).not.toHaveBeenCalled();
+      expect(prisma.performanceReview.findFirst.mock.calls[0][0].include).toEqual({
+        cycle: { select: { status: true } },
+      });
     });
 
     it('validates the parent, creates, then recomputes the parent chain in the same tx', async () => {
@@ -524,6 +558,16 @@ describe('GoalsService', () => {
       expect(prisma.goal.update).not.toHaveBeenCalled();
     });
 
+    it('refuses to edit a goal once its review cycle is COMPLETED (review not yet)', async () => {
+      prisma.goal.findFirst.mockResolvedValueOnce(
+        goalRec({ review: { id: 'r', status: 'MANAGER_REVIEW', cycle: { id: 'c', name: 'C', status: 'COMPLETED' } } }),
+      );
+      await expect(service.updateGoal(owner, 'g1', { progress: 100 })).rejects.toThrow(
+        'This review is completed; its goals can no longer be changed',
+      );
+      expect(prisma.goal.update).not.toHaveBeenCalled();
+    });
+
     it('updates a manual goal and recomputes its chain in the same tx', async () => {
       prisma.goal.findFirst
         .mockResolvedValueOnce(goalRec({ review: { id: 'r', status: 'SELF_REVIEW', cycle: { id: 'c', name: 'C' } } }))
@@ -568,8 +612,90 @@ describe('GoalsService', () => {
     });
 
     it('rejects manual progress or status on a goal with aligned children', async () => {
-      prisma.goal.findFirst.mockResolvedValue(goalRec({ _count: { children: 1 } }));
+      prisma.goal.findFirst.mockResolvedValue(goalRec({ _count: { children: 1 }, children: [{ ownerType: 'EMPLOYEE' }] }));
       await expect(service.updateGoal(owner, 'g1', { progress: 10 })).rejects.toThrow(BadRequestException);
+    });
+
+    it('a company goal with only employee children is manual: admin can set progress and status', async () => {
+      prisma.goal.findFirst.mockResolvedValue(
+        companyGoal({ _count: { children: 1 }, children: [{ ownerType: 'EMPLOYEE' }] }),
+      );
+      await service.updateGoal(admin, 'co1', { progress: 40 });
+      expect(prisma.goal.update.mock.calls[0][0].data).toEqual({ progress: 40 });
+    });
+
+    it('a company goal with a department child still derives and rejects manual progress', async () => {
+      prisma.goal.findFirst.mockResolvedValue(
+        companyGoal({ _count: { children: 2 }, children: [{ ownerType: 'EMPLOYEE' }, { ownerType: 'DEPARTMENT' }] }),
+      );
+      await expect(service.updateGoal(admin, 'co1', { progress: 40 })).rejects.toThrow(BadRequestException);
+    });
+
+    describe('detaching a child (parentGoalId: null)', () => {
+      const parentRec = (over: Record<string, unknown> = {}) => companyGoal({ id: 'co1', ...over });
+
+      it('admin detaches an employee child from a company goal, then recomputes both chains', async () => {
+        prisma.goal.findFirst
+          .mockResolvedValueOnce(goalRec({ parentGoalId: 'co1' })) // the child
+          .mockResolvedValueOnce(parentRec()) // its parent
+          .mockResolvedValue(goalRec({ parentGoalId: null })); // reload
+        await service.updateGoal(admin, 'g1', { parentGoalId: null });
+        expect(prisma.goal.update.mock.calls[0][0].data).toEqual({ parentGoalId: null });
+        expect(progress.recomputeChain.mock.calls.map((c: any[]) => c[1])).toEqual(['g1', 'co1']);
+      });
+
+      it("a manager detaches a report's goal from their own goal", async () => {
+        const mgrGoal = goalRec({ id: 'mg1', employeeId: 'emp-mgr', employee: { id: 'emp-mgr', firstName: 'M', lastName: 'G', managerId: null } });
+        prisma.goal.findFirst
+          .mockResolvedValueOnce(goalRec({ parentGoalId: 'mg1' }))
+          .mockResolvedValueOnce(mgrGoal)
+          .mockResolvedValue(goalRec({ parentGoalId: null }));
+        await service.updateGoal(manager, 'g1', { parentGoalId: null });
+        expect(prisma.goal.update.mock.calls[0][0].data).toEqual({ parentGoalId: null });
+        expect(progress.recomputeChain.mock.calls.map((c: any[]) => c[1])).toEqual(['g1', 'mg1']);
+      });
+
+      it('a third party who cannot write the parent gets 403', async () => {
+        // emp-mgr can read the child (their report) but does not own the employee-owned parent
+        const other = goalRec({ id: 'p9', employeeId: 'emp-5', employee: { id: 'emp-5', firstName: 'X', lastName: 'Y', managerId: 'emp-mgr' } });
+        prisma.goal.findFirst
+          .mockResolvedValueOnce(goalRec({ parentGoalId: 'p9' }))
+          .mockResolvedValueOnce(other);
+        await expect(service.updateGoal(manager, 'g1', { parentGoalId: null })).rejects.toThrow(ForbiddenException);
+        expect(prisma.goal.update).not.toHaveBeenCalled();
+      });
+
+      it('an admin cannot detach from an EMPLOYEE parent they do not own', async () => {
+        prisma.goal.findFirst
+          .mockResolvedValueOnce(goalRec({ parentGoalId: 'p9' }))
+          .mockResolvedValueOnce(goalRec({ id: 'p9', employeeId: 'emp-5' }));
+        await expect(service.updateGoal(admin, 'g1', { parentGoalId: null })).rejects.toThrow(ForbiddenException);
+      });
+
+      it('the detach body may carry nothing else: extra fields get 403', async () => {
+        prisma.goal.findFirst
+          .mockResolvedValueOnce(goalRec({ parentGoalId: 'co1' }))
+          .mockResolvedValueOnce(parentRec());
+        await expect(
+          service.updateGoal(admin, 'g1', { parentGoalId: null, title: 'Sneaky' }),
+        ).rejects.toThrow(ForbiddenException);
+        expect(prisma.goal.update).not.toHaveBeenCalled();
+      });
+
+      it('a goal with no parent cannot be detached by a non-writer (403)', async () => {
+        prisma.goal.findFirst.mockResolvedValueOnce(goalRec({ parentGoalId: null }));
+        await expect(service.updateGoal(admin, 'g1', { parentGoalId: null })).rejects.toThrow(ForbiddenException);
+      });
+
+      it('still honours the review lock', async () => {
+        prisma.goal.findFirst
+          .mockResolvedValueOnce(
+            goalRec({ parentGoalId: 'co1', review: { id: 'r', status: 'COMPLETED', cycle: { id: 'c', name: 'C' } } }),
+          )
+          .mockResolvedValueOnce(parentRec());
+        await expect(service.updateGoal(admin, 'g1', { parentGoalId: null })).rejects.toThrow(BadRequestException);
+        expect(prisma.goal.update).not.toHaveBeenCalled();
+      });
     });
 
     it('still lets a derived goal change its title and weight', async () => {

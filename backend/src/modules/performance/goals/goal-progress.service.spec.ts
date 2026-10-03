@@ -90,6 +90,20 @@ describe('GoalProgressService', () => {
     it('returns null for a manual goal', () => {
       expect(service.derive(goal())).toBeNull();
     });
+    it('ignores EMPLOYEE children of a COMPANY or DEPARTMENT goal', () => {
+      const emp = { progress: 100, weight: 1, ownerType: 'EMPLOYEE' };
+      expect(service.derive(goal({ ownerType: 'COMPANY', children: [emp] }))).toBeNull();
+      expect(service.derive(goal({ ownerType: 'DEPARTMENT', children: [emp] }))).toBeNull();
+    });
+    it('rolls a COMPANY goal up from its DEPARTMENT children only', () => {
+      const emp = { progress: 0, weight: 1, ownerType: 'EMPLOYEE' };
+      const dept = { progress: 80, weight: 1, ownerType: 'DEPARTMENT' };
+      expect(service.derive(goal({ ownerType: 'COMPANY', children: [emp, dept] }))).toEqual({ progress: 80 });
+    });
+    it('an EMPLOYEE parent still rolls up all of its children', () => {
+      const emp = { progress: 60, weight: 1, ownerType: 'EMPLOYEE' };
+      expect(service.derive(goal({ ownerType: 'EMPLOYEE', children: [emp] }))).toEqual({ progress: 60 });
+    });
   });
 
   describe('recomputeChain', () => {
@@ -223,7 +237,34 @@ describe('GoalProgressService', () => {
       await service.recomputeChain('t1', 'a', tx);
       expect(tx.goal.update.mock.calls.map((c: any[]) => c[0].where.id)).toEqual(['a', 'c']);
       expect(feed.post).not.toHaveBeenCalled();
-      expect(tx.goal.findFirst.mock.calls[0][0].include.review).toEqual({ select: { status: true } });
+      expect(tx.goal.findFirst.mock.calls[0][0].include.review).toEqual({
+        select: { status: true, cycle: { select: { status: true } } },
+      });
+    });
+
+    it('an employee child completing does not change or complete a company goal, and posts no company feed item', async () => {
+      tx.goal.findFirst
+        .mockResolvedValueOnce(
+          goal({ id: 'emp', ownerType: 'EMPLOYEE', employeeId: 'e1', parentGoalId: 'co', keyResults: [kr(100)] }),
+        )
+        .mockResolvedValueOnce(
+          goal({ id: 'co', ownerType: 'COMPANY', children: [{ progress: 100, weight: 1, ownerType: 'EMPLOYEE' }] }),
+        );
+      await service.recomputeChain('t1', 'emp', tx);
+      expect(tx.goal.update.mock.calls.map((c: any[]) => c[0].where.id)).toEqual(['emp']);
+      expect(feed.post.mock.calls.map((c: any[]) => c[0].sourceId)).not.toContain('co');
+      expect(tx.goal.findFirst.mock.calls[0][0].include.children).toEqual({
+        select: { progress: true, weight: true, ownerType: true },
+      });
+    });
+
+    it('skips a goal whose review cycle is COMPLETED even when the review is not', async () => {
+      tx.goal.findFirst.mockResolvedValueOnce(
+        goal({ keyResults: [kr(100)], review: { status: 'MANAGER_REVIEW', cycle: { status: 'COMPLETED' } } }),
+      );
+      await service.recomputeChain('t1', 'g', tx);
+      expect(tx.goal.update).not.toHaveBeenCalled();
+      expect(feed.post).not.toHaveBeenCalled();
     });
 
     // Review Focus 1

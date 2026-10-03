@@ -8,7 +8,6 @@ import {
   GoalOwnerType,
   GoalStatus,
   KeyResultMetricType,
-  PerformanceReviewStatus,
   Prisma,
   UserRole,
 } from '@prisma/client';
@@ -22,7 +21,13 @@ import {
   UpdateGoalDto,
   UpdateKeyResultDto,
 } from './dto/goals.dto';
-import { GoalProgressService, MAX_GOAL_DEPTH, computeKrProgress } from './goal-progress.service';
+import {
+  GoalProgressService,
+  MAX_GOAL_DEPTH,
+  computeKrProgress,
+  contributingChildren,
+  isReviewLocked,
+} from './goal-progress.service';
 
 const NO_EMPLOYEE = 'No employee profile linked to your account';
 const LOCKED = 'This review is completed; its goals can no longer be changed';
@@ -34,9 +39,12 @@ const GOAL_INCLUDE = {
     select: {
       id: true,
       status: true,
-      cycle: { select: { id: true, name: true } },
+      cycle: { select: { id: true, name: true, status: true } },
     },
   },
+  // Raw child rows feed isDerived (employee children do not derive an org
+  // goal); mapGoal strips them again.
+  children: { select: { ownerType: true } },
   employee: { select: { id: true, firstName: true, lastName: true, managerId: true } },
   department: { select: { id: true, name: true } },
   keyResults: { orderBy: { sortOrder: 'asc' } },
@@ -71,8 +79,9 @@ export class GoalsService {
     return !!user.employeeId && goal.employeeId === user.employeeId;
   }
 
+  /** Locked once the linked review, or the review's cycle, is COMPLETED. */
   private isLocked(goal: Pick<GoalRecord, 'review'>): boolean {
-    return goal.review?.status === PerformanceReviewStatus.COMPLETED;
+    return isReviewLocked(goal.review);
   }
 
   private assertUnlocked(goal: Pick<GoalRecord, 'review'>): void {
@@ -97,8 +106,46 @@ export class GoalsService {
     return goal;
   }
 
+  /**
+   * `loadWritable` for PUT, plus one exception: whoever can write the PARENT
+   * goal may remove its alignment (`parentGoalId: null`, and nothing else)
+   * from a child they cannot otherwise write. The lock still applies.
+   */
+  private async loadForUpdate(
+    user: AuthenticatedUser,
+    goalId: string,
+    dto: UpdateGoalDto,
+    db: Prisma.TransactionClient | PrismaService,
+  ): Promise<GoalRecord> {
+    const goal = (await db.goal.findFirst({
+      where: { id: goalId, tenantId: user.tenantId },
+      include: GOAL_INCLUDE,
+    })) as GoalRecord | null;
+    if (!goal || !this.canRead(goal, user)) throw new NotFoundException('Goal not found');
+
+    if (!this.canWrite(goal, user)) {
+      const fields = Object.entries(dto).filter(([, v]) => v !== undefined);
+      const detachOnly =
+        fields.length === 1 && fields[0][0] === 'parentGoalId' && fields[0][1] === null;
+      let parentWritable = false;
+      if (detachOnly && goal.parentGoalId) {
+        const parent = (await db.goal.findFirst({
+          where: { id: goal.parentGoalId, tenantId: user.tenantId },
+          include: GOAL_INCLUDE,
+        })) as GoalRecord | null;
+        parentWritable = !!parent && this.canWrite(parent, user);
+      }
+      if (!parentWritable) throw new ForbiddenException('You cannot change this goal');
+    }
+    this.assertUnlocked(goal);
+    return goal;
+  }
+
   private hasDerivedProgress(goal: GoalRecord): boolean {
-    return goal.keyResults.length > 0 || (goal._count?.children ?? 0) > 0;
+    return (
+      goal.keyResults.length > 0 ||
+      contributingChildren(goal.ownerType, goal.children ?? []).length > 0
+    );
   }
 
   // ============================================
@@ -117,7 +164,7 @@ export class GoalsService {
 
   /** Decimals become numbers, the manager link stays server-side, derived/canEdit are computed per caller. */
   private mapGoal(goal: GoalRecord, user: AuthenticatedUser) {
-    const { _count, employee, keyResults, ...rest } = goal;
+    const { _count, employee, keyResults, children: _children, ...rest } = goal;
     return {
       ...rest,
       weight: Number(goal.weight),
@@ -363,11 +410,12 @@ export class GoalsService {
     if (dto.reviewId) {
       const review = await this.prisma.performanceReview.findFirst({
         where: { id: dto.reviewId, tenantId, employeeId: user.employeeId },
+        include: { cycle: { select: { status: true } } },
       });
       if (!review) {
         throw new BadRequestException('Review not found or does not belong to you');
       }
-      if (review.status === PerformanceReviewStatus.COMPLETED) {
+      if (isReviewLocked(review as { status: string; cycle?: { status: string } | null })) {
         throw new BadRequestException('Cannot add goals to a completed review');
       }
     }
@@ -407,7 +455,7 @@ export class GoalsService {
     const tenantId = user.tenantId;
 
     await this.prisma.$transaction(async (tx) => {
-      const goal = await this.loadWritable(user, goalId, tx);
+      const goal = await this.loadForUpdate(user, goalId, dto, tx);
 
       const derived = this.hasDerivedProgress(goal);
       if (derived && (dto.progress !== undefined || dto.status !== undefined)) {

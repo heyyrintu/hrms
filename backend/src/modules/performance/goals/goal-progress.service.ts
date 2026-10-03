@@ -38,9 +38,30 @@ export interface RollupGoal {
   completedAt: Date | null;
   parentGoalId: string | null;
   keyResults: Array<{ progress: number; weight: unknown }>;
-  children: Array<{ progress: number; weight: unknown }>;
+  children: Array<{ progress: number; weight: unknown; ownerType?: string }>;
   department?: { name: string } | null;
-  review?: { status: string } | null;
+  review?: { status: string; cycle?: { status: string } | null } | null;
+}
+
+/**
+ * The children that feed a goal's derived progress. A COMPANY or DEPARTMENT
+ * goal rolls up only from COMPANY/DEPARTMENT children: employee goals may align
+ * to it (so it shows in the tree) but never drive or complete it. An EMPLOYEE
+ * parent rolls up from all its children.
+ */
+export function contributingChildren<T extends { ownerType?: string }>(
+  ownerType: string,
+  children: T[],
+): T[] {
+  if (ownerType === 'EMPLOYEE') return children;
+  return children.filter((c) => c.ownerType !== 'EMPLOYEE');
+}
+
+/** A goal is locked when its linked review, or that review's cycle, is COMPLETED. */
+export function isReviewLocked(
+  review: { status: string; cycle?: { status: string } | null } | null | undefined,
+): boolean {
+  return review?.status === 'COMPLETED' || review?.cycle?.status === 'COMPLETED';
 }
 
 function weightedMean(rows: Array<{ progress: number; weight: unknown }>): number {
@@ -60,12 +81,16 @@ export class GoalProgressService {
   constructor(private feedService: FeedService) {}
 
   /**
-   * Derived progress: key results first, else aligned children, else `null`
-   * (a manual goal keeps the progress its owner typed).
+   * Derived progress: key results first, else contributing children (see
+   * `contributingChildren`), else `null` (a manual goal keeps the progress
+   * its owner typed).
    */
-  derive(goal: Pick<RollupGoal, 'keyResults' | 'children'>): { progress: number } | null {
+  derive(
+    goal: Pick<RollupGoal, 'keyResults' | 'children' | 'ownerType'>,
+  ): { progress: number } | null {
     if (goal.keyResults.length > 0) return { progress: weightedMean(goal.keyResults) };
-    if (goal.children.length > 0) return { progress: weightedMean(goal.children) };
+    const children = contributingChildren(goal.ownerType, goal.children);
+    if (children.length > 0) return { progress: weightedMean(children) };
     return null;
   }
 
@@ -84,15 +109,15 @@ export class GoalProgressService {
         where: { id: currentId, tenantId },
         include: {
           keyResults: true,
-          children: { select: { progress: true, weight: true } },
+          children: { select: { progress: true, weight: true, ownerType: true } },
           department: { select: { name: true } },
-          review: { select: { status: true } },
+          review: { select: { status: true, cycle: { select: { status: true } } } },
         },
       })) as RollupGoal | null;
       if (!goal) return;
 
-      // A goal locked by a completed review is a record: roll-up walks past it.
-      const locked = goal.review?.status === 'COMPLETED';
+      // A goal locked by a completed review (or cycle) is a record: roll-up walks past it.
+      const locked = isReviewLocked(goal.review);
       const derived = locked ? null : this.derive(goal);
       if (derived) {
         const wasCompleted = goal.status === 'COMPLETED';
