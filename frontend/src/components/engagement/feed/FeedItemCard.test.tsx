@@ -74,4 +74,45 @@ describe('FeedItemCard', () => {
 
     expect(screen.getByText('🤝')).toBeInTheDocument();
   });
+  describe('GOAL_COMPLETED', () => {
+    const goalItem = (over: Partial<FeedItem> = {}): FeedItem => ({
+      ...baseItem,
+      type: 'GOAL_COMPLETED',
+      sourceType: 'Goal',
+      sourceId: 'g1',
+      title: 'Ship v2',
+      payload: { ownerType: 'EMPLOYEE', departmentName: null },
+      ...over,
+    });
+
+    it('names the subject for an employee goal and shows the Target icon', () => {
+      render(<FeedItemCard item={goalItem()} onReact={jest.fn()} />);
+
+      expect(screen.getByText('Ann Employee completed a goal: Ship v2')).toBeInTheDocument();
+      expect(screen.getByTestId('icon-Target')).toBeInTheDocument();
+    });
+
+    it('labels a company goal', () => {
+      render(
+        <FeedItemCard
+          item={goalItem({ subject: null, payload: { ownerType: 'COMPANY', departmentName: null } })}
+          onReact={jest.fn()}
+        />,
+      );
+
+      expect(screen.getByText('Company goal completed: Ship v2')).toBeInTheDocument();
+    });
+
+    it('labels a department goal and shows the department name', () => {
+      render(
+        <FeedItemCard
+          item={goalItem({ subject: null, payload: { ownerType: 'DEPARTMENT', departmentName: 'Engineering' } })}
+          onReact={jest.fn()}
+        />,
+      );
+
+      expect(screen.getByText('Department goal completed: Ship v2')).toBeInTheDocument();
+      expect(screen.getByText('Engineering')).toBeInTheDocument();
+    });
+  });
 });
