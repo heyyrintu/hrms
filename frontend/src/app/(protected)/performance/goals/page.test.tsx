@@ -110,4 +110,42 @@ describe('GoalsPage', () => {
     expect(screen.queryByText('Stale company row')).not.toBeInTheDocument();
     expect(screen.getByText('Department goal row')).toBeInTheDocument();
   });
+
+  describe('Remove alignment in the goal drawer', () => {
+    const openCompanyGoal = async (detail: any, user: any, flags: any) => {
+      mockUser = user;
+      mockFlags = flags;
+      (goalsApi.get as jest.Mock).mockResolvedValue({ data: detail });
+      render(<GoalsPage />);
+      await waitFor(() => expect(screen.getByText('Company goal')).toBeInTheDocument());
+      fireEvent.click(screen.getByText('Company goal'));
+      await waitFor(() => expect(goalsApi.get).toHaveBeenCalledWith('g1'));
+    };
+    const child = { ...base, id: 'g2', title: 'Nested child', ownerType: 'EMPLOYEE', canEdit: false, parentGoalId: 'g1' };
+    const detail = (over: any = {}) => ({ ...base, id: 'g1', title: 'Company goal', parent: null, children: [child], ...over });
+
+    it('lets the parent writer detach a child they cannot edit, via PUT parentGoalId null', async () => {
+      (goalsApi.update as jest.Mock).mockResolvedValue({ data: {} });
+      await openCompanyGoal(detail(), { role: 'HR_ADMIN', employee: { id: 'e9' } }, { isAdmin: true, isManager: true });
+      const btn = await screen.findByRole('button', { name: /remove alignment/i });
+      fireEvent.click(btn);
+      await waitFor(() => expect(goalsApi.update).toHaveBeenCalledWith('g2', { parentGoalId: null }));
+    });
+
+    it('shows no action when the viewer cannot write the parent, or can already edit the child', async () => {
+      await openCompanyGoal(detail({ canEdit: false }), { role: 'EMPLOYEE', employee: { id: 'e1' } }, { isAdmin: false, isManager: false });
+      await screen.findByText('Child goals');
+      expect(screen.queryByRole('button', { name: /remove alignment/i })).not.toBeInTheDocument();
+    });
+
+    it('hides the action on a child the viewer can edit themselves', async () => {
+      await openCompanyGoal(
+        detail({ children: [{ ...child, canEdit: true }] }),
+        { role: 'EMPLOYEE', employee: { id: 'e1' } },
+        { isAdmin: false, isManager: false },
+      );
+      await screen.findByText('Child goals');
+      expect(screen.queryByRole('button', { name: /remove alignment/i })).not.toBeInTheDocument();
+    });
+  });
 });

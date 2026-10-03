@@ -126,6 +126,17 @@ export default function GoalsPage() {
     }
   };
 
+  /** Parent writers may un-align a child they cannot otherwise edit. */
+  const handleDetach = async (child: Goal) => {
+    try {
+      await goalsApi.update(child.id, { parentGoalId: null });
+      toast.success('Alignment removed');
+      await refreshAll();
+    } catch (err) {
+      toast.error(errorMessage(err, 'Failed to remove alignment'));
+    }
+  };
+
   const handleDelete = async (goal: Goal) => {
     if (!window.confirm(`Delete goal "${goal.title}"?`)) return;
     try {
@@ -261,6 +272,11 @@ export default function GoalsPage() {
                       <Badge variant="gray">{ownerLabel(c)}</Badge>
                       <button type="button" className="text-primary-600 hover:underline" onClick={() => openDetail(c.id)}>{c.title}</button>
                       <span className="ml-auto text-warm-500">{Math.round(c.progress)}%</span>
+                      {detail.canEdit && !c.canEdit && (
+                        <Button variant="secondary" size="sm" onClick={() => handleDetach(c)}>
+                          Remove alignment
+                        </Button>
+                      )}
                     </li>
                   ))}
                 </ul>
