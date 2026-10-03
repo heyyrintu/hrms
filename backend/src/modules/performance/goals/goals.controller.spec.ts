@@ -1,15 +1,23 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { GoalsController } from './goals.controller';
 import { GoalsService } from './goals.service';
 import { AuthenticatedUser } from '../../../common/types/jwt-payload.type';
+import { ROLES_KEY } from '../../../common/decorators/roles.decorator';
 import { UserRole } from '@prisma/client';
 
 const mockService = {
   getMyGoals: jest.fn(),
+  list: jest.fn(),
+  tree: jest.fn(),
+  getGoal: jest.fn(),
   createGoal: jest.fn(),
   updateGoal: jest.fn(),
   deleteGoal: jest.fn(),
+  addKeyResult: jest.fn(),
+  updateKeyResult: jest.fn(),
+  removeKeyResult: jest.fn(),
 };
 
 describe('GoalsController', () => {
@@ -42,9 +50,6 @@ describe('GoalsController', () => {
     service = module.get(GoalsService);
   });
 
-  // ============================================
-  // Goals (All authenticated users - own goals)
-  // ============================================
   describe('getMyGoals', () => {
     it('should return goals for the employee', async () => {
       const expected = [{ id: 'goal-1', title: 'Improve skills' }];
@@ -53,95 +58,115 @@ describe('GoalsController', () => {
       const result = await controller.getMyGoals(employeeUser);
 
       expect(result).toEqual(expected);
-      expect(service.getMyGoals).toHaveBeenCalledWith(
-        employeeUser.tenantId,
-        employeeUser.employeeId,
-      );
+      expect(service.getMyGoals).toHaveBeenCalledWith(employeeUser);
     });
 
     it('should throw BadRequestException when no employeeId', async () => {
-      await expect(controller.getMyGoals(userNoEmployee)).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(controller.getMyGoals(userNoEmployee)).rejects.toThrow(BadRequestException);
+      expect(service.getMyGoals).not.toHaveBeenCalled();
     });
   });
 
-  describe('createGoal', () => {
-    const dto = {
-      reviewId: 'rev-1',
-      title: 'Learn TypeScript',
-      targetDate: '2025-06-30',
-    };
+  describe('list', () => {
+    it('passes the scope query through', async () => {
+      service.list.mockResolvedValue([]);
+      await controller.list(employeeUser, { scope: 'company' });
+      expect(service.list).toHaveBeenCalledWith(employeeUser, { scope: 'company' });
+    });
 
-    it('should create a goal', async () => {
-      const expected = { id: 'goal-1', ...dto };
-      service.createGoal.mockResolvedValue(expected);
+    // Review Focus 5
+    it('400s the mine scope without an employeeId before calling the service', async () => {
+      await expect(controller.list(userNoEmployee, { scope: 'mine' })).rejects.toThrow(BadRequestException);
+      expect(service.list).not.toHaveBeenCalled();
+    });
 
+    it('leaves team scope to the service (admins have no employee record)', async () => {
+      service.list.mockResolvedValue([]);
+      await controller.list(userNoEmployee, { scope: 'team' });
+      expect(service.list).toHaveBeenCalledWith(userNoEmployee, { scope: 'team' });
+    });
+  });
+
+  describe('tree / getGoal', () => {
+    it('passes rootId to the tree', async () => {
+      service.tree.mockResolvedValue([]);
+      await controller.tree(employeeUser, { rootId: 'g1' });
+      expect(service.tree).toHaveBeenCalledWith(employeeUser, 'g1');
+    });
+
+    it('gets one goal', async () => {
+      service.getGoal.mockResolvedValue({ id: 'g1' });
+      expect(await controller.getGoal(employeeUser, 'g1')).toEqual({ id: 'g1' });
+      expect(service.getGoal).toHaveBeenCalledWith(employeeUser, 'g1');
+    });
+
+    it('declares goals/tree before goals/:id so "tree" is not read as an id', () => {
+      const names = Object.getOwnPropertyNames(GoalsController.prototype);
+      expect(names.indexOf('tree')).toBeLessThan(names.indexOf('getGoal'));
+    });
+  });
+
+  describe('createGoal / updateGoal / deleteGoal', () => {
+    const dto = { reviewId: 'rev-1', title: 'Learn TypeScript', targetDate: '2025-06-30' };
+
+    it('creates through the service with the caller', async () => {
+      service.createGoal.mockResolvedValue({ id: 'goal-1', ...dto });
       const result = await controller.createGoal(employeeUser, dto);
-
-      expect(result).toEqual(expected);
-      expect(service.createGoal).toHaveBeenCalledWith(
-        employeeUser.tenantId,
-        employeeUser.employeeId,
-        dto,
-      );
+      expect(result).toEqual({ id: 'goal-1', ...dto });
+      expect(service.createGoal).toHaveBeenCalledWith(employeeUser, dto);
     });
 
-    it('should throw BadRequestException when no employeeId', async () => {
-      await expect(
-        controller.createGoal(userNoEmployee, dto),
-      ).rejects.toThrow(BadRequestException);
-    });
-  });
-
-  describe('updateGoal', () => {
-    const dto = { progress: 50, status: 'IN_PROGRESS' };
-
-    it('should update a goal', async () => {
-      const expected = { id: 'goal-1', progress: 50 };
-      service.updateGoal.mockResolvedValue(expected);
-
-      const result = await controller.updateGoal(
-        employeeUser,
-        'goal-1',
-        dto,
-      );
-
-      expect(result).toEqual(expected);
-      expect(service.updateGoal).toHaveBeenCalledWith(
-        employeeUser.tenantId,
-        'goal-1',
-        employeeUser.employeeId,
-        dto,
-      );
+    it('lets a caller without an employee profile reach the service (admins create company goals)', async () => {
+      service.createGoal.mockResolvedValue({ id: 'co1' });
+      await controller.createGoal(userNoEmployee, dto);
+      expect(service.createGoal).toHaveBeenCalledWith(userNoEmployee, dto);
     });
 
-    it('should throw BadRequestException when no employeeId', async () => {
-      await expect(
-        controller.updateGoal(userNoEmployee, 'goal-1', dto),
-      ).rejects.toThrow(BadRequestException);
+    it('updates', async () => {
+      service.updateGoal.mockResolvedValue({ id: 'goal-1', progress: 50 });
+      const result = await controller.updateGoal(employeeUser, 'goal-1', { progress: 50 });
+      expect(result).toEqual({ id: 'goal-1', progress: 50 });
+      expect(service.updateGoal).toHaveBeenCalledWith(employeeUser, 'goal-1', { progress: 50 });
     });
-  });
 
-  describe('deleteGoal', () => {
-    it('should delete a goal', async () => {
-      const expected = { id: 'goal-1', deleted: true };
-      service.deleteGoal.mockResolvedValue(expected);
-
+    it('deletes', async () => {
+      service.deleteGoal.mockResolvedValue({ message: 'Goal deleted' });
       const result = await controller.deleteGoal(employeeUser, 'goal-1');
-
-      expect(result).toEqual(expected);
-      expect(service.deleteGoal).toHaveBeenCalledWith(
-        employeeUser.tenantId,
-        'goal-1',
-        employeeUser.employeeId,
-      );
+      expect(result).toEqual({ message: 'Goal deleted' });
+      expect(service.deleteGoal).toHaveBeenCalledWith(employeeUser, 'goal-1');
     });
+  });
 
-    it('should throw BadRequestException when no employeeId', async () => {
-      await expect(
-        controller.deleteGoal(userNoEmployee, 'goal-1'),
-      ).rejects.toThrow(BadRequestException);
+  describe('key results', () => {
+    it('adds, updates and removes through the service', async () => {
+      service.addKeyResult.mockResolvedValue({ id: 'kr1' });
+      service.updateKeyResult.mockResolvedValue({ id: 'kr1' });
+      service.removeKeyResult.mockResolvedValue({ message: 'Key result deleted' });
+
+      await controller.addKeyResult(employeeUser, 'g1', { title: 'KR', targetValue: 10 });
+      expect(service.addKeyResult).toHaveBeenCalledWith(employeeUser, 'g1', { title: 'KR', targetValue: 10 });
+
+      await controller.updateKeyResult(employeeUser, 'g1', 'kr1', { currentValue: 5 });
+      expect(service.updateKeyResult).toHaveBeenCalledWith(employeeUser, 'g1', 'kr1', { currentValue: 5 });
+
+      await controller.removeKeyResult(employeeUser, 'g1', 'kr1');
+      expect(service.removeKeyResult).toHaveBeenCalledWith(employeeUser, 'g1', 'kr1');
+    });
+  });
+
+  describe('roles', () => {
+    it('every route declares @Roles for all four roles', () => {
+      const reflector = new Reflector();
+      const routes = [
+        'getMyGoals', 'list', 'tree', 'getGoal', 'createGoal', 'updateGoal', 'deleteGoal',
+        'addKeyResult', 'updateKeyResult', 'removeKeyResult',
+      ] as const;
+      for (const route of routes) {
+        const roles = reflector.get<UserRole[]>(ROLES_KEY, GoalsController.prototype[route]);
+        expect([...roles].sort()).toEqual(
+          [UserRole.EMPLOYEE, UserRole.HR_ADMIN, UserRole.MANAGER, UserRole.SUPER_ADMIN].sort(),
+        );
+      }
     });
   });
 });
