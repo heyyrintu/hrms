@@ -213,6 +213,19 @@ describe('GoalProgressService', () => {
       expect(feed.post.mock.calls.every((c: any[]) => c[1] === tx)).toBe(true);
     });
 
+    it('skips a goal locked by a COMPLETED review (no update, no post) but still recomputes its ancestor', async () => {
+      tx.goal.findFirst
+        .mockResolvedValueOnce(goal({ id: 'a', parentGoalId: 'b', keyResults: [kr(50)] }))
+        .mockResolvedValueOnce(
+          goal({ id: 'b', parentGoalId: 'c', keyResults: [kr(100)], review: { status: 'COMPLETED' } }),
+        )
+        .mockResolvedValueOnce(goal({ id: 'c', children: [{ progress: 50, weight: 1 }] }));
+      await service.recomputeChain('t1', 'a', tx);
+      expect(tx.goal.update.mock.calls.map((c: any[]) => c[0].where.id)).toEqual(['a', 'c']);
+      expect(feed.post).not.toHaveBeenCalled();
+      expect(tx.goal.findFirst.mock.calls[0][0].include.review).toEqual({ select: { status: true } });
+    });
+
     // Review Focus 1
     it('recomputes a chain of three, then stops at the root', async () => {
       tx.goal.findFirst

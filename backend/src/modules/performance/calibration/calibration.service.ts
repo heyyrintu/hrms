@@ -85,33 +85,29 @@ export class CalibrationService {
     }
     const tenantId = user.tenantId;
 
-    const review = await this.prisma.performanceReview.findFirst({
-      where: { id: reviewId, tenantId },
-      include: {
-        cycle: { select: { status: true } },
-        employee: { select: { firstName: true, lastName: true } },
-      },
-    });
-    if (!review) throw new NotFoundException('Review not found');
+    // Read, check and write inside one transaction so oldValues in the audit
+    // row is the value this write replaced, even under concurrent calibrations.
+    const { review, updated } = await this.prisma.$transaction(async (tx) => {
+      const review = await tx.performanceReview.findFirst({
+        where: { id: reviewId, tenantId },
+        include: {
+          cycle: { select: { status: true } },
+          employee: { select: { firstName: true, lastName: true } },
+        },
+      });
+      if (!review) throw new NotFoundException('Review not found');
 
-    // An admin never sets their own final rating.
-    if (user.employeeId && review.employeeId === user.employeeId) {
-      throw new ForbiddenException('You cannot calibrate your own review');
-    }
-    if (review.status !== PerformanceReviewStatus.COMPLETED) {
-      throw new BadRequestException('Only completed reviews can be calibrated');
-    }
-    if (review.cycle.status !== ReviewCycleStatus.ACTIVE) {
-      throw new BadRequestException('Ratings can only be calibrated while the cycle is active');
-    }
+      // An admin never sets their own final rating.
+      if (user.employeeId && review.employeeId === user.employeeId) {
+        throw new ForbiddenException('You cannot calibrate your own review');
+      }
+      if (review.status !== PerformanceReviewStatus.COMPLETED) {
+        throw new BadRequestException('Only completed reviews can be calibrated');
+      }
+      if (review.cycle.status !== ReviewCycleStatus.ACTIVE) {
+        throw new BadRequestException('Ratings can only be calibrated while the cycle is active');
+      }
 
-    const oldValues = {
-      calibratedRating: review.calibratedRating,
-      calibrationReason: review.calibrationReason,
-    };
-    const newValues = { calibratedRating: dto.rating, calibrationReason: dto.reason };
-
-    const updated = await this.prisma.$transaction(async (tx) => {
       const row = await tx.performanceReview.update({
         where: { id: reviewId },
         data: {
@@ -128,12 +124,15 @@ export class CalibrationService {
           action: 'UPDATE',
           entityType: 'PerformanceReviewCalibration',
           entityId: reviewId,
-          oldValues,
-          newValues,
+          oldValues: {
+            calibratedRating: review.calibratedRating,
+            calibrationReason: review.calibrationReason,
+          },
+          newValues: { calibratedRating: dto.rating, calibrationReason: dto.reason },
         },
         tx,
       );
-      return row;
+      return { review, updated: row };
     });
 
     const who = review.employee ? fullName(review.employee) : 'a team member';
@@ -192,6 +191,8 @@ export class CalibrationService {
     const cycle = await this.loadCycle(user.tenantId, query.cycleId);
 
     const where: Prisma.PerformanceReviewWhereInput = { tenantId: user.tenantId, cycleId: cycle.id };
+    // Self-view wins: nobody sees their own ratings or potential here.
+    if (user.employeeId) where.employeeId = { not: user.employeeId };
     if (query.departmentId) where.employee = { departmentId: query.departmentId };
     if (managerScope) {
       where.reviewerId = managerScope;
@@ -285,6 +286,8 @@ export class CalibrationService {
     const cycle = await this.loadCycle(user.tenantId, query.cycleId);
 
     const where: Prisma.PerformanceReviewWhereInput = { tenantId: user.tenantId, cycleId: cycle.id };
+    // Self-view wins: nobody sees their own ratings or potential here.
+    if (user.employeeId) where.employeeId = { not: user.employeeId };
     if (managerScope) where.reviewerId = managerScope;
     if (query.departmentId) where.employee = { departmentId: query.departmentId };
 

@@ -104,6 +104,16 @@ describe('CalibrationService', () => {
       expect(prisma.performanceReview.update).not.toHaveBeenCalled();
     });
 
+    it('reads the review inside the transaction, before the update and audit row', async () => {
+      await service.calibrate(admin, 'rev1', dto);
+      const tx = prisma.$transaction.mock.invocationCallOrder[0];
+      const read = prisma.performanceReview.findFirst.mock.invocationCallOrder[0];
+      const write = prisma.performanceReview.update.mock.invocationCallOrder[0];
+      expect(read).toBeGreaterThan(tx);
+      expect(read).toBeLessThan(write);
+      expect(write).toBeLessThan(audit.log.mock.invocationCallOrder[0]);
+    });
+
     it('sets the override and writes the audit row with the transaction client', async () => {
       const result = await service.calibrate(admin, 'rev1', dto);
 
@@ -241,6 +251,7 @@ describe('CalibrationService', () => {
       expect(prisma.performanceReview.findMany.mock.calls[0][0].where).toEqual({
         tenantId: 't1',
         cycleId: 'c1',
+        employeeId: { not: 'emp-admin' },
         employee: { departmentId: 'd1' },
         reviewerId: 'emp-mgr',
       });
@@ -251,8 +262,19 @@ describe('CalibrationService', () => {
       expect(prisma.performanceReview.findMany.mock.calls[0][0].where).toEqual({
         tenantId: 't1',
         cycleId: 'c1',
+        employeeId: { not: 'emp-mgr' },
         reviewerId: 'emp-mgr',
       });
+    });
+
+    // Self-view wins
+    it('excludes the own review of the caller for admins and managers, and adds no filter without an employee record', async () => {
+      await service.getCalibration(admin, { cycleId: 'c1' });
+      expect(prisma.performanceReview.findMany.mock.calls[0][0].where.employeeId).toEqual({ not: 'emp-admin' });
+      await service.getCalibration(manager, { cycleId: 'c1' });
+      expect(prisma.performanceReview.findMany.mock.calls[1][0].where.employeeId).toEqual({ not: 'emp-mgr' });
+      await service.getCalibration(user(UserRole.SUPER_ADMIN, undefined), { cycleId: 'c1' });
+      expect(prisma.performanceReview.findMany.mock.calls[2][0].where).not.toHaveProperty('employeeId');
     });
 
     it('a manager filtering by another manager gets nothing, without querying reviews', async () => {
@@ -353,17 +375,32 @@ describe('CalibrationService', () => {
       expect(prisma.performanceReview.findMany.mock.calls[0][0].where).toEqual({
         tenantId: 't1',
         cycleId: 'c1',
+        employeeId: { not: 'emp-mgr' },
         reviewerId: 'emp-mgr',
         employee: { departmentId: 'd1' },
       });
       await service.getNineBox(admin, { cycleId: 'c1' });
-      expect(prisma.performanceReview.findMany.mock.calls[1][0].where).toEqual({ tenantId: 't1', cycleId: 'c1' });
+      expect(prisma.performanceReview.findMany.mock.calls[1][0].where).toEqual({
+        tenantId: 't1',
+        cycleId: 'c1',
+        employeeId: { not: 'emp-admin' },
+      });
     });
 
     // Review Focus 5
     it('a manager without an employee record gets 400, not an unscoped query', async () => {
       await expect(service.getNineBox(managerNoEmployee, { cycleId: 'c1' })).rejects.toThrow(BadRequestException);
       expect(prisma.performanceReview.findMany).not.toHaveBeenCalled();
+    });
+
+    // Self-view wins
+    it('excludes the own review of the caller for admins and managers', async () => {
+      await service.getNineBox(admin, { cycleId: 'c1' });
+      expect(prisma.performanceReview.findMany.mock.calls[0][0].where.employeeId).toEqual({ not: 'emp-admin' });
+      await service.getNineBox(manager, { cycleId: 'c1' });
+      expect(prisma.performanceReview.findMany.mock.calls[1][0].where.employeeId).toEqual({ not: 'emp-mgr' });
+      await service.getNineBox(user(UserRole.HR_ADMIN, undefined), { cycleId: 'c1' });
+      expect(prisma.performanceReview.findMany.mock.calls[2][0].where).not.toHaveProperty('employeeId');
     });
 
     it('always returns nine cells: potential HIGH to LOW rows, performance LOW to HIGH columns', async () => {

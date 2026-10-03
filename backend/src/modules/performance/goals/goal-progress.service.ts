@@ -40,6 +40,7 @@ export interface RollupGoal {
   keyResults: Array<{ progress: number; weight: unknown }>;
   children: Array<{ progress: number; weight: unknown }>;
   department?: { name: string } | null;
+  review?: { status: string } | null;
 }
 
 function weightedMean(rows: Array<{ progress: number; weight: unknown }>): number {
@@ -85,11 +86,14 @@ export class GoalProgressService {
           keyResults: true,
           children: { select: { progress: true, weight: true } },
           department: { select: { name: true } },
+          review: { select: { status: true } },
         },
       })) as RollupGoal | null;
       if (!goal) return;
 
-      const derived = this.derive(goal);
+      // A goal locked by a completed review is a record: roll-up walks past it.
+      const locked = goal.review?.status === 'COMPLETED';
+      const derived = locked ? null : this.derive(goal);
       if (derived) {
         const wasCompleted = goal.status === 'COMPLETED';
         const status: GoalStatus =
