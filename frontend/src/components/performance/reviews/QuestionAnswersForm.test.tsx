@@ -1,6 +1,6 @@
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { QuestionAnswersForm } from './QuestionAnswersForm';
+import { QuestionAnswersForm, cleanAnswers } from './QuestionAnswersForm';
 import type { CycleQuestion } from '@/lib/api-performance-reviews';
 
 const questions: CycleQuestion[] = [
@@ -44,5 +44,14 @@ describe('QuestionAnswersForm', () => {
     );
     fireEvent.change(screen.getByLabelText('Describe wins'), { target: { value: '' } });
     expect(onChange).toHaveBeenCalledWith([{ cycleQuestionId: 'q1', rating: 3 }], true);
+  });
+
+  it('keeps whitespace-only text in state while typing but cleanAnswers drops it', () => {
+    const onChange = jest.fn();
+    render(<QuestionAnswersForm questions={questions} audience="SELF" value={[]} onChange={onChange} />);
+    fireEvent.change(screen.getByLabelText('Describe wins'), { target: { value: ' ' } });
+    expect(onChange).toHaveBeenCalledWith([{ cycleQuestionId: 'q2', text: ' ' }], false);
+    expect(cleanAnswers([{ cycleQuestionId: 'q2', text: ' ' }, { cycleQuestionId: 'q1', rating: 2 }, { cycleQuestionId: 'q3', text: ' hi ' }]))
+      .toEqual([{ cycleQuestionId: 'q1', rating: 2 }, { cycleQuestionId: 'q3', text: 'hi' }]);
   });
 });

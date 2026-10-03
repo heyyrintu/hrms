@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { peerApi, type PeerRequest } from '@/lib/api-performance-peer';
 import type { AnswerInput } from '@/lib/api-performance-reviews';
-import { QuestionAnswersForm, answersComplete } from '@/components/performance/reviews/QuestionAnswersForm';
+import { QuestionAnswersForm, answersComplete, cleanAnswers } from '@/components/performance/reviews/QuestionAnswersForm';
 import { AnswersReadonly } from '@/components/performance/reviews/AnswersReadonly';
 import toast from 'react-hot-toast';
 import { MessageSquare, RefreshCw } from 'lucide-react';
@@ -58,6 +58,7 @@ function Group({
 export default function FeedbackRequestsPage() {
   const [requests, setRequests] = useState<PeerRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const [active, setActive] = useState<PeerRequest | null>(null);
   const [answers, setAnswers] = useState<AnswerInput[]>([]);
@@ -67,10 +68,12 @@ export default function FeedbackRequestsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(false);
     try {
       const res = await peerApi.myRequests();
       setRequests(res.data);
     } catch {
+      setLoadError(true);
       toast.error('Failed to load feedback requests');
     } finally {
       setLoading(false);
@@ -103,7 +106,7 @@ export default function FeedbackRequestsPage() {
     if (!active || !complete) return;
     setSubmitting(true);
     try {
-      await peerApi.submit(active.id, { answers, overallComment: comment });
+      await peerApi.submit(active.id, { answers: cleanAnswers(answers), overallComment: comment.trim() });
       toast.success('Feedback submitted');
       setActive(null);
       load();
@@ -150,6 +153,13 @@ export default function FeedbackRequestsPage() {
         <div className="flex items-center justify-center py-12">
           <RefreshCw className="h-6 w-6 animate-spin text-warm-400" />
         </div>
+      ) : loadError ? (
+        <Card>
+          <CardContent className="text-center py-12 space-y-3">
+            <p role="alert" className="text-sm text-red-600">Failed to load feedback requests.</p>
+            <Button variant="secondary" onClick={load}>Retry</Button>
+          </CardContent>
+        </Card>
       ) : requests.length === 0 ? (
         <Card>
           <CardContent className="text-center py-12 text-warm-500">

@@ -23,6 +23,7 @@ export function TemplatesTab() {
   const [templates, setTemplates] = useState<ReviewTemplate[]>([]);
   const [bank, setBank] = useState<BankQuestion[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<ReviewTemplate | null>(null);
@@ -36,11 +37,13 @@ export function TemplatesTab() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(false);
     try {
       const [t, q] = await Promise.all([templatesApi.list(), templatesApi.listQuestions()]);
       setTemplates(t.data);
       setBank(q.data);
     } catch {
+      setLoadError(true);
       toast.error('Failed to load templates');
     } finally {
       setLoading(false);
@@ -139,6 +142,11 @@ export function TemplatesTab() {
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <RefreshCw className="h-6 w-6 animate-spin text-warm-400" />
+            </div>
+          ) : loadError ? (
+            <div className="text-center py-12 space-y-3" role="alert">
+              <p className="text-sm text-red-600">Failed to load templates.</p>
+              <Button variant="secondary" onClick={load}>Retry</Button>
             </div>
           ) : templates.length === 0 ? (
             <div className="text-center py-12 text-warm-500">

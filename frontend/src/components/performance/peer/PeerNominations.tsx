@@ -19,7 +19,7 @@ interface PeerNominationsProps {
 
 /** Employee view: nominate colleagues for 360 feedback and withdraw pending nominations. */
 export function PeerNominations({ reviewId, employeeId, reviewerId, maxPeers, canEdit }: PeerNominationsProps) {
-  const { rows, loading, reload } = usePeerRows(reviewId);
+  const { rows, loading, error, reload } = usePeerRows(reviewId);
 
   const used = rows.filter((r) => r.status !== 'REJECTED').length;
   const remaining = Math.max(0, maxPeers - used);
@@ -53,6 +53,11 @@ export function PeerNominations({ reviewId, employeeId, reviewerId, maxPeers, ca
 
       {loading ? (
         <p className="text-sm text-warm-500">Loading...</p>
+      ) : error ? (
+        <div role="alert" className="space-y-2">
+          <p className="text-sm text-red-600">Failed to load peers.</p>
+          <Button variant="secondary" onClick={reload}>Retry</Button>
+        </div>
       ) : rows.length === 0 ? (
         <p className="text-sm text-warm-500">No peers nominated yet</p>
       ) : (
@@ -76,7 +81,7 @@ export function PeerNominations({ reviewId, employeeId, reviewerId, maxPeers, ca
         </ul>
       )}
 
-      {canEdit && remaining > 0 && (
+      {canEdit && !error && remaining > 0 && (
         <EmployeePicker
           excludeIds={[employeeId, reviewerId, ...rows.map((r) => r.peer.id)]}
           actionLabel="Nominate"

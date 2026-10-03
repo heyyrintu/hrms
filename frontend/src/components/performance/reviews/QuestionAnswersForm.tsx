@@ -7,6 +7,15 @@ export function questionsFor(questions: CycleQuestion[], audience: ReviewAudienc
   return questions.filter((q) => q.audience === audience).sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
+/** Trim text answers and drop empty ones. Use when building the submitted payload. */
+export function cleanAnswers(answers: AnswerInput[]): AnswerInput[] {
+  return answers.flatMap((a): AnswerInput[] => {
+    if (typeof a.rating === 'number') return [{ cycleQuestionId: a.cycleQuestionId, rating: a.rating }];
+    const text = a.text?.trim();
+    return text ? [{ cycleQuestionId: a.cycleQuestionId, text }] : [];
+  });
+}
+
 function isAnswered(q: CycleQuestion, a: AnswerInput | undefined): boolean {
   if (!a) return false;
   return q.type === 'RATING' ? typeof a.rating === 'number' : !!a.text?.trim();
@@ -39,7 +48,7 @@ export function QuestionAnswersForm({ questions, audience, value, onChange, disa
   const update = (q: CycleQuestion, patch: { rating?: number; text?: string }) => {
     const rest = value.filter((a) => a.cycleQuestionId !== q.id);
     const next: AnswerInput = { cycleQuestionId: q.id, ...patch };
-    const keep = q.type === 'RATING' ? typeof next.rating === 'number' : !!next.text?.trim();
+    const keep = q.type === 'RATING' ? typeof next.rating === 'number' : !!next.text;
     const answers = keep ? [...rest, next] : rest;
     onChange(answers, answersComplete(questions, audience, answers));
   };

@@ -5,13 +5,16 @@ import { peerApi, type PeerRow } from '@/lib/api-performance-peer';
 export function usePeerRows(reviewId: string) {
   const [rows, setRows] = useState<PeerRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
+    setError(false);
     try {
       const res = await peerApi.listForReview(reviewId);
       setRows(res.data);
     } catch {
+      setError(true);
       toast.error('Failed to load peers');
     } finally {
       setLoading(false);
@@ -22,7 +25,7 @@ export function usePeerRows(reviewId: string) {
     reload();
   }, [reload]);
 
-  return { rows, loading, reload };
+  return { rows, loading, error, reload };
 }
 
 export function errorMessage(e: unknown, fallback: string): string {

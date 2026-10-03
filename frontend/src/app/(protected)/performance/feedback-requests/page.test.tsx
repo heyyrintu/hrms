@@ -111,4 +111,26 @@ describe('FeedbackRequestsPage', () => {
     expect(screen.getByText('Good')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Submit feedback' })).not.toBeInTheDocument();
   });
+
+  it('shows a load error with Retry instead of the empty state', async () => {
+    api.myRequests.mockRejectedValueOnce(new Error('boom'));
+    render(<FeedbackRequestsPage />);
+    expect(await screen.findByText('Failed to load feedback requests.')).toBeInTheDocument();
+    expect(screen.queryByText('No feedback requests')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('Ann Lee')).toBeInTheDocument();
+  });
+
+  it('sends trimmed text and omits whitespace-only answers on submit', async () => {
+    api.submit.mockResolvedValue({ data: req({ status: 'SUBMITTED' }) } as never);
+    render(<FeedbackRequestsPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Give feedback for Ann Lee' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Collaboration: 3' }));
+    fireEvent.change(screen.getByLabelText('Strengths'), { target: { value: '   ' } });
+    fireEvent.change(screen.getByLabelText('Overall comment'), { target: { value: ' Nice ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit feedback' }));
+    await waitFor(() =>
+      expect(api.submit).toHaveBeenCalledWith('pr1', { answers: [{ cycleQuestionId: 'q1', rating: 3 }], overallComment: 'Nice' }),
+    );
+  });
 });

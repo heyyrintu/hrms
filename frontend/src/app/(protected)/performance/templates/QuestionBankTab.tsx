@@ -18,6 +18,7 @@ function errorMessage(e: unknown, fallback: string): string {
 export function QuestionBankTab() {
   const [questions, setQuestions] = useState<BankQuestion[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<BankQuestion | null>(null);
@@ -30,10 +31,12 @@ export function QuestionBankTab() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(false);
     try {
       const res = await templatesApi.listQuestions();
       setQuestions(res.data);
     } catch {
+      setLoadError(true);
       toast.error('Failed to load the question bank');
     } finally {
       setLoading(false);
@@ -108,6 +111,11 @@ export function QuestionBankTab() {
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <RefreshCw className="h-6 w-6 animate-spin text-warm-400" />
+            </div>
+          ) : loadError ? (
+            <div className="text-center py-12 space-y-3" role="alert">
+              <p className="text-sm text-red-600">Failed to load the question bank.</p>
+              <Button variant="secondary" onClick={load}>Retry</Button>
             </div>
           ) : questions.length === 0 ? (
             <div className="text-center py-12 text-warm-500">

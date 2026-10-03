@@ -157,4 +157,23 @@ describe('TemplatesPage', () => {
       { questionId: 'q2', audience: 'MANAGER', isRequired: false, sortOrder: 0 },
     ]);
   });
+
+  it('shows a load error with Retry on the question bank', async () => {
+    api.listQuestions.mockRejectedValueOnce(new Error('boom'));
+    render(<TemplatesPage />);
+    expect(await screen.findByText('Failed to load the question bank.')).toBeInTheDocument();
+    expect(screen.queryByText('No questions yet')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('What went well?')).toBeInTheDocument();
+  });
+
+  it('shows a load error with Retry on the templates tab', async () => {
+    api.list.mockRejectedValueOnce(new Error('boom'));
+    render(<TemplatesPage />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Templates' }));
+    expect(await screen.findByText('Failed to load templates.')).toBeInTheDocument();
+    expect(screen.queryByText('No templates yet')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('Engineering')).toBeInTheDocument();
+  });
 });

@@ -11,7 +11,7 @@ import {
   type CycleQuestion,
   type ReviewView,
 } from '@/lib/api-performance-reviews';
-import { QuestionAnswersForm, answersComplete } from '@/components/performance/reviews/QuestionAnswersForm';
+import { QuestionAnswersForm, answersComplete, cleanAnswers } from '@/components/performance/reviews/QuestionAnswersForm';
 import { AnswersReadonly } from '@/components/performance/reviews/AnswersReadonly';
 import {
   CompetencyRatingsForm,
@@ -151,7 +151,7 @@ export default function TeamReviewsPage() {
         managerComments: managerComments || undefined,
         overallRating,
         potentialRating: potential,
-        answers: answers.length > 0 ? answers : undefined,
+        answers: cleanAnswers(answers).length > 0 ? cleanAnswers(answers) : undefined,
         competencyRatings:
           competencies.length > 0
             ? competencyValues

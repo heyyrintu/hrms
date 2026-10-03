@@ -15,7 +15,7 @@ import {
   type ReviewView,
 } from '@/lib/api-performance-reviews';
 import { goalsApi, type Goal } from '@/lib/api-performance-goals';
-import { QuestionAnswersForm, answersComplete } from '@/components/performance/reviews/QuestionAnswersForm';
+import { QuestionAnswersForm, answersComplete, cleanAnswers } from '@/components/performance/reviews/QuestionAnswersForm';
 import { AnswersReadonly } from '@/components/performance/reviews/AnswersReadonly';
 import { ReleasedResults } from '@/components/performance/reviews/ReleasedResults';
 import { PeerNominations } from '@/components/performance/peer/PeerNominations';
@@ -85,6 +85,7 @@ export default function PerformancePage() {
 
   const [reviews, setReviews] = useState<ReviewView[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(true);
+  const [reviewsError, setReviewsError] = useState(false);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [goalsLoading, setGoalsLoading] = useState(true);
 
@@ -104,10 +105,12 @@ export default function PerformancePage() {
 
   const loadReviews = useCallback(async () => {
     setReviewsLoading(true);
+    setReviewsError(false);
     try {
       const res = await reviewsApi.myReviews();
       setReviews(res.data.data);
     } catch {
+      setReviewsError(true);
       toast.error('Failed to load reviews');
     } finally {
       setReviewsLoading(false);
@@ -154,7 +157,7 @@ export default function PerformancePage() {
       await reviewsApi.submitSelf(selectedReview.id, {
         selfRating,
         selfComments: selfComments || undefined,
-        answers: selfAnswers.length > 0 ? selfAnswers : undefined,
+        answers: cleanAnswers(selfAnswers).length > 0 ? cleanAnswers(selfAnswers) : undefined,
       });
       toast.success('Self-review submitted successfully');
       setSelfReviewModal(false);
@@ -224,6 +227,11 @@ export default function PerformancePage() {
             {reviewsLoading ? (
               <div className="flex items-center justify-center py-12">
                 <RefreshCw className="h-6 w-6 animate-spin text-warm-400" />
+              </div>
+            ) : reviewsError ? (
+              <div className="text-center py-12 space-y-3" role="alert">
+                <p className="text-sm text-red-600">Failed to load reviews.</p>
+                <Button variant="secondary" onClick={loadReviews}>Retry</Button>
               </div>
             ) : reviews.length === 0 ? (
               <div className="text-center py-12 text-warm-500">
@@ -463,6 +471,8 @@ export default function PerformancePage() {
             <div className="border-t pt-4">
               {viewReview.released ? (
                 <ReleasedResults review={viewReview} questions={viewQuestions} />
+              ) : viewReview.status === 'PENDING' ? (
+                <p className="text-sm text-warm-500">Self review not submitted yet</p>
               ) : (
                 <p className="text-sm text-warm-500">Submitted — awaiting release</p>
               )}

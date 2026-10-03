@@ -76,4 +76,14 @@ describe('PeerNominations', () => {
     rerender(<PeerNominations {...props} canEdit={false} />);
     await waitFor(() => expect(screen.queryByPlaceholderText('Search colleagues')).not.toBeInTheDocument());
   });
+
+  it('shows a load error with Retry instead of the empty state', async () => {
+    mocked.listForReview.mockRejectedValueOnce(new Error('boom'));
+    render(<PeerNominations {...props} />);
+    expect(await screen.findByText('Failed to load peers.')).toBeInTheDocument();
+    expect(screen.queryByText('No peers nominated yet')).not.toBeInTheDocument();
+    mocked.listForReview.mockResolvedValueOnce({ data: [] } as never);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('No peers nominated yet')).toBeInTheDocument();
+  });
 });

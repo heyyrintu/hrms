@@ -99,7 +99,7 @@ export default function ReviewCyclesPage() {
   useEffect(() => {
     templatesApi
       .list()
-      .then((res) => setTemplates(res.data.filter((t) => t.isActive)))
+      .then((res) => setTemplates(res.data))
       .catch(() => toast.error('Failed to load review templates'));
   }, []);
 
@@ -409,8 +409,10 @@ export default function ReviewCyclesPage() {
               className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
             >
               <option value="">No template</option>
-              {templates.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
+              {templates
+                .filter((t) => t.isActive || t.id === formData.templateId)
+                .map((t) => (
+                <option key={t.id} value={t.id}>{t.isActive ? t.name : `${t.name} (inactive)`}</option>
               ))}
             </select>
           </div>

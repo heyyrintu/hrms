@@ -58,4 +58,13 @@ describe('PeerApprovals', () => {
     await screen.findByText('Alice X');
     expect(screen.queryByRole('button', { name: /Approve/ })).not.toBeInTheDocument();
   });
+
+  it('shows a load error with Retry instead of the empty state', async () => {
+    mocked.listForReview.mockRejectedValueOnce(new Error('boom'));
+    render(<PeerApprovals {...props} />);
+    expect(await screen.findByText('Failed to load peers.')).toBeInTheDocument();
+    expect(screen.queryByText('No peers nominated yet')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('Alice X')).toBeInTheDocument();
+  });
 });

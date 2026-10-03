@@ -164,4 +164,23 @@ describe('PerformancePage', () => {
     expect(screen.getByRole('link', { name: /Manage goals/ })).toHaveAttribute('href', '/performance/goals');
     expect(goals.list).toHaveBeenCalledWith({ scope: 'mine' });
   });
+
+  it('shows a load error with Retry instead of the empty state', async () => {
+    reviews.myReviews.mockRejectedValueOnce(new Error('boom'));
+    render(<PerformancePage />);
+    expect(await screen.findByText('Failed to load reviews.')).toBeInTheDocument();
+    expect(screen.queryByText('No reviews yet')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('No reviews yet')).toBeInTheDocument();
+  });
+
+  it('says the self review is not submitted for a PENDING review viewed before submitting', async () => {
+    const r = review({ status: 'PENDING', cycle: cycle({ peerFeedbackEnabled: true }) });
+    reviews.myReviews.mockResolvedValue({ data: { data: [r], meta: {} } } as never);
+    reviews.get.mockResolvedValue({ data: r } as never);
+    render(<PerformancePage />);
+    fireEvent.click(await screen.findByTitle('View Details'));
+    expect(await screen.findByText('Self review not submitted yet')).toBeInTheDocument();
+    expect(screen.queryByText(/awaiting release/)).not.toBeInTheDocument();
+  });
 });

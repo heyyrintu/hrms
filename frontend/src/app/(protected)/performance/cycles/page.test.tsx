@@ -139,4 +139,13 @@ describe('ReviewCyclesPage', () => {
     expect(screen.getByLabelText('Max peers')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Update' })).toBeDisabled();
   });
+
+  it('keeps the current template in the select even when it is inactive', async () => {
+    const withRetired = { ...draft, templateId: 't2' };
+    api.getCycles.mockResolvedValue({ data: { data: [withRetired], meta: META } } as never);
+    render(<ReviewCyclesPage />);
+    fireEvent.click(await screen.findByTitle('Edit'));
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Retired template (inactive)' })).toBeInTheDocument());
+    expect(screen.getByLabelText('Review template')).toHaveValue('t2');
+  });
 });

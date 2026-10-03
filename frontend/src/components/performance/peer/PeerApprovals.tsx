@@ -21,7 +21,7 @@ interface PeerApprovalsProps {
 
 /** Reviewer/admin view: approve or reject nominations, add peers, read named feedback. */
 export function PeerApprovals({ reviewId, employeeId, reviewerId, maxPeers, canEdit, questions }: PeerApprovalsProps) {
-  const { rows, loading, reload } = usePeerRows(reviewId);
+  const { rows, loading, error, reload } = usePeerRows(reviewId);
   const used = rows.filter((r) => r.status !== 'REJECTED').length;
   const remaining = Math.max(0, maxPeers - used);
 
@@ -54,6 +54,11 @@ export function PeerApprovals({ reviewId, employeeId, reviewerId, maxPeers, canE
 
       {loading ? (
         <p className="text-sm text-warm-500">Loading...</p>
+      ) : error ? (
+        <div role="alert" className="space-y-2">
+          <p className="text-sm text-red-600">Failed to load peers.</p>
+          <Button variant="secondary" onClick={reload}>Retry</Button>
+        </div>
       ) : rows.length === 0 ? (
         <p className="text-sm text-warm-500">No peers nominated yet</p>
       ) : (
@@ -97,7 +102,7 @@ export function PeerApprovals({ reviewId, employeeId, reviewerId, maxPeers, canE
         </ul>
       )}
 
-      {canEdit && remaining > 0 && (
+      {canEdit && !error && remaining > 0 && (
         <EmployeePicker
           excludeIds={[employeeId, reviewerId, ...rows.map((r) => r.peer.id)]}
           actionLabel="Add peer"
