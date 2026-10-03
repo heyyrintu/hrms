@@ -424,5 +424,17 @@ describe('DepartmentsService', () => {
         'Cannot delete department with sub-departments. Delete or reassign them first.',
       );
     });
+
+    it('should throw ConflictException when department has goals', async () => {
+      prisma.department.findFirst.mockResolvedValue({ ...mockDepartment, employees: [], children: [] });
+      prisma.goal.count.mockResolvedValue(2);
+
+      await expect(service.remove(tenantId, 'dept-1')).rejects.toThrow(ConflictException);
+      await expect(service.remove(tenantId, 'dept-1')).rejects.toThrow(
+        'Cannot delete department with goals. Delete or reassign them first.',
+      );
+      expect(prisma.goal.count).toHaveBeenCalledWith({ where: { tenantId, departmentId: 'dept-1' } });
+      expect(prisma.department.delete).not.toHaveBeenCalled();
+    });
   });
 });

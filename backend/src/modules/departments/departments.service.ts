@@ -197,6 +197,15 @@ export class DepartmentsService {
       );
     }
 
+    // Department goals are linked by departmentId (no FK cascade), so a delete
+    // would orphan them.
+    const goals = await this.prisma.goal.count({ where: { tenantId, departmentId: id } });
+    if (goals > 0) {
+      throw new ConflictException(
+        'Cannot delete department with goals. Delete or reassign them first.',
+      );
+    }
+
     return this.prisma.department.delete({
       where: { id },
     });
