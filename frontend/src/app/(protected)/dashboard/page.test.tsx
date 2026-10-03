@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import DashboardPage from './page';
 
 // Mock lucide-react icons
@@ -113,7 +113,49 @@ jest.mock('@/lib/date-utils', () => ({
   getStartOfMonth: jest.fn().mockReturnValue(new Date(2026, 1, 1)),
 }));
 
+jest.mock('@/lib/api-attendance-capture', () => ({
+  attendanceCaptureApi: { getPolicy: jest.fn(), getSelfie: jest.fn(), uploadSelfie: jest.fn() },
+}));
+
+// The real dialog needs a camera; a stub is enough to drive the punch flow.
+jest.mock('@/components/attendance/SelfieCapture', () => ({
+  SelfieCapture: ({ open, onCaptured, onCancel }: any) =>
+    open ? (
+      <div data-testid="selfie-dialog">
+        <button onClick={() => onCaptured('up-1')}>mock-capture</button>
+        <button onClick={onCancel}>mock-cancel</button>
+      </div>
+    ) : null,
+}));
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { attendanceCaptureApi } = require('@/lib/api-attendance-capture');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { attendanceApi: attendanceApiMock } = require('@/lib/api');
+
+const policyStatus = (over: Record<string, unknown> = {}) => ({
+  data: {
+    ipRestrictionEnabled: false,
+    ipAllowed: true,
+    selfieRequired: false,
+    coveringRequest: null,
+    clientIp: '10.1.2.3',
+    ...over,
+  },
+});
+
 describe('DashboardPage', () => {
+  beforeEach(() => {
+    attendanceCaptureApi.getPolicy.mockResolvedValue(policyStatus());
+    attendanceApiMock.clockIn.mockReset().mockResolvedValue({ data: {} });
+    Object.defineProperty(navigator, 'geolocation', {
+      configurable: true,
+      value: {
+        getCurrentPosition: (ok: any) => ok({ coords: { latitude: 12.5, longitude: 77.5 } }),
+      },
+    });
+  });
+
   it('renders dashboard with greeting and stats after loading', async () => {
     render(<DashboardPage />);
 
@@ -127,6 +169,47 @@ describe('DashboardPage', () => {
 
     await waitFor(() => {
       expect(screen.getByText("Today's Attendance")).toBeInTheDocument();
+    });
+  });
+
+  describe('punch capture (wave G)', () => {
+    async function renderLoaded() {
+      render(<DashboardPage />);
+      const clockIn = await screen.findByRole('button', { name: /Clock In/ });
+      await act(async () => {});
+      return clockIn;
+    }
+
+    it('opens the selfie dialog before clocking in when the policy needs a selfie', async () => {
+      attendanceCaptureApi.getPolicy.mockResolvedValue(policyStatus({ selfieRequired: true }));
+      const clockIn = await renderLoaded();
+
+      fireEvent.click(clockIn);
+      expect(await screen.findByTestId('selfie-dialog')).toBeInTheDocument();
+      expect(attendanceApiMock.clockIn).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByText('mock-capture'));
+      await waitFor(() =>
+        expect(attendanceApiMock.clockIn).toHaveBeenCalledWith(12.5, 77.5, {
+          selfieUploadId: 'up-1',
+        }),
+      );
+    });
+
+    it('clocks in directly when no selfie is required', async () => {
+      const clockIn = await renderLoaded();
+      fireEvent.click(clockIn);
+      await waitFor(() =>
+        expect(attendanceApiMock.clockIn).toHaveBeenCalledWith(12.5, 77.5, undefined),
+      );
+    });
+
+    it('says "Office network only" when the IP is refused and nothing covers the day', async () => {
+      attendanceCaptureApi.getPolicy.mockResolvedValue(
+        policyStatus({ ipRestrictionEnabled: true, ipAllowed: false }),
+      );
+      await renderLoaded();
+      expect(await screen.findByText(/Office network only/)).toBeInTheDocument();
     });
   });
 

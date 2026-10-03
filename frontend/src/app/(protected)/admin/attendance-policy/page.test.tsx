@@ -160,6 +160,77 @@ describe('AttendancePolicyPage', () => {
     expect(mockToast.success).toHaveBeenCalledWith('Marked 2 absent, skipped 1');
   });
 
+  describe('punch capture', () => {
+    const capturePolicy = {
+      ...policy,
+      ipRestrictionEnabled: true,
+      allowedIpRanges: ['10.0.0.0/8', '203.0.113.7'],
+      selfieRequired: true,
+    };
+
+    it('shows the Punch capture section filled from the saved policy', async () => {
+      attendancePolicyApi.get.mockResolvedValue({ data: capturePolicy });
+      render(<AttendancePolicyPage />);
+
+      expect(await screen.findByText('Punch capture')).toBeInTheDocument();
+      await waitFor(() =>
+        expect(screen.getByLabelText('Restrict punches to these IP ranges')).toBeChecked(),
+      );
+      expect(screen.getByLabelText('Allowed IP ranges (one per line)')).toHaveValue(
+        '10.0.0.0/8\n203.0.113.7',
+      );
+      expect(screen.getByLabelText('Require a selfie with every punch')).toBeChecked();
+    });
+
+    it('defaults the section to off for a policy saved before wave G', async () => {
+      render(<AttendancePolicyPage />);
+      await waitForForm();
+
+      expect(screen.getByLabelText('Restrict punches to these IP ranges')).not.toBeChecked();
+      expect(screen.getByLabelText('Allowed IP ranges (one per line)')).toHaveValue('');
+      expect(screen.getByLabelText('Require a selfie with every punch')).not.toBeChecked();
+    });
+
+    it('saves ranges split by line, trimmed, with blank lines dropped', async () => {
+      render(<AttendancePolicyPage />);
+      await waitForForm();
+
+      fireEvent.click(screen.getByLabelText('Restrict punches to these IP ranges'));
+      fireEvent.change(screen.getByLabelText('Allowed IP ranges (one per line)'), {
+        target: { value: '  10.0.0.0/8  \n\n203.0.113.7\r\n   \n' },
+      });
+      fireEvent.click(screen.getByLabelText('Require a selfie with every punch'));
+      fireEvent.click(screen.getByText('Save policy'));
+
+      await waitFor(() =>
+        expect(attendancePolicyApi.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            ipRestrictionEnabled: true,
+            allowedIpRanges: ['10.0.0.0/8', '203.0.113.7'],
+            selfieRequired: true,
+          }),
+        ),
+      );
+    });
+
+    it('shows the server message when a range is refused', async () => {
+      attendancePolicyApi.update.mockRejectedValue({
+        response: { data: { message: 'Invalid IP address or range: "300.1.1.1"' } },
+      });
+      render(<AttendancePolicyPage />);
+      await waitForForm();
+
+      fireEvent.change(screen.getByLabelText('Allowed IP ranges (one per line)'), {
+        target: { value: '300.1.1.1' },
+      });
+      fireEvent.click(screen.getByText('Save policy'));
+
+      await waitFor(() =>
+        expect(mockToast.error).toHaveBeenCalledWith('Invalid IP address or range: "300.1.1.1"'),
+      );
+    });
+  });
+
   it('will not sweep without a date', async () => {
     render(<AttendancePolicyPage />);
     await waitForForm();

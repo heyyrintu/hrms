@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import AttendancePage from './page';
 
 // Mock lucide-react icons
@@ -102,7 +102,55 @@ jest.mock('@/lib/date-utils', () => ({
   getDaysInMonth: jest.fn().mockReturnValue(28),
 }));
 
+jest.mock('@/lib/api-attendance-capture', () => ({
+  attendanceCaptureApi: {
+    getPolicy: jest.fn(),
+    getSelfie: jest.fn(),
+    uploadSelfie: jest.fn(),
+  },
+}));
+
+// The real dialog needs a camera; a stub is enough to drive the punch flow.
+jest.mock('@/components/attendance/SelfieCapture', () => ({
+  SelfieCapture: ({ open, onCaptured, onCancel }: any) =>
+    open ? (
+      <div data-testid="selfie-dialog">
+        <button onClick={() => onCaptured('up-1')}>mock-capture</button>
+        <button onClick={onCancel}>mock-cancel</button>
+      </div>
+    ) : null,
+}));
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { attendanceCaptureApi } = require('@/lib/api-attendance-capture');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { attendanceApi: attendanceApiMock } = require('@/lib/api');
+
+const policyStatus = (over: Record<string, unknown> = {}) => ({
+  data: {
+    ipRestrictionEnabled: false,
+    ipAllowed: true,
+    selfieRequired: false,
+    coveringRequest: null,
+    clientIp: '10.1.2.3',
+    ...over,
+  },
+});
+
+function mockGeolocation() {
+  Object.defineProperty(navigator, 'geolocation', {
+    configurable: true,
+    value: {
+      getCurrentPosition: (ok: any) => ok({ coords: { latitude: 12.5, longitude: 77.5 } }),
+    },
+  });
+}
+
 describe('AttendancePage', () => {
+  beforeEach(() => {
+    attendanceCaptureApi.getPolicy.mockResolvedValue(policyStatus());
+  });
+
   it('renders the Attendance heading', () => {
     render(<AttendancePage />);
     expect(screen.getByText('Attendance')).toBeInTheDocument();
@@ -165,6 +213,108 @@ describe('AttendancePage', () => {
     render(<AttendancePage />);
 
     expect((await screen.findAllByText('Late')).length).toBeGreaterThan(0);
+  });
+
+  describe('punch capture (wave G)', () => {
+    beforeEach(() => {
+      attendanceApiMock.clockIn.mockReset().mockResolvedValue({ data: {} });
+      mockGeolocation();
+    });
+
+    /** Renders and waits until the clock button and the policy are both in. */
+    async function renderLoaded() {
+      render(<AttendancePage />);
+      const clockIn = await screen.findByRole('button', { name: /Clock In/ });
+      await act(async () => {});
+      return clockIn;
+    }
+
+    it('opens the selfie dialog instead of clocking in when the policy needs a selfie', async () => {
+      attendanceCaptureApi.getPolicy.mockResolvedValue(policyStatus({ selfieRequired: true }));
+      const clockIn = await renderLoaded();
+
+      fireEvent.click(clockIn);
+      expect(await screen.findByTestId('selfie-dialog')).toBeInTheDocument();
+      expect(attendanceApiMock.clockIn).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByText('mock-capture'));
+      await waitFor(() =>
+        expect(attendanceApiMock.clockIn).toHaveBeenCalledWith(12.5, 77.5, {
+          selfieUploadId: 'up-1',
+        }),
+      );
+    });
+
+    it('does not clock in when the selfie step is cancelled', async () => {
+      attendanceCaptureApi.getPolicy.mockResolvedValue(policyStatus({ selfieRequired: true }));
+      const clockIn = await renderLoaded();
+
+      fireEvent.click(clockIn);
+      await screen.findByTestId('selfie-dialog');
+      fireEvent.click(screen.getByText('mock-cancel'));
+
+      await waitFor(() => expect(screen.queryByTestId('selfie-dialog')).not.toBeInTheDocument());
+      expect(attendanceApiMock.clockIn).not.toHaveBeenCalled();
+    });
+
+    it('clocks in straight away, with no selfie field, when none is required', async () => {
+      const clockIn = await renderLoaded();
+      fireEvent.click(clockIn);
+
+      await waitFor(() =>
+        expect(attendanceApiMock.clockIn).toHaveBeenCalledWith(12.5, 77.5, undefined),
+      );
+      expect(screen.queryByTestId('selfie-dialog')).not.toBeInTheDocument();
+    });
+
+    it('says "Office network only" when the IP is refused and no request covers the day', async () => {
+      attendanceCaptureApi.getPolicy.mockResolvedValue(
+        policyStatus({ ipRestrictionEnabled: true, ipAllowed: false }),
+      );
+      const clockIn = await renderLoaded();
+
+      expect(await screen.findByText(/Office network only/)).toBeInTheDocument();
+      // The buttons stay enabled; the server decides.
+      expect(clockIn).toBeEnabled();
+    });
+
+    it('hides the notice when an approved request covers the day', async () => {
+      attendanceCaptureApi.getPolicy.mockResolvedValue(
+        policyStatus({
+          ipRestrictionEnabled: true,
+          ipAllowed: false,
+          coveringRequest: { id: 'r1', type: 'WFH' },
+        }),
+      );
+      render(<AttendancePage />);
+
+      await waitFor(() => expect(attendanceCaptureApi.getPolicy).toHaveBeenCalled());
+      expect(screen.queryByText(/Office network only/)).not.toBeInTheDocument();
+    });
+
+    it('shows the punch IP and a selfie button for sessions that have one', async () => {
+      const { api } = require('@/lib/api');
+      api.get.mockResolvedValueOnce({
+        data: [
+          {
+            id: 'att-1',
+            date: '2026-02-10T00:00:00.000Z',
+            status: 'ON_DUTY',
+            workedMinutes: 480,
+            otMinutesCalculated: 0,
+            sessions: [
+              { id: 's1', inIp: '10.1.2.3', outIp: null, hasInSelfie: true, hasOutSelfie: false },
+            ],
+          },
+        ],
+      });
+      render(<AttendancePage />);
+
+      expect((await screen.findAllByText('10.1.2.3')).length).toBeGreaterThan(0);
+      expect(screen.getAllByLabelText('Clock-in selfie').length).toBeGreaterThan(0);
+      expect(screen.queryByLabelText('Clock-out selfie')).not.toBeInTheDocument();
+      expect(screen.getAllByText('ON DUTY').length).toBeGreaterThan(0);
+    });
   });
 
   it('shows no late badge on an on-time day', async () => {

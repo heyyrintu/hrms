@@ -5,23 +5,35 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   Card, CardHeader, CardTitle, CardContent,
   Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableEmptyState, TableLoadingState,
-  Badge, getStatusBadgeVariant, Select, Button
+  Badge, Select, Button
 } from '@/components/ui';
 import { ChevronLeft, ChevronRight, Download, LogIn, LogOut, Clock, MapPin } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api, attendanceApi, employeesApi, departmentsApi } from '@/lib/api';
 import { formatDate, formatTime, formatMinutesToHoursMinutes, formatDateForApi, getMonthYear, getDaysInMonth } from '@/lib/date-utils';
 import { AttendanceRecord, Employee, Department } from '@/types';
+import { usePunchCapture } from '@/components/attendance/usePunchCapture';
+import { SessionSelfieButton } from '@/components/attendance/SessionSelfieButton';
+import { attendanceStatusLabel, attendanceStatusVariant } from '@/components/attendance/status-badge';
+import Link from 'next/link';
 
 /**
  * The late-mark columns the attendance policy writes at clock-in. Declared
  * here rather than on the shared `AttendanceRecord` so this page can read them
  * without every other consumer of that type having to care.
  */
-type AttendanceRecordWithLateMark = AttendanceRecord & {
+type AttendanceRecordWithLateMark = Omit<AttendanceRecord, 'sessions'> & {
   isLate?: boolean;
   lateByMinutes?: number | null;
   autoMarked?: boolean;
+  /** Per-punch capture detail (Keka wave G). The selfie itself is fetched on demand. */
+  sessions?: {
+    id: string;
+    inIp?: string | null;
+    outIp?: string | null;
+    hasInSelfie?: boolean;
+    hasOutSelfie?: boolean;
+  }[];
 };
 
 export default function AttendancePage() {
@@ -43,6 +55,7 @@ export default function AttendancePage() {
   const [canClockOut, setCanClockOut] = useState(false);
   const [clockingIn, setClockingIn] = useState(false);
   const [clockingOut, setClockingOut] = useState(false);
+  const { officeOnly, requestSelfie, selfieDialog } = usePunchCapture();
 
   useEffect(() => {
     loadAttendance();
@@ -97,8 +110,14 @@ export default function AttendancePage() {
   const handleClockIn = async () => {
     try {
       setClockingIn(true);
+      // The selfie goes first: an upload is only claimable for 10 minutes.
+      const selfieUploadId = await requestSelfie();
       const { latitude, longitude } = await getLocation();
-      await attendanceApi.clockIn(latitude, longitude);
+      await attendanceApi.clockIn(
+        latitude,
+        longitude,
+        selfieUploadId ? { selfieUploadId } : undefined,
+      );
       toast.success('Clocked in successfully!');
       await loadTodayStatus();
       await loadAttendance();
@@ -113,8 +132,13 @@ export default function AttendancePage() {
   const handleClockOut = async () => {
     try {
       setClockingOut(true);
+      const selfieUploadId = await requestSelfie();
       const { latitude, longitude } = await getLocation();
-      await attendanceApi.clockOut(latitude, longitude);
+      await attendanceApi.clockOut(
+        latitude,
+        longitude,
+        selfieUploadId ? { selfieUploadId } : undefined,
+      );
       toast.success('Clocked out successfully!');
       await loadTodayStatus();
       await loadAttendance();
@@ -249,6 +273,14 @@ export default function AttendancePage() {
                   <p className="text-sm text-warm-500">
                     {clockedIn ? 'You are currently clocked in' : canClockIn ? 'You have not clocked in yet' : 'Shift complete for today'}
                   </p>
+                  {officeOnly && (
+                    <p className="text-sm text-amber-600 mt-1">
+                      Office network only: you are not on an approved network.{' '}
+                      <Link href="/attendance/requests" className="underline">
+                        Request work from home or on duty
+                      </Link>
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex gap-3">
@@ -351,13 +383,14 @@ export default function AttendancePage() {
               <TableHead className="hidden lg:table-cell">OT (Calc)</TableHead>
               <TableHead className="hidden lg:table-cell">OT (Approved)</TableHead>
               <TableHead className="hidden lg:table-cell">Location</TableHead>
+              <TableHead className="hidden lg:table-cell">IP / Selfie</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
-              <TableLoadingState colSpan={viewMode === 'team' ? 9 : 8} />
+              <TableLoadingState colSpan={viewMode === 'team' ? 10 : 9} />
             ) : calendarData.length === 0 ? (
-              <TableEmptyState message="No attendance records found" colSpan={viewMode === 'team' ? 9 : 8} />
+              <TableEmptyState message="No attendance records found" colSpan={viewMode === 'team' ? 10 : 9} />
             ) : (
               calendarData.map(({ date, dateStr, record, isWeekend, isToday }) => (
                 <TableRow key={dateStr} className={isToday ? 'bg-primary-50' : isWeekend ? 'bg-warm-50' : ''}>
@@ -379,8 +412,8 @@ export default function AttendancePage() {
                   <TableCell>
                     {record ? (
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <Badge variant={getStatusBadgeVariant(record.status)}>
-                          {record.status}
+                        <Badge variant={attendanceStatusVariant(record.status)}>
+                          {attendanceStatusLabel(record.status)}
                         </Badge>
                         {record.isLate && (
                           <Badge variant="warning">
@@ -443,12 +476,26 @@ export default function AttendancePage() {
                       </div>
                     ) : '-'}
                   </TableCell>
+                  <TableCell className="hidden lg:table-cell whitespace-nowrap">
+                    {record?.sessions?.length ? (
+                      <div className="flex flex-col gap-0.5">
+                        {record.sessions.map((s) => (
+                          <div key={s.id} className="flex items-center gap-2 text-xs">
+                            <span className="text-warm-600">{s.inIp || '-'}</span>
+                            {s.hasInSelfie && <SessionSelfieButton sessionId={s.id} which="in" />}
+                            {s.hasOutSelfie && <SessionSelfieButton sessionId={s.id} which="out" />}
+                          </div>
+                        ))}
+                      </div>
+                    ) : '-'}
+                  </TableCell>
                 </TableRow>
               ))
             )}
           </TableBody>
         </Table>
       </Card>
+      {selfieDialog}
     </div>
   );
 }

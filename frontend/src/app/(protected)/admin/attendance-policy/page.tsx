@@ -20,6 +20,10 @@ interface PolicyForm {
   absentIsLop: boolean;
   minHalfDayMinutes: string;
   minFullDayMinutes: string;
+  ipRestrictionEnabled: boolean;
+  /** One range per line. */
+  allowedIpRanges: string;
+  selfieRequired: boolean;
 }
 
 const emptyForm: PolicyForm = {
@@ -30,6 +34,9 @@ const emptyForm: PolicyForm = {
   absentIsLop: true,
   minHalfDayMinutes: '240',
   minFullDayMinutes: '480',
+  ipRestrictionEnabled: false,
+  allowedIpRanges: '',
+  selfieRequired: false,
 };
 
 function toForm(policy: AttendancePolicy): PolicyForm {
@@ -43,6 +50,9 @@ function toForm(policy: AttendancePolicy): PolicyForm {
     absentIsLop: policy.absentIsLop,
     minHalfDayMinutes: String(policy.minHalfDayMinutes),
     minFullDayMinutes: String(policy.minFullDayMinutes),
+    ipRestrictionEnabled: policy.ipRestrictionEnabled ?? false,
+    allowedIpRanges: (policy.allowedIpRanges ?? []).join('\n'),
+    selfieRequired: policy.selfieRequired ?? false,
   };
 }
 
@@ -93,6 +103,12 @@ export default function AttendancePolicyPage() {
         absentIsLop: form.absentIsLop,
         minHalfDayMinutes: Number(form.minHalfDayMinutes),
         minFullDayMinutes: Number(form.minFullDayMinutes),
+        ipRestrictionEnabled: form.ipRestrictionEnabled,
+        allowedIpRanges: form.allowedIpRanges
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean),
+        selfieRequired: form.selfieRequired,
       });
       setForm(toForm(response.data));
       toast.success('Attendance policy saved');
@@ -226,6 +242,48 @@ export default function AttendancePolicyPage() {
             it a half day, and less than that marks it absent. Set a figure to 0 to
             switch that rule off.
           </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Punch capture</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={form.ipRestrictionEnabled}
+              onChange={(e) => set('ipRestrictionEnabled', e.target.checked)}
+            />
+            <span>Restrict punches to these IP ranges</span>
+          </label>
+          <div>
+            <label htmlFor="allowed-ip-ranges" className="block text-sm font-medium text-warm-700 mb-1">
+              Allowed IP ranges (one per line)
+            </label>
+            <textarea
+              id="allowed-ip-ranges"
+              rows={4}
+              value={form.allowedIpRanges}
+              placeholder={'10.0.0.0/8\n203.0.113.7'}
+              onChange={(e) => set('allowedIpRanges', e.target.value)}
+              className="w-full px-3 py-2 border border-warm-300 rounded-lg font-mono text-sm focus:ring-2 focus:ring-primary-500"
+            />
+          </div>
+          <p className="text-sm text-warm-500">
+            IPv4 or IPv6 addresses or CIDR ranges. An approved work-from-home or on-duty
+            request waives the restriction for its dates. Behind a proxy, the server must
+            have TRUST_PROXY set or the proxy&apos;s address is what gets checked.
+          </p>
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={form.selfieRequired}
+              onChange={(e) => set('selfieRequired', e.target.checked)}
+            />
+            <span>Require a selfie with every punch</span>
+          </label>
         </CardContent>
       </Card>
 

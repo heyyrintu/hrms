@@ -13,6 +13,10 @@ export interface AttendancePolicy {
   absentIsLop: boolean;
   minHalfDayMinutes: number;
   minFullDayMinutes: number;
+  /** Keka wave G. Optional so a policy row from before it still types. */
+  ipRestrictionEnabled?: boolean;
+  allowedIpRanges?: string[];
+  selfieRequired?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
