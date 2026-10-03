@@ -29,6 +29,7 @@ export interface DayThresholds {
 const OWNED_STATUSES: ReadonlySet<string> = new Set([
   'PRESENT',
   'WFH',
+  'ON_DUTY',
   'HALF_DAY',
   'ABSENT',
 ]);
@@ -41,7 +42,7 @@ function enabled(threshold: number | null | undefined): threshold is number {
  * Returns the status the day has earned, or null when the rule has nothing to
  * say (both thresholds off, or a status it does not own).
  *
- * - worked >= full            -> PRESENT (WFH stays WFH)
+ * - worked >= full            -> PRESENT (WFH and ON_DUTY stay as they are)
  * - half <= worked < full     -> HALF_DAY
  * - worked < half             -> ABSENT
  *
@@ -61,7 +62,8 @@ export function classifyWorkedDay(
   if (half === null && full === null) return null;
 
   const worked = Number.isFinite(workedMinutes) && workedMinutes > 0 ? workedMinutes : 0;
-  const fullDay: AttendanceStatus = status === 'WFH' ? 'WFH' : 'PRESENT';
+  const fullDay: AttendanceStatus =
+    status === 'WFH' || status === 'ON_DUTY' ? status : 'PRESENT';
 
   if (full !== null) {
     if (worked >= full) return fullDay;

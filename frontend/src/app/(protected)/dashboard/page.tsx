@@ -3,13 +3,16 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
-import { Card, CardHeader, CardTitle, CardContent, Button, Badge, getStatusBadgeVariant } from '@/components/ui';
+import { Card, CardHeader, CardTitle, CardContent, Button, Badge } from '@/components/ui';
 import { Clock, Calendar, Users, ClipboardCheck, TrendingUp, LogIn, LogOut, MapPin } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { api, attendanceApi, adminApi } from '@/lib/api';
 import { formatMinutesToHoursMinutes, formatTime, formatDateForApi, getStartOfMonth } from '@/lib/date-utils';
 import { AttendanceRecord, AttendanceSummary, DashboardStats, TodayAttendance } from '@/types';
 import { PollWidget } from '@/components/engagement/PollWidget';
+import { usePunchCapture } from '@/components/attendance/usePunchCapture';
+import { attendanceStatusLabel, attendanceStatusVariant } from '@/components/attendance/status-badge';
+import Link from 'next/link';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -63,6 +66,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [clockingIn, setClockingIn] = useState(false);
   const [clockingOut, setClockingOut] = useState(false);
+  const { officeOnly, requestSelfie, selfieDialog } = usePunchCapture();
 
   useEffect(() => {
     loadDashboardData();
@@ -176,8 +180,14 @@ export default function DashboardPage() {
   const handleClockIn = async () => {
     try {
       setClockingIn(true);
+      // The selfie goes first: an upload is only claimable for 10 minutes.
+      const selfieUploadId = await requestSelfie();
       const { latitude, longitude } = await getLocation();
-      await attendanceApi.clockIn(latitude, longitude);
+      await attendanceApi.clockIn(
+        latitude,
+        longitude,
+        selfieUploadId ? { selfieUploadId } : undefined,
+      );
       toast.success('Clocked in successfully');
       await loadDashboardData();
     } catch (error: any) {
@@ -191,8 +201,13 @@ export default function DashboardPage() {
   const handleClockOut = async () => {
     try {
       setClockingOut(true);
+      const selfieUploadId = await requestSelfie();
       const { latitude, longitude } = await getLocation();
-      await attendanceApi.clockOut(latitude, longitude);
+      await attendanceApi.clockOut(
+        latitude,
+        longitude,
+        selfieUploadId ? { selfieUploadId } : undefined,
+      );
       toast.success('Clocked out successfully');
       await loadDashboardData();
     } catch (error: any) {
@@ -244,8 +259,10 @@ export default function DashboardPage() {
               {/* Status */}
               <div>
                 <p className="text-sm text-warm-500">Status</p>
-                <Badge variant={getStatusBadgeVariant(todayAttendance?.record?.status || 'ABSENT')}>
-                  {todayAttendance?.record?.status || 'Not Clocked In'}
+                <Badge variant={attendanceStatusVariant(todayAttendance?.record?.status || 'ABSENT')}>
+                  {todayAttendance?.record?.status
+                    ? attendanceStatusLabel(todayAttendance.record.status)
+                    : 'Not Clocked In'}
                 </Badge>
               </div>
 
@@ -312,6 +329,14 @@ export default function DashboardPage() {
               )}
               {!todayAttendance?.canClockIn && !todayAttendance?.canClockOut && todayAttendance?.record?.clockOutTime && (
                 <p className="text-sm text-warm-500">You have completed your shift for today.</p>
+              )}
+              {officeOnly && (
+                <p className="text-sm text-amber-600">
+                  Office network only.{' '}
+                  <Link href="/attendance/requests" className="underline">
+                    Request work from home or on duty
+                  </Link>
+                </p>
               )}
             </div>
           </div>
@@ -503,6 +528,7 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+      {selfieDialog}
     </div>
   );
 }

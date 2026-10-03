@@ -347,6 +347,24 @@ describe('PayrollCalculationService', () => {
       expect(result!.presentDays).toBe(2.5);
     });
 
+    // Keka wave G (time and attendance)
+    it('counts an ON_DUTY day as 1 present day', async () => {
+      prisma.holiday.findMany.mockResolvedValue([]);
+
+      prisma.attendanceRecord.findMany.mockResolvedValue([
+        { status: 'PRESENT', date: new Date(Date.UTC(2026, 0, 2, 12)), otMinutesApproved: 0, otMinutesCalculated: 0 },
+        { status: 'ON_DUTY', date: new Date(Date.UTC(2026, 0, 5, 12)), otMinutesApproved: 0, otMinutesCalculated: 0 },
+      ]);
+
+      prisma.leaveRequest.findMany.mockResolvedValue([]);
+
+      const result = await service.calculateForEmployee(tenantId, employeeId, month, year);
+
+      expect(result).not.toBeNull();
+      // 1 (PRESENT) + 1 (ON_DUTY) = 2
+      expect(result!.presentDays).toBe(2);
+    });
+
     it('should handle paid leave as effective present days', async () => {
       prisma.holiday.findMany.mockResolvedValue([]);
 
@@ -628,7 +646,7 @@ describe('PayrollCalculationService', () => {
       await service.calculateForEmployee(tenantId, employeeId, month, year);
 
       const where = prisma.attendanceRecord.findMany.mock.calls[0][0].where;
-      expect(where.status.in).toEqual(['PRESENT', 'WFH', 'HALF_DAY', 'ABSENT']);
+      expect(where.status.in).toEqual(['PRESENT', 'WFH', 'ON_DUTY', 'HALF_DAY', 'ABSENT']);
     });
 
     it('should account for holidays in working day calculation', async () => {

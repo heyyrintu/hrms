@@ -32,6 +32,10 @@ export const WORKFLOW_DEFAULTS: Record<WorkflowEntityType, WorkflowDefaultDefini
   // one-person HR team is not deadlocked; tenants tighten it in the builder.
   JOB_REQUISITION: { name: 'Job requisition approval', ...HR_ONLY },
   OFFER: { name: 'Job offer approval', ...HR_ONLY },
+  // Keka wave G (time and attendance)
+  WFH_REQUEST: { name: 'Work from home approval', ...REPORTING_MANAGER_ONLY },
+  ON_DUTY_REQUEST: { name: 'On-duty approval', ...REPORTING_MANAGER_ONLY },
+  TIMESHEET: { name: 'Timesheet approval', ...REPORTING_MANAGER_ONLY },
 };
 
 export const WORKFLOW_ENTITY_TYPES = Object.keys(WORKFLOW_DEFAULTS) as WorkflowEntityType[];

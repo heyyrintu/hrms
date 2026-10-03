@@ -33,3 +33,24 @@ export function effectiveShift<S extends { isActive: boolean }>(
 ): S | null {
   return assignment?.shift?.isActive ? assignment.shift : null;
 }
+
+/**
+ * The resolved day for an employee who has a roster entry (Keka wave G). A
+ * rostered OFF day has no shift; a rostered shift that has itself been
+ * deactivated is no shift at all and, like `effectiveShift`, does not fall
+ * back to an assignment.
+ */
+export function rosterDayResult<S extends { isActive: boolean }>(
+  employeeId: string,
+  date: Date,
+  entry: { isOff: boolean; shift: S | null },
+): { employeeId: string; date: Date; shift: S | null; isOff: boolean; source: 'ROSTER' } {
+  if (entry.isOff) return { employeeId, date, shift: null, isOff: true, source: 'ROSTER' };
+  return {
+    employeeId,
+    date,
+    shift: entry.shift?.isActive ? entry.shift : null,
+    isOff: false,
+    source: 'ROSTER',
+  };
+}

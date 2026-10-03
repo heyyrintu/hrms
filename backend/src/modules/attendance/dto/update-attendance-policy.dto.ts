@@ -1,4 +1,6 @@
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsDateString,
   IsInt,
@@ -69,6 +71,27 @@ export class UpdateAttendancePolicyDto {
   @Min(0)
   @Max(1440)
   minFullDayMinutes?: number;
+
+  @ApiPropertyOptional({ description: 'Only allow punches from the allowed IP ranges' })
+  @IsOptional()
+  @IsBoolean()
+  ipRestrictionEnabled?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'IPv4/IPv6 addresses or CIDR ranges allowed to punch (max 100)',
+    type: [String],
+    example: ['10.0.0.0/8', '203.0.113.7'],
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(100)
+  @IsString({ each: true })
+  allowedIpRanges?: string[];
+
+  @ApiPropertyOptional({ description: 'Require a selfie with every punch' })
+  @IsOptional()
+  @IsBoolean()
+  selfieRequired?: boolean;
 }
 
 /** Body of `POST /attendance/mark-absent`. */

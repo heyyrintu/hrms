@@ -34,6 +34,13 @@ export class ClockInDto {
   @IsOptional()
   @IsString()
   remarks?: string;
+
+  @ApiPropertyOptional({
+    description: 'Upload id from POST /attendance-capture/selfie (required when the policy asks for a selfie)',
+  })
+  @IsOptional()
+  @IsUUID()
+  selfieUploadId?: string;
 }
 
 export class ClockOutDto {
@@ -66,6 +73,13 @@ export class ClockOutDto {
   @IsOptional()
   @IsString()
   remarks?: string;
+
+  @ApiPropertyOptional({
+    description: 'Upload id from POST /attendance-capture/selfie (required when the policy asks for a selfie)',
+  })
+  @IsOptional()
+  @IsUUID()
+  selfieUploadId?: string;
 }
 
 export class ApproveOtDto {

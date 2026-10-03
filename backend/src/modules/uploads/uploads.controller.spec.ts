@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { UploadsController } from './uploads.controller';
 import { UploadsService } from './uploads.service';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
@@ -73,6 +73,13 @@ describe('UploadsController', () => {
       ).rejects.toThrow(BadRequestException);
     });
 
+    it('refuses to create attendance selfies through the generic endpoint', async () => {
+      await expect(
+        controller.upload(mockFile, { entityType: 'attendance-selfie' }, mockUser),
+      ).rejects.toThrow(BadRequestException);
+      expect(service.upload).not.toHaveBeenCalled();
+    });
+
     it('should throw BadRequestException when file is undefined', async () => {
       await expect(
         controller.upload(undefined as any, dto, mockUser),
@@ -88,6 +95,14 @@ describe('UploadsController', () => {
       setHeader: jest.fn(),
       sendFile: jest.fn(),
     } as any;
+
+    it('returns 404 for the private attendance-selfie folder without touching storage', async () => {
+      await expect(
+        controller.download('attendance-selfie', 'x.jpg', mockRes, mockUser),
+      ).rejects.toThrow(NotFoundException);
+      expect(service.getFilePath).not.toHaveBeenCalled();
+      expect(service.findByKey).not.toHaveBeenCalled();
+    });
 
     it('should set headers and send file', async () => {
       const filePath = '/uploads/folder1/file.pdf';

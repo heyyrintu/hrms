@@ -48,7 +48,11 @@ describe('WorkflowDefinitionsService', () => {
           'OFFER',
           'PAYROLL_RUN',
           'REGULARIZATION',
-        ],
+          // Keka wave G (time and attendance)
+          'WFH_REQUEST',
+          'ON_DUTY_REQUEST',
+          'TIMESHEET',
+        ].sort(),
       );
       const expense = views.find((v) => v.entityType === 'EXPENSE')!;
       expect(expense.isCustom).toBe(true);

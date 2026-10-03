@@ -6,6 +6,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OtCalculationService } from './ot-calculation.service';
 import { ApprovalEngineService } from '../workflow/approval-engine.service';
+import { AttendanceRequestsService } from './requests/attendance-requests.service';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import {
   AttendancePolicyService,
@@ -22,6 +23,7 @@ describe('RegularizationService', () => {
   let otCalculation: { getOtRule: jest.Mock; calculateOtMinutes: jest.Mock };
   let policyService: { getOrCreate: jest.Mock };
   let notifications: any;
+  let requests: { findApprovedCovering: jest.Mock };
   let engine: {
     start: jest.Mock;
     notifyPending: jest.Mock;
@@ -81,6 +83,10 @@ describe('RegularizationService', () => {
       providers: [
         RegularizationService,
         { provide: ApprovalEngineService, useValue: engine },
+        {
+          provide: AttendanceRequestsService,
+          useValue: { findApprovedCovering: jest.fn().mockResolvedValue(null) },
+        },
         { provide: PrismaService, useValue: createMockPrismaService() },
         { provide: NotificationsService, useValue: createMockNotificationsService() },
         {
@@ -106,6 +112,7 @@ describe('RegularizationService', () => {
     otCalculation = module.get(OtCalculationService);
     policyService = module.get(AttendancePolicyService);
     notifications = module.get(NotificationsService);
+    requests = module.get(AttendanceRequestsService);
   });
 
   // `AttendanceRecord.date` is `@db.Date`, and the clock-in path and the
@@ -396,6 +403,21 @@ describe('RegularizationService', () => {
         await service.approve(managerActor, 'reg-1', {});
 
         expect(statusWritten()).toBe('WFH');
+      });
+
+      it('uses the approved request type as the base on a covered day', async () => {
+        requests.findApprovedCovering.mockResolvedValue({ id: 'req-1', type: 'ON_DUTY' });
+        primeApprove('2025-03-15T12:30:00Z');
+
+        await service.approve(managerActor, 'reg-1', {});
+
+        expect(requests.findApprovedCovering).toHaveBeenCalledWith(
+          tenantId,
+          'emp-1',
+          expect.any(Date),
+          prisma,
+        );
+        expect(statusWritten()).toBe('ON_DUTY');
       });
 
       it('falls back to PRESENT when the tenant switched both thresholds off', async () => {

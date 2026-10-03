@@ -5,6 +5,7 @@ import {
   isPrismaError,
   PRISMA_UNIQUE_VIOLATION,
 } from '../../../common/utils/prisma-errors';
+import { validateIpRange } from '../rules/ip-allowlist';
 import { UpdateAttendancePolicyDto } from '../dto/update-attendance-policy.dto';
 
 /**
@@ -82,6 +83,22 @@ export class AttendancePolicyService {
       );
     }
 
+    let ranges: string[] | undefined;
+    if (dto.allowedIpRanges !== undefined) {
+      ranges = [...new Set(dto.allowedIpRanges.map((r) => r.trim()))];
+      for (const r of ranges) {
+        const error = validateIpRange(r);
+        if (error) throw new BadRequestException(error);
+      }
+    }
+    const effectiveRanges = ranges ?? current.allowedIpRanges ?? [];
+    const effectiveEnabled = dto.ipRestrictionEnabled ?? current.ipRestrictionEnabled ?? false;
+    if (effectiveEnabled && effectiveRanges.length === 0) {
+      throw new BadRequestException(
+        'Add at least one allowed IP range before enabling IP restriction',
+      );
+    }
+
     const data: Prisma.AttendancePolicyUpdateInput = {};
     if (dto.defaultShiftStart !== undefined) data.defaultShiftStart = dto.defaultShiftStart;
     if (dto.defaultGraceMinutes !== undefined)
@@ -92,6 +109,10 @@ export class AttendancePolicyService {
     if (dto.absentIsLop !== undefined) data.absentIsLop = dto.absentIsLop;
     if (dto.minHalfDayMinutes !== undefined) data.minHalfDayMinutes = dto.minHalfDayMinutes;
     if (dto.minFullDayMinutes !== undefined) data.minFullDayMinutes = dto.minFullDayMinutes;
+    if (dto.ipRestrictionEnabled !== undefined)
+      data.ipRestrictionEnabled = dto.ipRestrictionEnabled;
+    if (ranges !== undefined) data.allowedIpRanges = ranges;
+    if (dto.selfieRequired !== undefined) data.selfieRequired = dto.selfieRequired;
 
     return this.prisma.attendancePolicy.update({ where: { tenantId }, data });
   }

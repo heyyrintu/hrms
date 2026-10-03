@@ -172,6 +172,86 @@ describe('AttendancePolicyService', () => {
       });
     });
 
+    describe('capture policy', () => {
+      const withCapture = (over: Record<string, unknown> = {}) => ({
+        ...storedPolicy,
+        ipRestrictionEnabled: false,
+        allowedIpRanges: [],
+        selfieRequired: false,
+        ...over,
+      });
+      beforeEach(() => {
+        prisma.attendancePolicy.findUnique.mockResolvedValue(withCapture());
+        prisma.attendancePolicy.update.mockResolvedValue(storedPolicy);
+      });
+
+      it('rejects an invalid range, naming it', async () => {
+        await expect(
+          service.update(tenantId, { allowedIpRanges: ['10.0.0.0/8', '300.1.1.1'] }),
+        ).rejects.toThrow(/300\.1\.1\.1/);
+        expect(prisma.attendancePolicy.update).not.toHaveBeenCalled();
+      });
+
+      it('rejects enabling restriction with an empty list', async () => {
+        await expect(
+          service.update(tenantId, { ipRestrictionEnabled: true }),
+        ).rejects.toThrow('Add at least one allowed IP range before enabling IP restriction');
+        expect(prisma.attendancePolicy.update).not.toHaveBeenCalled();
+      });
+
+      it('enables restriction together with a list', async () => {
+        await service.update(tenantId, {
+          ipRestrictionEnabled: true,
+          allowedIpRanges: ['10.0.0.0/8'],
+        });
+        expect(prisma.attendancePolicy.update).toHaveBeenCalledWith({
+          where: { tenantId },
+          data: { ipRestrictionEnabled: true, allowedIpRanges: ['10.0.0.0/8'] },
+        });
+      });
+
+      it('rejects clearing the list while restriction stays enabled', async () => {
+        prisma.attendancePolicy.findUnique.mockResolvedValue(
+          withCapture({ ipRestrictionEnabled: true, allowedIpRanges: ['10.0.0.0/8'] }),
+        );
+        await expect(
+          service.update(tenantId, { allowedIpRanges: [] }),
+        ).rejects.toThrow(BadRequestException);
+      });
+
+      it('allows disabling while clearing the list', async () => {
+        prisma.attendancePolicy.findUnique.mockResolvedValue(
+          withCapture({ ipRestrictionEnabled: true, allowedIpRanges: ['10.0.0.0/8'] }),
+        );
+        await service.update(tenantId, {
+          ipRestrictionEnabled: false,
+          allowedIpRanges: [],
+        });
+        expect(prisma.attendancePolicy.update).toHaveBeenCalledWith({
+          where: { tenantId },
+          data: { ipRestrictionEnabled: false, allowedIpRanges: [] },
+        });
+      });
+
+      it('trims and de-duplicates ranges', async () => {
+        await service.update(tenantId, {
+          allowedIpRanges: [' 10.0.0.0/8 ', '10.0.0.0/8', '192.168.1.10'],
+        });
+        expect(prisma.attendancePolicy.update).toHaveBeenCalledWith({
+          where: { tenantId },
+          data: { allowedIpRanges: ['10.0.0.0/8', '192.168.1.10'] },
+        });
+      });
+
+      it('stores selfieRequired', async () => {
+        await service.update(tenantId, { selfieRequired: true });
+        expect(prisma.attendancePolicy.update).toHaveBeenCalledWith({
+          where: { tenantId },
+          data: { selfieRequired: true },
+        });
+      });
+    });
+
     it('rejects a half-day threshold above the full-day threshold', async () => {
       prisma.attendancePolicy.findUnique.mockResolvedValue(storedPolicy);
 

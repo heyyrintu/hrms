@@ -75,6 +75,10 @@ import {
   // Keka wave H1
   KeyRound,
   ShieldCheck,
+  // Keka wave G (time and attendance)
+  Home,
+  CalendarRange,
+  FolderKanban,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -115,6 +119,9 @@ const sections: NavSection[] = [
         children: [
           { name: 'My Attendance', href: '/attendance', icon: <Clock className="h-4 w-4" /> },
           { name: 'Regularization', href: '/attendance/regularization', icon: <ClipboardEdit className="h-4 w-4" /> },
+          // Keka wave G (time and attendance)
+          { name: 'WFH / On-duty', href: '/attendance/requests', icon: <Home className="h-4 w-4" /> },
+          { name: 'My Shifts', href: '/attendance/roster', icon: <CalendarRange className="h-4 w-4" /> },
         ],
       },
       { name: 'Leave', href: '/leave', icon: <Calendar className="h-[18px] w-[18px]" /> },
@@ -135,6 +142,9 @@ const sections: NavSection[] = [
       { name: 'My Interviews', href: '/recruitment/interviews', icon: <CalendarSearch className="h-[18px] w-[18px]" /> },
       // Keka wave H1: every user manages their own two-factor authentication.
       { name: 'My Security', href: '/my-security', icon: <KeyRound className="h-[18px] w-[18px]" /> },
+      // Keka wave G (time and attendance)
+      { name: 'Timesheets', href: '/timesheets', icon: <Timer className="h-[18px] w-[18px]" /> },
+      { name: 'Projects', href: '/projects', icon: <FolderKanban className="h-[18px] w-[18px]" /> },
     ],
   },
   // Keka wave E: engagement
@@ -233,6 +243,9 @@ const sections: NavSection[] = [
           { name: 'Comp-Off', href: '/approvals/comp-off', icon: <CalendarPlus className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
           { name: 'Regularization', href: '/approvals/regularization', icon: <ClipboardEdit className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
           { name: 'Loans', href: '/approvals/loans', icon: <Banknote className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
+          // Keka wave G (time and attendance)
+          { name: 'WFH / On-duty', href: '/approvals/attendance-requests', icon: <Home className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
+          { name: 'Timesheets', href: '/approvals/timesheets', icon: <Timer className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
         ],
       },
     ],
@@ -242,6 +255,8 @@ const sections: NavSection[] = [
     items: [
       { name: 'Reports', href: '/reports', icon: <FileSpreadsheet className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
       { name: 'Companies', href: '/companies', icon: <Building2 className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN] },
+      // Keka wave G (time and attendance)
+      { name: 'Utilisation', href: '/reports/utilisation', icon: <BarChart3 className="h-[18px] w-[18px]" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER] },
     ],
   },
   {
@@ -282,6 +297,8 @@ const sections: NavSection[] = [
           { name: 'Recruitment Settings', href: '/admin/recruitment-settings', icon: <Globe className="h-4 w-4" /> },
           // Keka wave H1: fixed admins only, never unlocked by a custom role.
           { name: 'Security', href: '/admin/security', icon: <ShieldCheck className="h-4 w-4" />, roles: [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] },
+          // Keka wave G (time and attendance)
+          { name: 'Roster', href: '/admin/roster', icon: <CalendarRange className="h-4 w-4" /> },
         ],
       },
     ],

@@ -173,6 +173,15 @@ model Tenant {
   securitySettings          TenantSecuritySettings?
   ssoProviders              TenantSsoProvider[]
   customRoles               CustomRole[]
+  // Keka wave G (time and attendance)
+  attendanceRequests        AttendanceRequest[]
+  shiftRotationPatterns     ShiftRotationPattern[]
+  rosterEntries             RosterEntry[]
+  projects                  Project[]
+  projectMembers            ProjectMember[]
+  projectTasks              ProjectTask[]
+  timesheets                Timesheet[]
+  timesheetEntries          TimesheetEntry[]
 
   @@map("tenants")
 }
@@ -454,6 +463,12 @@ model Employee {
   oneOnOnesCreated       OneOnOneMeeting[]      @relation("OneOnOneCreatedBy")
   oneOnOneActionItems    OneOnOneActionItem[]   @relation("OneOnOneActionAssignee")
   oneOnOnePrivateNotes   OneOnOnePrivateNote[]  @relation("OneOnOnePrivateNoteAuthor")
+  // Keka wave G (time and attendance)
+  attendanceRequests     AttendanceRequest[]
+  rosterEntries          RosterEntry[]
+  managedProjects        Project[]              @relation("ProjectManager")
+  projectMemberships     ProjectMember[]
+  timesheets             Timesheet[]
 
   @@unique([tenantId, employeeCode])
   @@unique([tenantId, email])
@@ -478,6 +493,8 @@ enum AttendanceStatus {
   LEAVE
   WFH
   HOLIDAY
+  // Keka wave G (time and attendance)
+  ON_DUTY
 }
 
 enum AttendanceSource {
@@ -544,10 +561,18 @@ model AttendanceSession {
   sessionMinutes Int       @default(0)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
+  // Keka wave G (time and attendance)
+  inIp              String? @db.VarChar(45)
+  outIp             String? @db.VarChar(45)
+  inSelfieUploadId  String?
+  outSelfieUploadId String?
 
   // Relations
   attendance AttendanceRecord @relation(fields: [attendanceId], references: [id], onDelete: Cascade)
   tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  // Keka wave G (time and attendance)
+  inSelfie   Upload?          @relation("SessionInSelfie", fields: [inSelfieUploadId], references: [id], onDelete: SetNull)
+  outSelfie  Upload?          @relation("SessionOutSelfie", fields: [outSelfieUploadId], references: [id], onDelete: SetNull)
 
   @@index([tenantId])
   @@index([attendanceId])
@@ -848,6 +873,9 @@ model Upload {
   investmentProofs InvestmentProof[]
   candidateResumes   Candidate[]      @relation("CandidateResume")
   applicationResumes JobApplication[] @relation("ApplicationResume")
+  // Keka wave G (time and attendance)
+  sessionInSelfies   AttendanceSession[] @relation("SessionInSelfie")
+  sessionOutSelfies  AttendanceSession[] @relation("SessionOutSelfie")
 
   @@index([tenantId])
   @@index([entityType, entityId])
@@ -911,6 +939,9 @@ model Shift {
   tenant            Tenant              @relation(fields: [tenantId], references: [id])
   assignments       ShiftAssignment[]
   attendanceRecords AttendanceRecord[]
+  // Keka wave G (time and attendance)
+  rotationPatternDays ShiftRotationPatternDay[]
+  rosterEntries       RosterEntry[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -1079,6 +1110,11 @@ enum NotificationType {
   // Wave E follow-ups
   ENGAGEMENT_RELEASE_FAILED
   GENERAL
+  // Keka wave G (time and attendance)
+  ATTENDANCE_REQUEST_APPROVED
+  ATTENDANCE_REQUEST_REJECTED
+  TIMESHEET_APPROVED
+  TIMESHEET_REJECTED
 }
 
 model Notification {
@@ -2455,6 +2491,10 @@ model AttendancePolicy {
   minFullDayMinutes   Int      @default(480)
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
+  // Keka wave G (time and attendance)
+  ipRestrictionEnabled Boolean  @default(false)
+  allowedIpRanges      String[] @default([])
+  selfieRequired       Boolean  @default(false)
 
   tenant Tenant @relation(fields: [tenantId], references: [id])
 
@@ -2634,6 +2674,10 @@ enum WorkflowEntityType {
   // Keka wave D
   JOB_REQUISITION
   OFFER
+  // Keka wave G (time and attendance)
+  WFH_REQUEST
+  ON_DUTY_REQUEST
+  TIMESHEET
 }
 
 enum WorkflowApproverType {
@@ -3997,4 +4041,245 @@ model SsoExchangeCode {
   @@index([tenantId])
   @@index([expiresAt])
   @@map("sso_exchange_codes")
+}
+
+// ============================================
+// Keka wave G (time and attendance)
+// ============================================
+
+enum AttendanceRequestType {
+  WFH
+  ON_DUTY
+}
+
+enum AttendanceRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum RosterEntrySource {
+  MANUAL
+  PATTERN
+}
+
+enum ProjectStatus {
+  ACTIVE
+  ON_HOLD
+  COMPLETED
+  ARCHIVED
+}
+
+enum ProjectTaskStatus {
+  OPEN
+  CLOSED
+}
+
+enum TimesheetStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+/// A work-from-home or on-duty request. An approved one waives the IP rule and
+/// the geofence for its dates; the employee still has to punch.
+model AttendanceRequest {
+  id           String                  @id @default(uuid())
+  tenantId     String
+  employeeId   String
+  type         AttendanceRequestType
+  fromDate     DateTime                @db.Date
+  toDate       DateTime                @db.Date
+  days         Int
+  reason       String                  @db.VarChar(500)
+  location     String?                 @db.VarChar(200)
+  status       AttendanceRequestStatus @default(PENDING)
+  approverId   String?
+  approverNote String?                 @db.VarChar(500)
+  decidedAt    DateTime?
+  cancelledAt  DateTime?
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([tenantId, employeeId, fromDate])
+  @@index([tenantId, status])
+  @@map("attendance_requests")
+}
+
+model ShiftRotationPattern {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String   @db.VarChar(100)
+  description String?  @db.VarChar(500)
+  cycleLength Int
+  isActive    Boolean  @default(true)
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant        Tenant                    @relation(fields: [tenantId], references: [id])
+  days          ShiftRotationPatternDay[]
+  rosterEntries RosterEntry[]
+
+  @@index([tenantId])
+  @@map("shift_rotation_patterns")
+}
+
+/// One day of a rotation cycle. `shiftId` null = OFF.
+model ShiftRotationPatternDay {
+  id        String  @id @default(uuid())
+  patternId String
+  dayIndex  Int
+  shiftId   String?
+
+  pattern ShiftRotationPattern @relation(fields: [patternId], references: [id], onDelete: Cascade)
+  shift   Shift?               @relation(fields: [shiftId], references: [id])
+
+  @@unique([patternId, dayIndex])
+  @@map("shift_rotation_pattern_days")
+}
+
+/// The rostered shift for one employee on one day.
+/// Invariant: exactly one of (shiftId set, isOff true).
+model RosterEntry {
+  id          String            @id @default(uuid())
+  tenantId    String
+  employeeId  String
+  date        DateTime          @db.Date
+  shiftId     String?
+  isOff       Boolean           @default(false)
+  source      RosterEntrySource
+  patternId   String?
+  createdById String
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  tenant   Tenant                @relation(fields: [tenantId], references: [id])
+  employee Employee              @relation(fields: [employeeId], references: [id])
+  shift    Shift?                @relation(fields: [shiftId], references: [id])
+  pattern  ShiftRotationPattern? @relation(fields: [patternId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, employeeId, date])
+  @@index([tenantId, date])
+  @@map("roster_entries")
+}
+
+model Project {
+  id                String        @id @default(uuid())
+  tenantId          String
+  code              String        @db.VarChar(20)
+  name              String        @db.VarChar(150)
+  clientName        String?       @db.VarChar(150)
+  description       String?       @db.VarChar(2000)
+  billable          Boolean       @default(true)
+  status            ProjectStatus @default(ACTIVE)
+  startDate         DateTime?     @db.Date
+  endDate           DateTime?     @db.Date
+  managerEmployeeId String?
+  createdById       String
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  tenant           Tenant           @relation(fields: [tenantId], references: [id])
+  manager          Employee?        @relation("ProjectManager", fields: [managerEmployeeId], references: [id])
+  members          ProjectMember[]
+  tasks            ProjectTask[]
+  timesheetEntries TimesheetEntry[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId, status])
+  @@map("projects")
+}
+
+model ProjectMember {
+  id         String    @id @default(uuid())
+  tenantId   String
+  projectId  String
+  employeeId String
+  role       String?   @db.VarChar(50)
+  startDate  DateTime  @db.Date
+  endDate    DateTime? @db.Date
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  project  Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id])
+
+  @@unique([projectId, employeeId])
+  @@index([tenantId, employeeId])
+  @@map("project_members")
+}
+
+model ProjectTask {
+  id            String            @id @default(uuid())
+  tenantId      String
+  projectId     String
+  name          String            @db.VarChar(150)
+  description   String?           @db.VarChar(2000)
+  /// null = inherit the project billable flag
+  billable      Boolean?
+  status        ProjectTaskStatus @default(OPEN)
+  estimateHours Decimal?          @db.Decimal(7, 2)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  tenant           Tenant           @relation(fields: [tenantId], references: [id])
+  project          Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  timesheetEntries TimesheetEntry[]
+
+  @@index([projectId])
+  @@map("project_tasks")
+}
+
+/// One timesheet per employee per week. `weekStart` is a Monday.
+model Timesheet {
+  id           String          @id @default(uuid())
+  tenantId     String
+  employeeId   String
+  weekStart    DateTime        @db.Date
+  status       TimesheetStatus @default(DRAFT)
+  totalHours   Decimal         @default(0) @db.Decimal(6, 2)
+  submittedAt  DateTime?
+  decidedAt    DateTime?
+  approverId   String?
+  approverNote String?         @db.VarChar(500)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  tenant   Tenant           @relation(fields: [tenantId], references: [id])
+  employee Employee         @relation(fields: [employeeId], references: [id])
+  entries  TimesheetEntry[]
+
+  @@unique([tenantId, employeeId, weekStart])
+  @@index([tenantId, status])
+  @@map("timesheets")
+}
+
+model TimesheetEntry {
+  id          String   @id @default(uuid())
+  tenantId    String
+  timesheetId String
+  date        DateTime @db.Date
+  projectId   String
+  taskId      String?
+  hours       Decimal  @db.Decimal(5, 2)
+  billable    Boolean
+  note        String?  @db.VarChar(500)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant    Tenant       @relation(fields: [tenantId], references: [id])
+  timesheet Timesheet    @relation(fields: [timesheetId], references: [id], onDelete: Cascade)
+  project   Project      @relation(fields: [projectId], references: [id])
+  task      ProjectTask? @relation(fields: [taskId], references: [id])
+
+  @@index([timesheetId])
+  @@index([tenantId, projectId, date])
+  @@map("timesheet_entries")
 }

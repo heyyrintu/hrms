@@ -86,6 +86,25 @@ export const PERMISSIONS = [
     description:
       'Webhooks and approval workflow definitions (including who approves payroll, loans and expenses)',
   },
+  // Keka wave G (time and attendance)
+  {
+    key: 'attendance.roster.manage',
+    group: 'Attendance',
+    label: 'Manage shift roster',
+    description: 'Create rotation patterns, apply them and edit the roster grid.',
+  },
+  {
+    key: 'projects.manage',
+    group: 'Projects',
+    label: 'Manage projects',
+    description: 'Create and edit projects and set project managers.',
+  },
+  {
+    key: 'projects.reports.view',
+    group: 'Projects',
+    label: 'View utilisation',
+    description: 'View the utilisation report for all employees and projects.',
+  },
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number]['key'];
