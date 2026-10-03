@@ -28,6 +28,7 @@ import { EmployeeImportController } from '../../modules/employees/import/employe
 import { AuditController } from '../../modules/audit/audit.controller';
 import { WebhooksController } from '../../modules/webhooks/webhooks.controller';
 import { WorkflowsController } from '../../modules/workflow/workflows.controller';
+import { RosterController } from '../../modules/roster/roster.controller';
 
 /**
  * Spec §1.4: the 26 controllers moved to permissions in H1. Every place that
@@ -63,6 +64,7 @@ const TABLE: Array<[new (...args: any[]) => unknown, string]> = [
   [AuditController, 'audit.view'],
   [WebhooksController, 'integrations.manage'],
   [WorkflowsController, 'integrations.manage'],
+  [RosterController, 'attendance.roster.manage'],
 ];
 
 function assertCoverage(target: object, expectedKey: string, label: string) {
