@@ -61,6 +61,13 @@ describe('classifyWorkedDay', () => {
     expect(classifyWorkedDay(239, 'PRESENT', halfOnly)).toBe('ABSENT');
   });
 
+  it('keeps a full on-duty day as ON_DUTY and scores short ones like any other day', () => {
+    const t = { minHalfDayMinutes: 240, minFullDayMinutes: 480 };
+    expect(classifyWorkedDay(500, 'ON_DUTY', t)).toBe('ON_DUTY');
+    expect(classifyWorkedDay(300, 'ON_DUTY', t)).toBe('HALF_DAY');
+    expect(classifyWorkedDay(100, 'ON_DUTY', t)).toBe('ABSENT');
+  });
+
   it('treats a nonsense worked-minutes value as no work at all', () => {
     expect(classifyWorkedDay(Number.NaN, 'PRESENT', thresholds)).toBe('ABSENT');
     expect(classifyWorkedDay(-30, 'PRESENT', thresholds)).toBe('ABSENT');

@@ -99,13 +99,14 @@ describe('AttendanceController', () => {
       const mockResult = { id: 'att-1', clockIn: new Date() };
       service.clockIn.mockResolvedValue(mockResult);
 
-      const result = await controller.clockIn(employeeUser, dto as any);
+      const result = await controller.clockIn(employeeUser, dto as any, {
+        ip: '10.1.2.3',
+      } as any);
 
-      expect(service.clockIn).toHaveBeenCalledWith(
-        'tenant-1',
-        'emp-3',
-        dto,
-      );
+      expect(service.clockIn).toHaveBeenCalledWith('tenant-1', 'emp-3', dto, {
+        ip: '10.1.2.3',
+        userId: employeeUser.userId,
+      });
       expect(result).toEqual(mockResult);
     });
 
@@ -113,7 +114,7 @@ describe('AttendanceController', () => {
       const dto = { notes: 'test' };
 
       await expect(
-        controller.clockIn(userWithoutEmployee, dto as any),
+        controller.clockIn(userWithoutEmployee, dto as any, {} as any),
       ).rejects.toThrow(BadRequestException);
     });
   });
@@ -127,13 +128,14 @@ describe('AttendanceController', () => {
       const mockResult = { id: 'att-1', clockOut: new Date() };
       service.clockOut.mockResolvedValue(mockResult);
 
-      const result = await controller.clockOut(employeeUser, dto as any);
+      const result = await controller.clockOut(employeeUser, dto as any, {
+        ip: '10.1.2.3',
+      } as any);
 
-      expect(service.clockOut).toHaveBeenCalledWith(
-        'tenant-1',
-        'emp-3',
-        dto,
-      );
+      expect(service.clockOut).toHaveBeenCalledWith('tenant-1', 'emp-3', dto, {
+        ip: '10.1.2.3',
+        userId: employeeUser.userId,
+      });
       expect(result).toEqual(mockResult);
     });
 
@@ -141,7 +143,7 @@ describe('AttendanceController', () => {
       const dto = { notes: 'test' };
 
       await expect(
-        controller.clockOut(userWithoutEmployee, dto as any),
+        controller.clockOut(userWithoutEmployee, dto as any, {} as any),
       ).rejects.toThrow(BadRequestException);
     });
   });

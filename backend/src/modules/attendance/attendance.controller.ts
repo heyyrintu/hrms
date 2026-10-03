@@ -5,11 +5,13 @@ import {
   Body,
   Param,
   Query,
+  Req,
   UseGuards,
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { Request } from 'express';
 import { AttendanceService } from './attendance.service';
 import {
   ClockInDto,
@@ -52,11 +54,15 @@ export class AttendanceController {
   async clockIn(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: ClockInDto,
+    @Req() req: Request,
   ) {
     if (!user.employeeId) {
       throw new BadRequestException('User is not linked to an employee');
     }
-    return this.attendanceService.clockIn(user.tenantId, user.employeeId, dto);
+    return this.attendanceService.clockIn(user.tenantId, user.employeeId, dto, {
+      ip: req?.ip,
+      userId: user.userId,
+    });
   }
 
   /**
@@ -70,11 +76,15 @@ export class AttendanceController {
   async clockOut(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: ClockOutDto,
+    @Req() req: Request,
   ) {
     if (!user.employeeId) {
       throw new BadRequestException('User is not linked to an employee');
     }
-    return this.attendanceService.clockOut(user.tenantId, user.employeeId, dto);
+    return this.attendanceService.clockOut(user.tenantId, user.employeeId, dto, {
+      ip: req?.ip,
+      userId: user.userId,
+    });
   }
 
   /**

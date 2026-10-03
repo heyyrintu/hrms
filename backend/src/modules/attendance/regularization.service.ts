@@ -27,6 +27,7 @@ import { findUserIdForEmployee } from '../workflow/workflow.utils';
 import { zonedDateOnlyUtc, DEFAULT_ATTENDANCE_TIME_ZONE } from './rules/late-mark';
 import { classifyWorkedDay } from './rules/day-classification';
 import { AttendancePolicyService } from './policy/attendance-policy.service';
+import { AttendanceRequestsService } from './requests/attendance-requests.service';
 
 /** Relations the approve/reject endpoints have always returned. */
 const REGULARIZATION_RELATIONS = {
@@ -60,6 +61,7 @@ export class RegularizationService {
     private otCalculation: OtCalculationService,
     private policyService: AttendancePolicyService,
     private workflow: ApprovalEngineService,
+    private requests: AttendanceRequestsService,
   ) {}
 
   /**
@@ -457,9 +459,17 @@ export class RegularizationService {
     // so regularizing a two-hour day cannot turn it into a paid full day. The
     // approval itself asserts presence, so the base is PRESENT (or WFH, when
     // the day was already a work-from-home day) whatever the row said before.
+    // A day covered by an approved WFH / on-duty request takes that type.
     const policy = await this.policyService.getOrCreate(tenantId, tx);
-    const baseStatus: AttendanceStatus =
-      existingAttendance?.status === AttendanceStatus.WFH
+    const covering = await this.requests.findApprovedCovering(
+      tenantId,
+      employeeId,
+      dateOnly,
+      tx,
+    );
+    const baseStatus: AttendanceStatus = covering
+      ? covering.type
+      : existingAttendance?.status === AttendanceStatus.WFH
         ? AttendanceStatus.WFH
         : AttendanceStatus.PRESENT;
     const status = classifyWorkedDay(workedMinutes, baseStatus, policy) ?? baseStatus;

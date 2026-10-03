@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -46,6 +47,13 @@ import {
 } from './rules/overnight-shift';
 import { classifyWorkedDay } from './rules/day-classification';
 import { ShiftResolverService } from '../roster/shift-resolver.service';
+import { AttendanceRequestsService } from './requests/attendance-requests.service';
+import {
+  ATTENDANCE_SELFIE_ENTITY,
+  SELFIE_MAX_AGE_MS,
+  type CoveringRequest,
+} from './requests/attendance-requests.types';
+import { isIpAllowed } from './rules/ip-allowlist';
 
 /** The working day a punch belongs to, and the shift that decided it. */
 interface ShiftDay {
@@ -81,6 +89,57 @@ const RESTORABLE_STATUSES: ReadonlySet<AttendanceStatus> = new Set<AttendanceSta
   AttendanceStatus.ABSENT,
 ]);
 
+/** Who is punching and from where; the controller fills it from the request. */
+export interface PunchContext {
+  /** `req.ip` (honours TRUST_PROXY). Undefined fails an IP restriction closed. */
+  ip: string | undefined;
+  userId: string;
+}
+
+/**
+ * Context for callers with no request (specs, scripts). It fails closed: an
+ * IP-restricted tenant refuses it and no selfie can be claimed with it.
+ */
+const NO_PUNCH_CONTEXT: PunchContext = { ip: undefined, userId: '' };
+
+/** Statuses decided elsewhere; an approved request never overrides them. */
+const REQUEST_NEVER_OVERRIDES: ReadonlySet<AttendanceStatus> = new Set([
+  AttendanceStatus.LEAVE,
+  AttendanceStatus.HOLIDAY,
+]);
+
+const SESSION_VIEW_SELECT = {
+  id: true,
+  inTime: true,
+  outTime: true,
+  inIp: true,
+  outIp: true,
+  inSelfieUploadId: true,
+  outSelfieUploadId: true,
+} as const;
+
+export interface SessionRow {
+  inSelfieUploadId?: string | null;
+  outSelfieUploadId?: string | null;
+}
+
+/**
+ * Replace the selfie upload ids with presence flags. The ids are the keys to
+ * private images, so they never leave the service.
+ */
+function withSelfieFlags<S extends SessionRow, R extends { sessions: S[] }>(records: R[]) {
+  return records.map((record) => ({
+    ...record,
+    sessions: (Array.isArray(record.sessions) ? record.sessions : []).map(
+      ({ inSelfieUploadId, outSelfieUploadId, ...rest }) => ({
+        ...rest,
+        hasInSelfie: !!inSelfieUploadId,
+        hasOutSelfie: !!outSelfieUploadId,
+      }),
+    ),
+  }));
+}
+
 @Injectable()
 export class AttendanceService {
   constructor(
@@ -89,12 +148,18 @@ export class AttendanceService {
     private notificationsService: NotificationsService,
     private policyService: AttendancePolicyService,
     private shiftResolver: ShiftResolverService,
+    private requests: AttendanceRequestsService,
   ) {}
 
   /**
    * Clock in for an employee
    */
-  async clockIn(tenantId: string, employeeId: string, dto: ClockInDto) {
+  async clockIn(
+    tenantId: string,
+    employeeId: string,
+    dto: ClockInDto,
+    ctx: PunchContext = NO_PUNCH_CONTEXT,
+  ) {
     const now = new Date();
 
     // Check if employee exists
@@ -109,30 +174,6 @@ export class AttendanceService {
     // Validate GPS coordinates are finite numbers
     if (!Number.isFinite(dto.latitude) || !Number.isFinite(dto.longitude)) {
       throw new BadRequestException('Valid GPS coordinates are required to clock in.');
-    }
-
-    // Geofencing: validate employee is within office radius if configured
-    const tenant = await this.prisma.tenant.findUnique({
-      where: { id: tenantId },
-      select: { officeLatitude: true, officeLongitude: true, officeRadiusMeters: true },
-    });
-
-    if (
-      tenant?.officeLatitude != null &&
-      tenant?.officeLongitude != null &&
-      tenant?.officeRadiusMeters != null
-    ) {
-      const distance = this.calculateDistanceMeters(
-        dto.latitude,
-        dto.longitude,
-        tenant.officeLatitude,
-        tenant.officeLongitude,
-      );
-      if (distance > tenant.officeRadiusMeters) {
-        throw new BadRequestException(
-          `You are ${Math.round(distance)}m from the office. Must be within ${tenant.officeRadiusMeters}m to clock in.`,
-        );
-      }
     }
 
     // `AttendanceRecord.date` is `@db.Date`, which Prisma writes from the UTC
@@ -150,6 +191,20 @@ export class AttendanceService {
       shift,
       continuesPreviousShift,
     } = await this.resolveShiftDay(tenantId, employeeId, now);
+
+    // An approved WFH / on-duty request covering the shift day waives the IP
+    // rule and the geofence and decides the day's status. It is looked up for
+    // the SHIFT day, not the calendar day: a 00:30 punch on a night shift that
+    // started yesterday is covered by yesterday's request.
+    const policy = await this.policyService.getOrCreate(tenantId);
+    const covering = await this.requests.findApprovedCovering(tenantId, employeeId, today);
+    this.assertIpAllowed(policy, ctx, covering, 'Clock-in');
+    if (!covering) {
+      await this.assertWithinGeofence(tenantId, dto.latitude, dto.longitude, 'clock in');
+    }
+    const selfieUploadId = this.requireSelfie(policy, dto.selfieUploadId, 'clock in');
+    const dayStatus: AttendanceStatus = covering?.type ?? AttendanceStatus.PRESENT;
+
     const lateMark = await this.resolveLateMark(tenantId, shift, now, continuesPreviousShift);
     const shiftData = shift ? { shiftId: shift.id } : {};
 
@@ -173,9 +228,18 @@ export class AttendanceService {
               throw new BadRequestException('Already clocked in. Please clock out first.');
             }
 
-            await tx.attendanceSession.create({
-              data: { tenantId, attendanceId: attendance.id, inTime: now },
+            const session = await tx.attendanceSession.create({
+              data: {
+                tenantId,
+                attendanceId: attendance.id,
+                inTime: now,
+                inIp: ctx.ip,
+                inSelfieUploadId: selfieUploadId,
+              },
             });
+            if (selfieUploadId) {
+              await this.claimSelfie(tx, tenantId, ctx, selfieUploadId, session.id);
+            }
 
             // Update clock in time if this is the first session of the day
             if (!attendance.clockInTime) {
@@ -183,7 +247,7 @@ export class AttendanceService {
                 where: { id: attendance.id },
                 data: {
                   clockInTime: now,
-                  status: 'PRESENT',
+                  status: dayStatus,
                   source: dto.source || 'WEB',
                   remarks: dto.remarks,
                   clockInLatitude: dto.latitude,
@@ -222,7 +286,7 @@ export class AttendanceService {
               employeeId,
               date: today,
               clockInTime: now,
-              status: 'PRESENT',
+              status: dayStatus,
               source: dto.source || 'WEB',
               remarks: dto.remarks,
               clockInLatitude: dto.latitude,
@@ -231,10 +295,22 @@ export class AttendanceService {
               lateByMinutes: lateMark.isLate ? lateMark.lateByMinutes : null,
               ...shiftData,
               standardWorkMinutes: 480, // 8 hours default
-              sessions: { create: { tenantId, inTime: now } },
+              sessions: {
+                create: {
+                  tenantId,
+                  inTime: now,
+                  inIp: ctx.ip,
+                  inSelfieUploadId: selfieUploadId,
+                },
+              },
             },
             include: { sessions: true },
           });
+          if (selfieUploadId) {
+            const sessionId = created.sessions?.[0]?.id;
+            if (!sessionId) throw new Error('Clock-in session was not created');
+            await this.claimSelfie(tx, tenantId, ctx, selfieUploadId, sessionId);
+          }
           return created.id;
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -258,7 +334,12 @@ export class AttendanceService {
   /**
    * Clock out for an employee
    */
-  async clockOut(tenantId: string, employeeId: string, dto: ClockOutDto) {
+  async clockOut(
+    tenantId: string,
+    employeeId: string,
+    dto: ClockOutDto,
+    ctx: PunchContext = NO_PUNCH_CONTEXT,
+  ) {
     const now = new Date();
     // A clock-out closes whichever session is open, on the row its clock-in
     // wrote. Re-deriving the day from the shift here would disagree with the
@@ -274,19 +355,45 @@ export class AttendanceService {
       throw new BadRequestException('No open session found. Please clock in first.');
     }
 
+    // The same capture rules as clock-in, against the record's own day.
+    const policy = await this.policyService.getOrCreate(tenantId);
+    const covering = await this.requests.findApprovedCovering(
+      tenantId,
+      employeeId,
+      attendance.date,
+    );
+    this.assertIpAllowed(policy, ctx, covering, 'Clock-out');
+    if (!covering && Number.isFinite(dto.latitude) && Number.isFinite(dto.longitude)) {
+      await this.assertWithinGeofence(
+        tenantId,
+        dto.latitude as number,
+        dto.longitude as number,
+        'clock out',
+      );
+    }
+    const selfieUploadId = this.requireSelfie(policy, dto.selfieUploadId, 'clock out');
+
     // Instants, not wall-clock times, so a session that crosses midnight
     // counts correctly.
     const sessionMinutes = Math.floor(
       (now.getTime() - openSession.inTime.getTime()) / (1000 * 60),
     );
 
-    // Close the session
-    await this.prisma.attendanceSession.update({
-      where: { id: openSession.id },
-      data: {
-        outTime: now,
-        sessionMinutes,
-      },
+    // Close the session. The selfie claim shares the transaction, so a refused
+    // selfie leaves the session open.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.attendanceSession.update({
+        where: { id: openSession.id },
+        data: {
+          outTime: now,
+          sessionMinutes,
+          outIp: ctx.ip,
+          outSelfieUploadId: selfieUploadId,
+        },
+      });
+      if (selfieUploadId) {
+        await this.claimSelfie(tx, tenantId, ctx, selfieUploadId, openSession.id);
+      }
     });
 
     // Get employee for OT calculation
@@ -324,13 +431,17 @@ export class AttendanceService {
 
     // The day's status is finalised here: first what the hours earned, then
     // the late-mark penalty on top of it.
-    const policy = await this.policyService.getOrCreate(tenantId);
+    const scoringStatus: AttendanceStatus =
+      covering && !REQUEST_NEVER_OVERRIDES.has(attendance.status)
+        ? covering.type
+        : attendance.status;
     const earnedStatus = await this.resolveWorkedDayStatus(
       tenantId,
       employeeId,
       attendance,
       netWorkedMinutes,
       policy,
+      scoringStatus,
     );
     const baseStatus = earnedStatus ?? attendance.status;
     const penaltyStatus = await this.resolveLateMarkPenalty(
@@ -362,6 +473,108 @@ export class AttendanceService {
     });
 
     return this.getAttendanceById(tenantId, attendance.id);
+  }
+
+  /**
+   * The shift day a punch made now would belong to: the open record's day when
+   * a session is open (the one `clockOut` would close), otherwise the day
+   * `clockIn` would file under. The capture-policy endpoint uses it to find
+   * the covering request.
+   */
+  async currentShiftDate(
+    tenantId: string,
+    employeeId: string,
+    now: Date = new Date(),
+  ): Promise<Date> {
+    const found = await this.findOpenAttendance(tenantId, employeeId, now);
+    if (found.attendance && found.openSession) return found.attendance.date;
+    return (await this.resolveShiftDay(tenantId, employeeId, now)).date;
+  }
+
+  /** 403 unless the IP is allowed, restriction is off, or a request covers the day. */
+  private assertIpAllowed(
+    policy: Pick<AttendancePolicy, 'ipRestrictionEnabled' | 'allowedIpRanges'>,
+    ctx: PunchContext,
+    covering: CoveringRequest | null,
+    verb: 'Clock-in' | 'Clock-out',
+  ): void {
+    if (!policy.ipRestrictionEnabled || covering) return;
+    if (!isIpAllowed(ctx.ip, policy.allowedIpRanges ?? [])) {
+      throw new ForbiddenException(`${verb} is only allowed from the office network`);
+    }
+  }
+
+  /** 400 when the tenant has an office geofence and the point is outside it. */
+  private async assertWithinGeofence(
+    tenantId: string,
+    latitude: number,
+    longitude: number,
+    action: 'clock in' | 'clock out',
+  ): Promise<void> {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { officeLatitude: true, officeLongitude: true, officeRadiusMeters: true },
+    });
+    if (
+      tenant?.officeLatitude == null ||
+      tenant?.officeLongitude == null ||
+      tenant?.officeRadiusMeters == null
+    ) {
+      return;
+    }
+    const distance = this.calculateDistanceMeters(
+      latitude,
+      longitude,
+      tenant.officeLatitude,
+      tenant.officeLongitude,
+    );
+    if (distance > tenant.officeRadiusMeters) {
+      throw new BadRequestException(
+        `You are ${Math.round(distance)}m from the office. Must be within ${tenant.officeRadiusMeters}m to ${action}.`,
+      );
+    }
+  }
+
+  /** The selfie id to attach, 400 when the policy needs one and none was sent. */
+  private requireSelfie(
+    policy: Pick<AttendancePolicy, 'selfieRequired'>,
+    selfieUploadId: string | undefined,
+    action: 'clock in' | 'clock out',
+  ): string | undefined {
+    if (policy.selfieRequired && !selfieUploadId) {
+      throw new BadRequestException(`A selfie is required to ${action}`);
+    }
+    return selfieUploadId || undefined;
+  }
+
+  /**
+   * Take ownership of a selfie upload for one session. The conditional
+   * updateMany is the replay guard: it matches only an unattached upload made
+   * by this user in the last 10 minutes, so the same upload cannot back two
+   * punches, belong to someone else, or be saved up for later. Runs inside the
+   * punch transaction, so a refusal aborts the punch.
+   */
+  private async claimSelfie(
+    tx: Prisma.TransactionClient,
+    tenantId: string,
+    ctx: PunchContext,
+    uploadId: string,
+    sessionId: string,
+  ): Promise<void> {
+    const claimed = await tx.upload.updateMany({
+      where: {
+        id: uploadId,
+        tenantId,
+        uploadedBy: ctx.userId,
+        entityType: ATTENDANCE_SELFIE_ENTITY,
+        entityId: null,
+        createdAt: { gte: new Date(Date.now() - SELFIE_MAX_AGE_MS) },
+      },
+      data: { entityId: sessionId },
+    });
+    if (claimed.count === 0) {
+      throw new BadRequestException('Selfie upload is invalid, expired or already used');
+    }
   }
 
   /**
@@ -480,8 +693,9 @@ export class AttendanceService {
     attendance: { date: Date; status: AttendanceStatus },
     netWorkedMinutes: number,
     policy: AttendancePolicy,
+    scoringStatus: AttendanceStatus = attendance.status,
   ): Promise<AttendanceStatus | null> {
-    const earned = classifyWorkedDay(netWorkedMinutes, attendance.status, policy);
+    const earned = classifyWorkedDay(netWorkedMinutes, scoringStatus, policy);
     if (earned === null || earned === attendance.status) return null;
 
     const regularized = await this.prisma.attendanceRegularization.findFirst({
@@ -518,8 +732,11 @@ export class AttendanceService {
     if (!threshold || threshold < 1) return null;
 
     // Already a half day or worse (HALF_DAY, ABSENT, LEAVE); do not soften it.
-    if (attendance.status !== AttendanceStatus.PRESENT &&
-        attendance.status !== AttendanceStatus.WFH) {
+    if (
+      attendance.status !== AttendanceStatus.PRESENT &&
+      attendance.status !== AttendanceStatus.WFH &&
+      attendance.status !== AttendanceStatus.ON_DUTY
+    ) {
       return null;
     }
 
@@ -575,7 +792,7 @@ export class AttendanceService {
   async getMyAttendance(tenantId: string, employeeId: string, query: AttendanceQueryDto) {
     const { from, to } = query;
 
-    return this.prisma.attendanceRecord.findMany({
+    const records = await this.prisma.attendanceRecord.findMany({
       where: {
         tenantId,
         employeeId,
@@ -586,11 +803,13 @@ export class AttendanceService {
       },
       include: {
         sessions: {
+          select: SESSION_VIEW_SELECT,
           orderBy: { inTime: 'asc' },
         },
       },
       orderBy: { date: 'desc' },
     });
+    return withSelfieFlags(records);
   }
 
   /**
@@ -603,7 +822,7 @@ export class AttendanceService {
   ) {
     const { from, to, status } = query;
 
-    return this.prisma.attendanceRecord.findMany({
+    const records = await this.prisma.attendanceRecord.findMany({
       where: {
         tenantId,
         employeeId,
@@ -623,11 +842,13 @@ export class AttendanceService {
           },
         },
         sessions: {
+          select: SESSION_VIEW_SELECT,
           orderBy: { inTime: 'asc' },
         },
       },
       orderBy: { date: 'desc' },
     });
+    return withSelfieFlags(records);
   }
 
   /**

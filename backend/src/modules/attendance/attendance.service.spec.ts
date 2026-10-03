@@ -1,5 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AttendanceService } from './attendance.service';
 import { OtCalculationService } from './ot-calculation.service';
@@ -7,6 +12,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AttendancePolicyService } from './policy/attendance-policy.service';
 import { ShiftResolverService } from '../roster/shift-resolver.service';
+import { AttendanceRequestsService } from './requests/attendance-requests.service';
 import { ATTENDANCE_POLICY_DEFAULTS } from './policy/attendance-policy.service';
 import {
   createMockPrismaService,
@@ -48,6 +54,7 @@ describe('AttendanceService', () => {
   let otCalc: any;
   let notifications: any;
   let policyService: any;
+  let requests: { findApprovedCovering: jest.Mock };
 
   const tenantId = 'test-tenant';
   const employeeId = 'emp-1';
@@ -82,6 +89,10 @@ describe('AttendanceService', () => {
         // Keka wave G: the real resolver, backed by the same prisma mock, so the
         // shiftAssignment.findFirst stubs below keep deciding the shift.
         ShiftResolverService,
+        {
+          provide: AttendanceRequestsService,
+          useValue: { findApprovedCovering: jest.fn().mockResolvedValue(null) },
+        },
       ],
     }).compile();
 
@@ -90,6 +101,7 @@ describe('AttendanceService', () => {
     otCalc = module.get(OtCalculationService);
     notifications = module.get(NotificationsService);
     policyService = module.get(AttendancePolicyService);
+    requests = module.get(AttendanceRequestsService);
   });
 
   it('should be defined', () => {
@@ -562,7 +574,10 @@ describe('AttendanceService', () => {
           },
         },
         include: {
-          sessions: { orderBy: { inTime: 'asc' } },
+          sessions: {
+            select: expect.objectContaining({ id: true, inIp: true }),
+            orderBy: { inTime: 'asc' },
+          },
         },
         orderBy: { date: 'desc' },
       });
@@ -1025,7 +1040,8 @@ describe('AttendanceService', () => {
           data: expect.objectContaining({ isLate: true }),
         }),
       );
-      expect(policyService.getOrCreate).not.toHaveBeenCalled();
+      // The policy is read for the capture rules now; the shift still decides
+      // lateness (its 00:00 start, not the policy default, made this punch late).
     });
 
     it('falls back to the tenant policy when the employee has no shift', async () => {
@@ -1845,6 +1861,386 @@ describe('AttendanceService', () => {
         where: { id: 's16' },
         data: { outTime: expect.any(Date), sessionMinutes: 485 },
       });
+    });
+  });
+
+  // -----------------------------------------------------------
+  // Keka wave G: IP / selfie capture policy, WFH and on-duty
+  // -----------------------------------------------------------
+  describe('capture policy', () => {
+    const coords = { latitude: 12.9716, longitude: 77.5946 };
+    const ctx = { ip: '10.1.2.3', userId: 'user-1' };
+    const SELFIE = '11111111-1111-4111-8111-111111111111';
+    const nightShift = {
+      id: 'shift-night',
+      startTime: '22:00',
+      endTime: '06:00',
+      graceMinutes: 0,
+      isOvernight: true,
+      isActive: true,
+    };
+
+    afterEach(() => jest.useRealTimers());
+
+    const setPolicy = (over: Record<string, unknown>) =>
+      policyService.getOrCreate.mockResolvedValue({
+        id: 'pol-1',
+        tenantId,
+        ...ATTENDANCE_POLICY_DEFAULTS,
+        ipRestrictionEnabled: false,
+        allowedIpRanges: [],
+        selfieRequired: false,
+        ...over,
+      });
+
+    function primeClockIn(
+      created: Record<string, unknown> = { id: 'att-1', sessions: [{ id: 'sess-1' }] },
+    ) {
+      prisma.employee.findFirst.mockResolvedValue(mockEmployee);
+      prisma.tenant.findUnique.mockResolvedValue(null);
+      prisma.attendanceRecord.findUnique.mockResolvedValue(null);
+      prisma.attendanceRecord.create.mockResolvedValue(created);
+      prisma.attendanceRecord.findFirst.mockResolvedValue({
+        id: 'att-1',
+        employee: mockEmployee,
+        sessions: [],
+      });
+      prisma.upload.updateMany.mockResolvedValue({ count: 1 });
+    }
+
+    const createdData = () => prisma.attendanceRecord.create.mock.calls[0][0].data;
+
+    describe('IP rule', () => {
+      beforeEach(() => {
+        setPolicy({ ipRestrictionEnabled: true, allowedIpRanges: ['10.0.0.0/8'] });
+        primeClockIn();
+      });
+
+      it('refuses a clock-in from outside the allowed ranges with 403, before any transaction', async () => {
+        const outside = { ip: '198.51.100.9', userId: 'user-1' };
+        await expect(service.clockIn(tenantId, employeeId, coords, outside)).rejects.toThrow(
+          ForbiddenException,
+        );
+        await expect(service.clockIn(tenantId, employeeId, coords, outside)).rejects.toThrow(
+          'Clock-in is only allowed from the office network',
+        );
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('fails closed when the client IP is unknown', async () => {
+        await expect(
+          service.clockIn(tenantId, employeeId, coords, { ip: undefined, userId: 'user-1' }),
+        ).rejects.toThrow(ForbiddenException);
+      });
+
+      it('accepts an IPv4-mapped IPv6 address inside a range and records it as inIp', async () => {
+        await service.clockIn(tenantId, employeeId, coords, {
+          ip: '::ffff:10.1.2.3',
+          userId: 'user-1',
+        });
+        expect(createdData().sessions.create.inIp).toBe('::ffff:10.1.2.3');
+      });
+
+      it('lets an approved WFH request waive the rule and stamps the day WFH', async () => {
+        requests.findApprovedCovering.mockResolvedValue({ id: 'req-1', type: 'WFH' });
+        await service.clockIn(tenantId, employeeId, coords, {
+          ip: '198.51.100.9',
+          userId: 'user-1',
+        });
+        expect(createdData().status).toBe('WFH');
+        expect(createdData().sessions.create.inIp).toBe('198.51.100.9');
+      });
+
+      it('stamps ON_DUTY for an approved on-duty request', async () => {
+        requests.findApprovedCovering.mockResolvedValue({ id: 'req-2', type: 'ON_DUTY' });
+        await service.clockIn(tenantId, employeeId, coords, {
+          ip: '198.51.100.9',
+          userId: 'user-1',
+        });
+        expect(createdData().status).toBe('ON_DUTY');
+      });
+
+      it('does not enforce anything when restriction is off', async () => {
+        setPolicy({ ipRestrictionEnabled: false, allowedIpRanges: [] });
+        await service.clockIn(tenantId, employeeId, coords, { ip: '198.51.100.9', userId: 'u' });
+        expect(createdData().status).toBe('PRESENT');
+      });
+    });
+
+    describe('geofence', () => {
+      beforeEach(() => {
+        setPolicy({});
+        primeClockIn();
+        // Office at the origin, 100 m radius; the punch is far away.
+        prisma.tenant.findUnique.mockResolvedValue({
+          officeLatitude: 0,
+          officeLongitude: 0,
+          officeRadiusMeters: 100,
+        });
+      });
+
+      it('still refuses an out-of-radius punch with no covering request', async () => {
+        await expect(service.clockIn(tenantId, employeeId, coords, ctx)).rejects.toThrow(
+          BadRequestException,
+        );
+      });
+
+      it('waives the geofence under a covering request but still records lat/lng', async () => {
+        requests.findApprovedCovering.mockResolvedValue({ id: 'req-1', type: 'WFH' });
+        await service.clockIn(tenantId, employeeId, coords, ctx);
+        expect(createdData().clockInLatitude).toBe(coords.latitude);
+        expect(createdData().clockInLongitude).toBe(coords.longitude);
+      });
+    });
+
+    describe('selfie', () => {
+      it('requires a selfie when the policy says so', async () => {
+        setPolicy({ selfieRequired: true });
+        primeClockIn();
+        await expect(service.clockIn(tenantId, employeeId, coords, ctx)).rejects.toThrow(
+          'A selfie is required to clock in',
+        );
+        expect(prisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('claims the upload inside the transaction and links it to the session', async () => {
+        jest.useFakeTimers().setSystemTime(new Date('2026-03-16T06:00:00Z'));
+        setPolicy({ selfieRequired: true });
+        primeClockIn();
+
+        await service.clockIn(tenantId, employeeId, { ...coords, selfieUploadId: SELFIE }, ctx);
+
+        expect(createdData().sessions.create.inSelfieUploadId).toBe(SELFIE);
+        expect(prisma.upload.updateMany).toHaveBeenCalledWith({
+          where: {
+            id: SELFIE,
+            tenantId,
+            uploadedBy: 'user-1',
+            entityType: 'attendance-selfie',
+            entityId: null,
+            createdAt: { gte: new Date('2026-03-16T05:50:00Z') },
+          },
+          data: { entityId: 'sess-1' },
+        });
+      });
+
+      it('claims against the new session when the day already has a record', async () => {
+        setPolicy({});
+        primeClockIn();
+        prisma.attendanceRecord.findUnique.mockResolvedValue({
+          id: 'att-1',
+          clockInTime: new Date(),
+          status: 'PRESENT',
+          sessions: [{ id: 'sess-0', inTime: new Date(), outTime: new Date() }],
+        });
+        prisma.attendanceSession.create.mockResolvedValue({ id: 'sess-2' });
+
+        await service.clockIn(tenantId, employeeId, { ...coords, selfieUploadId: SELFIE }, ctx);
+
+        expect(prisma.attendanceSession.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ inSelfieUploadId: SELFIE, inIp: '10.1.2.3' }),
+        });
+        expect(prisma.upload.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({ data: { entityId: 'sess-2' } }),
+        );
+      });
+
+      it('refuses a replayed, foreign or expired upload (claim matches nothing) and aborts', async () => {
+        setPolicy({});
+        primeClockIn();
+        prisma.upload.updateMany.mockResolvedValue({ count: 0 });
+
+        await expect(
+          service.clockIn(tenantId, employeeId, { ...coords, selfieUploadId: SELFIE }, ctx),
+        ).rejects.toThrow('Selfie upload is invalid, expired or already used');
+      });
+
+      it('validates a supplied selfie even when the policy does not require one', async () => {
+        setPolicy({ selfieRequired: false });
+        primeClockIn();
+        await service.clockIn(tenantId, employeeId, { ...coords, selfieUploadId: SELFIE }, ctx);
+        expect(prisma.upload.updateMany).toHaveBeenCalled();
+      });
+    });
+
+    it('looks up the approved request for YESTERDAY for a night-shift punch after midnight', async () => {
+      // 00:30 IST on the 18th, filed under the night shift that started on the 17th.
+      jest.useFakeTimers().setSystemTime(new Date('2026-03-17T19:00:00Z'));
+      setPolicy({});
+      primeClockIn();
+      prisma.shiftAssignment.findFirst.mockResolvedValue({ id: 'sa-1', shift: nightShift });
+
+      await service.clockIn(tenantId, employeeId, coords, ctx);
+
+      expect(requests.findApprovedCovering).toHaveBeenCalledWith(
+        tenantId,
+        employeeId,
+        new Date('2026-03-17T00:00:00.000Z'),
+      );
+      expect(createdData().date).toEqual(new Date('2026-03-17T00:00:00.000Z'));
+    });
+
+    describe('clock-out', () => {
+      function primeClockOut(over: Record<string, unknown> = {}) {
+        prisma.attendanceRecord.findUnique.mockResolvedValue({
+          id: 'att-1',
+          standardWorkMinutes: 480,
+          breakMinutes: 0,
+          remarks: null,
+          status: 'PRESENT',
+          isLate: false,
+          date: new Date('2026-03-16T00:00:00Z'),
+          sessions: [{ id: 'sess-1', inTime: new Date(), outTime: null }],
+          ...over,
+        });
+        prisma.attendanceSession.update.mockResolvedValue({});
+        prisma.employee.findUnique.mockResolvedValue(mockEmployee);
+        prisma.attendanceSession.findMany.mockResolvedValue([
+          { id: 'sess-0', sessionMinutes: 500 },
+          { id: 'sess-1', sessionMinutes: 0 },
+        ]);
+        prisma.attendanceRecord.update.mockResolvedValue({});
+        prisma.attendanceRecord.findFirst.mockResolvedValue({
+          id: 'att-1',
+          employee: mockEmployee,
+          sessions: [],
+        });
+        prisma.upload.updateMany.mockResolvedValue({ count: 1 });
+      }
+
+      it('scores a full on-duty day as ON_DUTY and records outIp', async () => {
+        setPolicy({});
+        primeClockOut();
+        requests.findApprovedCovering.mockResolvedValue({ id: 'req-2', type: 'ON_DUTY' });
+
+        await service.clockOut(tenantId, employeeId, {}, ctx);
+
+        expect(requests.findApprovedCovering).toHaveBeenCalledWith(
+          tenantId,
+          employeeId,
+          new Date('2026-03-16T00:00:00Z'),
+        );
+        expect(prisma.attendanceRecord.update.mock.calls[0][0].data.status).toBe('ON_DUTY');
+        expect(prisma.attendanceSession.update).toHaveBeenCalledWith({
+          where: { id: 'sess-1' },
+          data: expect.objectContaining({ outIp: '10.1.2.3' }),
+        });
+      });
+
+      it('refuses a clock-out from a disallowed IP with 403 and closes nothing', async () => {
+        setPolicy({ ipRestrictionEnabled: true, allowedIpRanges: ['10.0.0.0/8'] });
+        primeClockOut();
+
+        await expect(
+          service.clockOut(tenantId, employeeId, {}, { ip: '198.51.100.9', userId: 'user-1' }),
+        ).rejects.toThrow(ForbiddenException);
+        expect(prisma.attendanceSession.update).not.toHaveBeenCalled();
+      });
+
+      it('requires and claims a selfie on clock-out', async () => {
+        setPolicy({ selfieRequired: true });
+        primeClockOut();
+
+        await expect(service.clockOut(tenantId, employeeId, {}, ctx)).rejects.toThrow(
+          'A selfie is required to clock out',
+        );
+
+        await service.clockOut(tenantId, employeeId, { selfieUploadId: SELFIE }, ctx);
+        expect(prisma.attendanceSession.update).toHaveBeenCalledWith({
+          where: { id: 'sess-1' },
+          data: expect.objectContaining({ outSelfieUploadId: SELFIE }),
+        });
+        expect(prisma.upload.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({ data: { entityId: 'sess-1' } }),
+        );
+      });
+
+      it('a replayed selfie on clock-out is refused', async () => {
+        setPolicy({});
+        primeClockOut();
+        prisma.upload.updateMany.mockResolvedValue({ count: 0 });
+        await expect(
+          service.clockOut(tenantId, employeeId, { selfieUploadId: SELFIE }, ctx),
+        ).rejects.toThrow('Selfie upload is invalid, expired or already used');
+      });
+    });
+
+    describe('records view', () => {
+      it('exposes ip and selfie presence per session but never the upload ids', async () => {
+        prisma.attendanceRecord.findMany.mockResolvedValue([
+          {
+            id: 'att-1',
+            sessions: [
+              {
+                id: 's1',
+                inTime: new Date('2026-03-16T04:00:00Z'),
+                outTime: null,
+                inIp: '10.1.2.3',
+                outIp: null,
+                inSelfieUploadId: 'up-1',
+                outSelfieUploadId: null,
+              },
+            ],
+          },
+        ]);
+
+        const [rec] = await service.getMyAttendance(tenantId, employeeId, {
+          from: '2026-03-01',
+          to: '2026-03-31',
+        });
+
+        expect(rec.sessions[0]).toEqual({
+          id: 's1',
+          inTime: new Date('2026-03-16T04:00:00Z'),
+          outTime: null,
+          inIp: '10.1.2.3',
+          outIp: null,
+          hasInSelfie: true,
+          hasOutSelfie: false,
+        });
+        expect(prisma.attendanceRecord.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            include: {
+              sessions: {
+                select: expect.objectContaining({
+                  inSelfieUploadId: true,
+                  outSelfieUploadId: true,
+                }),
+                orderBy: { inTime: 'asc' },
+              },
+            },
+          }),
+        );
+      });
+    });
+  });
+
+  describe('currentShiftDate', () => {
+    afterEach(() => jest.useRealTimers());
+
+    it("returns the open record's date when a session is open", async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-03-17T19:00:00Z'));
+      prisma.attendanceRecord.findUnique.mockImplementation(async ({ where }: any) =>
+        where.tenantId_employeeId_date.date.getTime() === Date.UTC(2026, 2, 18)
+          ? null
+          : {
+              id: 'att-17',
+              date: new Date('2026-03-17T00:00:00Z'),
+              shift: null,
+              sessions: [{ id: 's', inTime: new Date('2026-03-17T16:30:00Z'), outTime: null }],
+            },
+      );
+      await expect(service.currentShiftDate(tenantId, employeeId)).resolves.toEqual(
+        new Date('2026-03-17T00:00:00Z'),
+      );
+    });
+
+    it('otherwise resolves the shift day for now', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-03-18T06:00:00Z'));
+      prisma.attendanceRecord.findUnique.mockResolvedValue(null);
+      await expect(service.currentShiftDate(tenantId, employeeId)).resolves.toEqual(
+        new Date('2026-03-18T00:00:00Z'),
+      );
     });
   });
 });
