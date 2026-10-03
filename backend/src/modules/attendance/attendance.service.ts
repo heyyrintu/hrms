@@ -140,6 +140,27 @@ function withSelfieFlags<S extends SessionRow, R extends { sessions: S[] }>(reco
   }));
 }
 
+/**
+ * For every response outside the records view: presence flags only, no upload
+ * ids and no IPs.
+ */
+function withoutCaptureDetail<R extends { sessions?: SessionRow[] }>(record: R): R {
+  if (!record || !Array.isArray(record.sessions)) return record;
+  return {
+    ...record,
+    sessions: record.sessions.map((session) => {
+      const {
+        inSelfieUploadId,
+        outSelfieUploadId,
+        inIp: _inIp,
+        outIp: _outIp,
+        ...rest
+      } = session as SessionRow & { inIp?: unknown; outIp?: unknown };
+      return { ...rest, hasInSelfie: !!inSelfieUploadId, hasOutSelfie: !!outSelfieUploadId };
+    }),
+  } as R;
+}
+
 @Injectable()
 export class AttendanceService {
   constructor(
@@ -783,7 +804,7 @@ export class AttendanceService {
       throw new NotFoundException('Attendance record not found');
     }
 
-    return attendance;
+    return withoutCaptureDetail(attendance);
   }
 
   /**
@@ -937,7 +958,7 @@ export class AttendanceService {
       };
     }
 
-    return this.prisma.attendanceRecord.findMany({
+    const records = await this.prisma.attendanceRecord.findMany({
       where: whereClause,
       include: {
         employee: {
@@ -958,6 +979,7 @@ export class AttendanceService {
         { clockInTime: 'desc' },
       ],
     });
+    return records.map(withoutCaptureDetail);
   }
 
   /**
@@ -1005,7 +1027,7 @@ export class AttendanceService {
       '/attendance',
     ).catch(() => {}); // Fire and forget
 
-    return updated;
+    return withoutCaptureDetail(updated);
   }
 
   /**

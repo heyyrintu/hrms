@@ -2215,6 +2215,56 @@ describe('AttendanceService', () => {
     });
   });
 
+  describe('capture detail is not leaked outside the records view', () => {
+    const rawSession = {
+      id: 's1',
+      attendanceId: 'att-1',
+      inTime: new Date('2026-03-16T04:00:00Z'),
+      inIp: '10.1.2.3',
+      outIp: '10.1.2.4',
+      inSelfieUploadId: 'up-in',
+      outSelfieUploadId: null,
+    };
+    const expectScrubbed = (rec: any) => {
+      const s = rec.sessions[0];
+      expect(s).not.toHaveProperty('inSelfieUploadId');
+      expect(s).not.toHaveProperty('outSelfieUploadId');
+      expect(s).not.toHaveProperty('inIp');
+      expect(s).not.toHaveProperty('outIp');
+      expect(s.hasInSelfie).toBe(true);
+      expect(s.hasOutSelfie).toBe(false);
+    };
+
+    it('getAttendanceById (the clock-in/out response)', async () => {
+      prisma.attendanceRecord.findFirst.mockResolvedValue({ id: 'att-1', sessions: [rawSession] });
+      expectScrubbed(await service.getAttendanceById(tenantId, 'att-1'));
+    });
+
+    it('pending OT approvals', async () => {
+      prisma.attendanceRecord.findMany.mockResolvedValue([{ id: 'att-1', sessions: [rawSession] }]);
+      const out = await service.getPendingOtApprovals({
+        userId: 'u',
+        tenantId,
+        role: 'HR_ADMIN',
+        employeeId: 'e',
+      } as any);
+      expectScrubbed(out[0]);
+    });
+
+    it('approveOt response', async () => {
+      prisma.attendanceRecord.findFirst.mockResolvedValue({
+        id: 'att-1',
+        employeeId,
+        date: new Date(),
+        otMinutesCalculated: 120,
+        remarks: null,
+        sessions: [],
+      });
+      prisma.attendanceRecord.update.mockResolvedValue({ id: 'att-1', sessions: [rawSession] });
+      expectScrubbed(await service.approveOt(tenantId, 'att-1', { otMinutesApproved: 60 }));
+    });
+  });
+
   describe('currentShiftDate', () => {
     afterEach(() => jest.useRealTimers());
 

@@ -7,10 +7,12 @@ import {
   Req,
   Res,
   UploadedFile,
+  UseFilters,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { MulterExceptionFilter } from '../../employees/import/multer-error.filter';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
 import { JwtAuthGuard } from '../../auth/guards/jwt-auth.guard';
@@ -42,6 +44,8 @@ export class AttendanceCaptureController {
   @ApiConsumes('multipart/form-data')
   @ApiBody({ schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } })
   @ApiOperation({ summary: 'Upload a punch selfie (JPEG/PNG/WebP, max 2 MB)' })
+  // Multer aborts an oversized upload before the handler runs; the filter maps it to 400.
+  @UseFilters(MulterExceptionFilter)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 2 * 1024 * 1024 } }))
   uploadSelfie(
     @CurrentUser() user: AuthenticatedUser,

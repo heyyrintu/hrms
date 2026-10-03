@@ -1,4 +1,6 @@
 import { AttendanceCaptureController } from './attendance-capture.controller';
+import { MulterExceptionFilter } from '../../employees/import/multer-error.filter';
+import { MulterError } from 'multer';
 
 describe('AttendanceCaptureController', () => {
   const user: any = { userId: 'u1', tenantId: 't1', role: 'EMPLOYEE', employeeId: 'e1' };
@@ -14,6 +16,20 @@ describe('AttendanceCaptureController', () => {
         .mockResolvedValue({ path: '/files/a.jpg', mimeType: 'image/jpeg' }),
     };
     controller = new AttendanceCaptureController(svc as any);
+  });
+
+  it('maps the multer 2 MB limit error to 400 on the selfie route', () => {
+    const filters = Reflect.getMetadata(
+      '__exceptionFilters__',
+      AttendanceCaptureController.prototype.uploadSelfie,
+    );
+    expect(filters).toContain(MulterExceptionFilter);
+    const json = jest.fn();
+    const status = jest.fn().mockReturnValue({ json });
+    new MulterExceptionFilter().catch(new MulterError('LIMIT_FILE_SIZE', 'file'), {
+      switchToHttp: () => ({ getResponse: () => ({ status }) }),
+    } as any);
+    expect(status).toHaveBeenCalledWith(400);
   });
 
   it('passes the request IP to the policy status', async () => {
