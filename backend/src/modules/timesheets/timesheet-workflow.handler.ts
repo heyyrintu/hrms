@@ -1,23 +1,23 @@
-import { Injectable, NotImplementedException } from '@nestjs/common';
-import { WorkflowEntityType } from '@prisma/client';
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { TimesheetStatus, WorkflowEntityType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { WorkflowRegistry } from '../workflow/workflow-registry.service';
+import { findUserIdForEmployee } from '../workflow/workflow.utils';
 import {
   WorkflowEntityContext,
   WorkflowEntityHandler,
   WorkflowEntitySummary,
 } from '../workflow/workflow.types';
 import { TimesheetsService } from './timesheets.service';
+import { toHours } from './timesheet-week';
 
-/**
- * Connects weekly timesheets to the approval engine (Keka wave G, WS-T).
- *
- * Scaffold stub: it does NOT register with the registry yet. The owning
- * workstream adds `OnModuleInit` / `onModuleInit() { this.registry.register(this); }`.
- */
+const fmtDate = (d: Date) =>
+  d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
+
+/** Connects weekly timesheets to the approval engine (Keka wave G, WS-T). */
 @Injectable()
-export class TimesheetWorkflowHandler implements WorkflowEntityHandler {
+export class TimesheetWorkflowHandler implements WorkflowEntityHandler, OnModuleInit {
   readonly entityType = WorkflowEntityType.TIMESHEET;
 
   constructor(
@@ -26,19 +26,46 @@ export class TimesheetWorkflowHandler implements WorkflowEntityHandler {
     private readonly timesheets: TimesheetsService,
   ) {}
 
-  getContext(_tenantId: string, _entityId: string): Promise<WorkflowEntityContext | null> {
-    throw new NotImplementedException();
+  onModuleInit(): void {
+    this.registry.register(this);
   }
 
-  describe(_tenantId: string, _entityIds: string[]): Promise<WorkflowEntitySummary[]> {
-    throw new NotImplementedException();
+  async getContext(tenantId: string, entityId: string): Promise<WorkflowEntityContext | null> {
+    const sheet = await this.prisma.timesheet.findFirst({
+      where: { id: entityId, tenantId },
+      select: { status: true, employeeId: true },
+    });
+    if (!sheet || sheet.status !== TimesheetStatus.SUBMITTED) {
+      return null;
+    }
+    return {
+      requesterEmployeeId: sheet.employeeId,
+      requesterUserId: await findUserIdForEmployee(this.prisma, tenantId, sheet.employeeId),
+      days: null,
+    };
   }
 
-  approve(_actor: AuthenticatedUser, _entityId: string, _note?: string | null): Promise<unknown> {
-    throw new NotImplementedException();
+  async describe(tenantId: string, entityIds: string[]): Promise<WorkflowEntitySummary[]> {
+    if (entityIds.length === 0) return [];
+    const rows = await this.prisma.timesheet.findMany({
+      where: { tenantId, id: { in: entityIds } },
+      include: { employee: { select: { firstName: true, lastName: true } } },
+    });
+    return rows.map((row) => ({
+      entityId: row.id,
+      title: 'Timesheet',
+      subtitle: `Week of ${fmtDate(row.weekStart)} · ${toHours(row.totalHours)} h`,
+      requesterName: `${row.employee.firstName} ${row.employee.lastName}`,
+      link: '/approvals/timesheets',
+      submittedAt: (row.submittedAt ?? row.createdAt).toISOString(),
+    }));
   }
 
-  reject(_actor: AuthenticatedUser, _entityId: string, _note?: string | null): Promise<unknown> {
-    throw new NotImplementedException();
+  approve(actor: AuthenticatedUser, entityId: string, note?: string | null) {
+    return this.timesheets.approve(actor, entityId, note);
+  }
+
+  reject(actor: AuthenticatedUser, entityId: string, note?: string | null) {
+    return this.timesheets.reject(actor, entityId, note);
   }
 }

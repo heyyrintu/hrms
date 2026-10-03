@@ -2,18 +2,24 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
-  NotImplementedException,
   ConflictException,
 } from '@nestjs/common';
-import { Prisma, TimesheetStatus, WorkflowEntityType } from '@prisma/client';
+import {
+  NotificationType,
+  Prisma,
+  TimesheetStatus,
+  UserRole,
+  WorkflowEntityType,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ApprovalEngineService } from '../workflow/approval-engine.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { isPrismaError, PRISMA_RECORD_NOT_FOUND } from '../../common/utils/prisma-errors';
 import { DEFAULT_ATTENDANCE_TIME_ZONE, zonedDateOnlyUtc } from '../attendance/rules/late-mark';
-import { assertMonday, isoDate, toHours, weekEnd } from './timesheet-week';
-import { SaveTimesheetEntriesDto } from './dto/timesheet.dto';
+import { findUserIdForEmployee } from '../workflow/workflow.utils';
+import { assertMonday, isoDate, parseDateOnly, toHours, weekEnd } from './timesheet-week';
+import { AllTimesheetsQueryDto, SaveTimesheetEntriesDto } from './dto/timesheet.dto';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_ENTRIES = 200;
@@ -23,6 +29,20 @@ const ENTRY_RELATIONS = {
   project: { select: { id: true, code: true, name: true } },
   task: { select: { id: true, name: true } },
 } satisfies Prisma.TimesheetEntryInclude;
+
+const EMPLOYEE_SELECT = {
+  id: true,
+  firstName: true,
+  lastName: true,
+  employeeCode: true,
+  managerId: true,
+} satisfies Prisma.EmployeeSelect;
+
+const isHr = (actor: AuthenticatedUser) =>
+  actor.role === UserRole.HR_ADMIN || actor.role === UserRole.SUPER_ADMIN;
+
+const fmtDate = (d: Date) =>
+  d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
 
 /** An entry as the validator sees it, whether freshly posted or read back. */
 interface CandidateEntry {
@@ -293,14 +313,211 @@ export class TimesheetsService {
     return serializeTimesheet(recalled);
   }
 
-  // ------------------------------------------------- approve (scaffold stub)
+  // ------------------------------------------------------ approve / reject
 
-  approve(_actor: AuthenticatedUser, _id: string, _note?: string | null): Promise<unknown> {
-    throw new NotImplementedException();
+  /** Approve through the approval engine; the final step moves SUBMITTED to APPROVED. */
+  approve(actor: AuthenticatedUser, id: string, note?: string | null) {
+    return this.decide(actor, id, 'APPROVE', note);
   }
 
-  reject(_actor: AuthenticatedUser, _id: string, _note?: string | null): Promise<unknown> {
-    throw new NotImplementedException();
+  /** Reject through the approval engine; the final step moves SUBMITTED to REJECTED. */
+  reject(actor: AuthenticatedUser, id: string, note?: string | null) {
+    return this.decide(actor, id, 'REJECT', note);
+  }
+
+  private async decide(
+    actor: AuthenticatedUser,
+    id: string,
+    decision: 'APPROVE' | 'REJECT',
+    note?: string | null,
+  ) {
+    const tenantId = actor.tenantId;
+    const sheet = await this.prisma.timesheet.findFirst({ where: { id, tenantId } });
+    if (!sheet) throw new NotFoundException('Timesheet not found');
+    if (sheet.status !== TimesheetStatus.SUBMITTED) {
+      throw new BadRequestException('This timesheet has already been processed');
+    }
+
+    const approving = decision === 'APPROVE';
+    const final: { row?: Awaited<ReturnType<TimesheetsService['transitionSubmitted']>> } = {};
+    const result = await this.workflow.act({
+      tenantId,
+      entityType: WorkflowEntityType.TIMESHEET,
+      entityId: id,
+      actor,
+      decision,
+      note: note ?? null,
+      onFinal: async (tx) => {
+        // Status-guarded: a concurrent decision makes this 409, not a second write.
+        final.row = await this.transitionSubmitted(tx, id, {
+          status: approving ? TimesheetStatus.APPROVED : TimesheetStatus.REJECTED,
+          decidedAt: new Date(),
+          approverId: actor.employeeId ?? null,
+          approverNote: note || null,
+        });
+      },
+    });
+
+    if (result.outcome === 'ADVANCED' || !final.row) {
+      return this.findForResponse(tenantId, id);
+    }
+
+    await this.notifyOwner(sheet, approving, note);
+    return serializeTimesheet(final.row);
+  }
+
+  private async transitionSubmitted(
+    tx: Db,
+    id: string,
+    data: {
+      status: TimesheetStatus;
+      decidedAt: Date;
+      approverId: string | null;
+      approverNote: string | null;
+    },
+  ) {
+    try {
+      return await tx.timesheet.update({
+        where: { id, status: TimesheetStatus.SUBMITTED },
+        data,
+        include: { employee: { select: EMPLOYEE_SELECT } },
+      });
+    } catch (err) {
+      if (isPrismaError(err, PRISMA_RECORD_NOT_FOUND)) {
+        throw new ConflictException('This timesheet has already been processed');
+      }
+      throw err;
+    }
+  }
+
+  private async findForResponse(tenantId: string, id: string) {
+    const row = await this.prisma.timesheet.findFirst({
+      where: { id, tenantId },
+      include: { employee: { select: EMPLOYEE_SELECT } },
+    });
+    if (!row) throw new NotFoundException('Timesheet not found');
+    return serializeTimesheet(row);
+  }
+
+  /** Tell the owner the outcome. A failed notification never fails the decision. */
+  private async notifyOwner(
+    sheet: { tenantId: string; employeeId: string; weekStart: Date },
+    approved: boolean,
+    note?: string | null,
+  ): Promise<void> {
+    try {
+      const userId = await findUserIdForEmployee(this.prisma, sheet.tenantId, sheet.employeeId);
+      if (!userId) return;
+      await this.notifications.create({
+        tenantId: sheet.tenantId,
+        userId,
+        type: approved ? NotificationType.TIMESHEET_APPROVED : NotificationType.TIMESHEET_REJECTED,
+        title: approved ? 'Timesheet approved' : 'Timesheet rejected',
+        message: `Your timesheet for the week of ${fmtDate(sheet.weekStart)} was ${
+          approved ? 'approved' : 'rejected'
+        }.${note ? ` Note: ${note}` : ''}`,
+        link: '/timesheets',
+      });
+    } catch {
+      // Best effort: the decision has already been committed.
+    }
+  }
+
+  // ----------------------------------------------------------------- reads
+
+  /**
+   * One timesheet with entries. Visible to its owner, HR, the employee's
+   * direct manager, or an approver who can act on it now; anyone else gets 404.
+   */
+  async get(actor: AuthenticatedUser, id: string) {
+    const tenantId = actor.tenantId;
+    const sheet = await this.prisma.timesheet.findFirst({
+      where: { id, tenantId },
+      include: {
+        employee: { select: EMPLOYEE_SELECT },
+        entries: { include: ENTRY_RELATIONS, orderBy: { date: 'asc' } },
+      },
+    });
+    if (!sheet || !(await this.canView(actor, sheet))) {
+      throw new NotFoundException('Timesheet not found');
+    }
+
+    return {
+      ...serializeTimesheet(sheet),
+      entries: sheet.entries.map(serializeEntry),
+    };
+  }
+
+  /** SUBMITTED timesheets the viewer can decide: all for HR/Super, else the engine's list. */
+  async listPendingApprovals(actor: AuthenticatedUser) {
+    const where: Prisma.TimesheetWhereInput = {
+      tenantId: actor.tenantId,
+      status: TimesheetStatus.SUBMITTED,
+    };
+    if (!isHr(actor)) {
+      const ids = await this.workflow.listActionableEntityIds(
+        actor,
+        WorkflowEntityType.TIMESHEET,
+      );
+      where.id = { in: ids };
+    }
+
+    const rows = await this.prisma.timesheet.findMany({
+      where,
+      include: { employee: { select: EMPLOYEE_SELECT } },
+      orderBy: { submittedAt: 'desc' },
+    });
+    return rows.map(serializeTimesheet);
+  }
+
+  /** Admin listing with filters, paginated (limit at most 100). */
+  async listAll(actor: AuthenticatedUser, query: AllTimesheetsQueryDto) {
+    const page = Math.max(1, query.page || 1);
+    const limit = Math.min(100, Math.max(1, query.limit || 20));
+
+    const where: Prisma.TimesheetWhereInput = { tenantId: actor.tenantId };
+    if (query.status) where.status = query.status;
+    if (query.from || query.to) {
+      where.weekStart = {
+        ...(query.from ? { gte: parseDateOnly(query.from.slice(0, 10), 'from') } : {}),
+        ...(query.to ? { lte: parseDateOnly(query.to.slice(0, 10), 'to') } : {}),
+      };
+    }
+    if (query.employeeId) where.employeeId = query.employeeId;
+    if (query.departmentId) where.employee = { departmentId: query.departmentId };
+
+    const [rows, total] = await Promise.all([
+      this.prisma.timesheet.findMany({
+        where,
+        include: { employee: { select: EMPLOYEE_SELECT } },
+        orderBy: { weekStart: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.timesheet.count({ where }),
+    ]);
+
+    return {
+      data: rows.map(serializeTimesheet),
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  private async canView(
+    actor: AuthenticatedUser,
+    sheet: { id: string; employeeId: string; employee: { managerId: string | null } },
+  ): Promise<boolean> {
+    if (isHr(actor)) return true;
+    // Guarded: an undefined employeeId must never match an owner or manager id.
+    if (actor.employeeId) {
+      if (sheet.employeeId === actor.employeeId) return true;
+      if (sheet.employee.managerId === actor.employeeId) return true;
+    }
+    const actionable = await this.workflow.listActionableEntityIds(
+      actor,
+      WorkflowEntityType.TIMESHEET,
+    );
+    return actionable.includes(sheet.id);
   }
 
   // -------------------------------------------------------------- helpers
