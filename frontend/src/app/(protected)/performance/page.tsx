@@ -1,93 +1,111 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import Link from 'next/link';
 import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
-import { performanceApi } from '@/lib/api';
-import { PerformanceReview, Goal, PerformanceReviewStatus, GoalStatus } from '@/types';
-import toast from 'react-hot-toast';
+import { useAuth } from '@/contexts/AuthContext';
+import { currentEmployeeId } from '@/lib/current-employee';
 import {
-  Star,
-  Target,
-  RefreshCw,
-  Plus,
-  Edit2,
-  Trash2,
-  Eye,
-} from 'lucide-react';
+  reviewsApi,
+  type AnswerInput,
+  type CycleQuestion,
+  type ReviewView,
+} from '@/lib/api-performance-reviews';
+import { goalsApi, type Goal } from '@/lib/api-performance-goals';
+import { QuestionAnswersForm, answersComplete } from '@/components/performance/reviews/QuestionAnswersForm';
+import { AnswersReadonly } from '@/components/performance/reviews/AnswersReadonly';
+import { ReleasedResults } from '@/components/performance/reviews/ReleasedResults';
+import { PeerNominations } from '@/components/performance/peer/PeerNominations';
+import toast from 'react-hot-toast';
+import { Star, Target, RefreshCw, Eye } from 'lucide-react';
 
-const reviewStatusColors: Record<PerformanceReviewStatus, string> = {
+type BadgeVariant = 'gray' | 'warning' | 'info' | 'success';
+
+const reviewStatusColors: Record<string, BadgeVariant> = {
   PENDING: 'gray',
   SELF_REVIEW: 'warning',
   MANAGER_REVIEW: 'info',
   COMPLETED: 'success',
 };
 
-const reviewStatusLabels: Record<PerformanceReviewStatus, string> = {
+const reviewStatusLabels: Record<string, string> = {
   PENDING: 'Pending',
   SELF_REVIEW: 'Self Review',
   MANAGER_REVIEW: 'Manager Review',
   COMPLETED: 'Completed',
 };
 
-const goalStatusColors: Record<GoalStatus, string> = {
+const goalStatusColors: Record<string, BadgeVariant> = {
   NOT_STARTED: 'gray',
   IN_PROGRESS: 'warning',
   COMPLETED: 'success',
 };
 
-const goalStatusLabels: Record<GoalStatus, string> = {
+const goalStatusLabels: Record<string, string> = {
   NOT_STARTED: 'Not Started',
   IN_PROGRESS: 'In Progress',
   COMPLETED: 'Completed',
 };
 
+function renderStars(rating?: number | null) {
+  if (!rating) return <span className="text-warm-400">-</span>;
+  return (
+    <div className="flex items-center gap-0.5">
+      {[1, 2, 3, 4, 5].map((i) => (
+        <Star
+          key={i}
+          className={`h-4 w-4 ${i <= rating ? 'text-yellow-400 fill-yellow-400' : 'text-warm-300'}`}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ProgressBar({ value }: { value: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="w-20 bg-warm-200 rounded-full h-2">
+        <div
+          className={`h-2 rounded-full transition-all ${value === 100 ? 'bg-emerald-500' : 'bg-primary-500'}`}
+          style={{ width: `${Math.min(100, Math.max(0, value))}%` }}
+        />
+      </div>
+      <span className="text-xs text-warm-500">{value}%</span>
+    </div>
+  );
+}
+
 export default function PerformancePage() {
+  const { user } = useAuth();
+  const myEmployeeId = currentEmployeeId(user);
   const [activeTab, setActiveTab] = useState<'reviews' | 'goals'>('reviews');
 
-  // Reviews state
-  const [reviews, setReviews] = useState<PerformanceReview[]>([]);
+  const [reviews, setReviews] = useState<ReviewView[]>([]);
   const [reviewsLoading, setReviewsLoading] = useState(true);
-
-  // Goals state
   const [goals, setGoals] = useState<Goal[]>([]);
   const [goalsLoading, setGoalsLoading] = useState(true);
 
   // Self-review modal
   const [selfReviewModal, setSelfReviewModal] = useState(false);
-  const [selectedReview, setSelectedReview] = useState<PerformanceReview | null>(null);
+  const [selectedReview, setSelectedReview] = useState<ReviewView | null>(null);
+  const [selfQuestions, setSelfQuestions] = useState<CycleQuestion[]>([]);
+  const [selfAnswers, setSelfAnswers] = useState<AnswerInput[]>([]);
   const [selfRating, setSelfRating] = useState(3);
   const [selfComments, setSelfComments] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  // View review modal
+  // View modal
   const [viewModal, setViewModal] = useState(false);
-  const [viewReview, setViewReview] = useState<PerformanceReview | null>(null);
-
-  // Goal modal
-  const [goalModal, setGoalModal] = useState(false);
-  const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
-  const [goalForm, setGoalForm] = useState({
-    reviewId: '',
-    title: '',
-    description: '',
-    targetDate: '',
-    status: 'NOT_STARTED' as GoalStatus,
-    progress: 0,
-    weight: 1.0,
-  });
-  const [savingGoal, setSavingGoal] = useState(false);
-
-  // Delete goal
-  const [deleteModal, setDeleteModal] = useState(false);
-  const [deletingGoal, setDeletingGoal] = useState<Goal | null>(null);
+  const [viewReview, setViewReview] = useState<ReviewView | null>(null);
+  const [viewQuestions, setViewQuestions] = useState<CycleQuestion[]>([]);
 
   const loadReviews = useCallback(async () => {
     setReviewsLoading(true);
     try {
-      const res = await performanceApi.getMyReviews();
+      const res = await reviewsApi.myReviews();
       setReviews(res.data.data);
     } catch {
       toast.error('Failed to load reviews');
@@ -99,7 +117,7 @@ export default function PerformancePage() {
   const loadGoals = useCallback(async () => {
     setGoalsLoading(true);
     try {
-      const res = await performanceApi.getMyGoals();
+      const res = await goalsApi.list({ scope: 'mine' });
       setGoals(res.data);
     } catch {
       toast.error('Failed to load goals');
@@ -113,21 +131,30 @@ export default function PerformancePage() {
     loadGoals();
   }, [loadReviews, loadGoals]);
 
-  // Self Review
-  const openSelfReview = (review: PerformanceReview) => {
-    setSelectedReview(review);
-    setSelfRating(3);
-    setSelfComments('');
-    setSelfReviewModal(true);
+  const openSelfReview = async (review: ReviewView) => {
+    try {
+      const [detail, qs] = await Promise.all([reviewsApi.get(review.id), reviewsApi.questions(review.id)]);
+      setSelectedReview(detail.data);
+      setSelfQuestions(qs.data);
+      setSelfAnswers([]);
+      setSelfRating(3);
+      setSelfComments('');
+      setSelfReviewModal(true);
+    } catch {
+      toast.error('Failed to load review');
+    }
   };
 
+  const selfComplete = answersComplete(selfQuestions, 'SELF', selfAnswers);
+
   const handleSubmitSelfReview = async () => {
-    if (!selectedReview) return;
+    if (!selectedReview || !selfComplete) return;
     setSubmitting(true);
     try {
-      await performanceApi.submitSelfReview(selectedReview.id, {
+      await reviewsApi.submitSelf(selectedReview.id, {
         selfRating,
         selfComments: selfComments || undefined,
+        answers: selfAnswers.length > 0 ? selfAnswers : undefined,
       });
       toast.success('Self-review submitted successfully');
       setSelfReviewModal(false);
@@ -139,103 +166,20 @@ export default function PerformancePage() {
     }
   };
 
-  // View Review Detail
-  const openViewReview = async (review: PerformanceReview) => {
+  const openViewReview = async (review: ReviewView) => {
     try {
-      const res = await performanceApi.getReview(review.id);
-      setViewReview(res.data);
+      const [detail, qs] = await Promise.all([reviewsApi.get(review.id), reviewsApi.questions(review.id)]);
+      setViewReview(detail.data);
+      setViewQuestions(qs.data);
       setViewModal(true);
     } catch {
       toast.error('Failed to load review details');
     }
   };
 
-  // Goal CRUD
-  const openGoalModal = (goal?: Goal) => {
-    if (goal) {
-      setEditingGoal(goal);
-      setGoalForm({
-        reviewId: goal.reviewId,
-        title: goal.title,
-        description: goal.description || '',
-        targetDate: goal.targetDate.split('T')[0],
-        status: goal.status,
-        progress: goal.progress,
-        weight: goal.weight,
-      });
-    } else {
-      setEditingGoal(null);
-      setGoalForm({
-        reviewId: reviews.length > 0 ? reviews[0].id : '',
-        title: '',
-        description: '',
-        targetDate: '',
-        status: 'NOT_STARTED',
-        progress: 0,
-        weight: 1.0,
-      });
-    }
-    setGoalModal(true);
-  };
-
-  const handleSaveGoal = async () => {
-    setSavingGoal(true);
-    try {
-      if (editingGoal) {
-        await performanceApi.updateGoal(editingGoal.id, {
-          title: goalForm.title,
-          description: goalForm.description || undefined,
-          targetDate: goalForm.targetDate,
-          status: goalForm.status,
-          progress: goalForm.progress,
-          weight: goalForm.weight,
-        });
-        toast.success('Goal updated');
-      } else {
-        await performanceApi.createGoal({
-          reviewId: goalForm.reviewId,
-          title: goalForm.title,
-          description: goalForm.description || undefined,
-          targetDate: goalForm.targetDate,
-          weight: goalForm.weight,
-        });
-        toast.success('Goal created');
-      }
-      setGoalModal(false);
-      loadGoals();
-    } catch {
-      toast.error('Failed to save goal');
-    } finally {
-      setSavingGoal(false);
-    }
-  };
-
-  const handleDeleteGoal = async () => {
-    if (!deletingGoal) return;
-    try {
-      await performanceApi.deleteGoal(deletingGoal.id);
-      toast.success('Goal deleted');
-      setDeleteModal(false);
-      setDeletingGoal(null);
-      loadGoals();
-    } catch {
-      toast.error('Failed to delete goal');
-    }
-  };
-
-  const renderStars = (rating?: number) => {
-    if (!rating) return <span className="text-warm-400">-</span>;
-    return (
-      <div className="flex items-center gap-0.5">
-        {[1, 2, 3, 4, 5].map((i) => (
-          <Star
-            key={i}
-            className={`h-4 w-4 ${i <= rating ? 'text-yellow-400 fill-yellow-400' : 'text-warm-300'}`}
-          />
-        ))}
-      </div>
-    );
-  };
+  const viewGoals = (viewReview?.goals ?? []) as Array<{ id: string; title: string; progress: number; status: string }>;
+  const viewIsOwn =
+    !!viewReview && (viewReview.relation === 'SELF' || (!!myEmployeeId && viewReview.employeeId === myEmployeeId));
 
   return (
     <div className="space-y-6">
@@ -245,15 +189,10 @@ export default function PerformancePage() {
           <Target className="h-8 w-8 text-indigo-600" />
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-warm-900">My Performance</h1>
-            <p className="text-sm text-warm-500">
-              Track your reviews and goals
-            </p>
+            <p className="text-sm text-warm-500">Track your reviews and goals</p>
           </div>
         </div>
-        <Button
-          variant="secondary"
-          onClick={() => { loadReviews(); loadGoals(); }}
-        >
+        <Button variant="secondary" onClick={() => { loadReviews(); loadGoals(); }}>
           <RefreshCw className="h-4 w-4 mr-2" />
           Refresh
         </Button>
@@ -262,26 +201,19 @@ export default function PerformancePage() {
       {/* Tabs */}
       <div className="border-b border-warm-200">
         <nav className="flex gap-4">
-          <button
-            onClick={() => setActiveTab('reviews')}
-            className={`pb-3 px-1 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'reviews'
-                ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-warm-500 hover:text-warm-700'
-            }`}
-          >
-            My Reviews
-          </button>
-          <button
-            onClick={() => setActiveTab('goals')}
-            className={`pb-3 px-1 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'goals'
-                ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-warm-500 hover:text-warm-700'
-            }`}
-          >
-            My Goals
-          </button>
+          {(['reviews', 'goals'] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`pb-3 px-1 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === tab
+                  ? 'border-primary-600 text-primary-600'
+                  : 'border-transparent text-warm-500 hover:text-warm-700'
+              }`}
+            >
+              {tab === 'reviews' ? 'My Reviews' : 'My Goals'}
+            </button>
+          ))}
         </nav>
       </div>
 
@@ -308,36 +240,38 @@ export default function PerformancePage() {
                       <th className="text-left px-4 py-3 font-medium text-warm-600">Status</th>
                       <th className="text-left px-4 py-3 font-medium text-warm-600">Reviewer</th>
                       <th className="text-left px-4 py-3 font-medium text-warm-600">Self Rating</th>
-                      <th className="text-left px-4 py-3 font-medium text-warm-600">Manager Rating</th>
-                      <th className="text-left px-4 py-3 font-medium text-warm-600">Overall</th>
+                      <th className="text-left px-4 py-3 font-medium text-warm-600">Final Rating</th>
                       <th className="text-left px-4 py-3 font-medium text-warm-600">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {reviews.map((review) => (
                       <tr key={review.id} className="border-b hover:bg-warm-50">
-                        <td className="px-4 py-3 font-medium text-warm-900">
-                          {review.cycle?.name || '-'}
-                        </td>
+                        <td className="px-4 py-3 font-medium text-warm-900">{review.cycle?.name || '-'}</td>
                         <td className="px-4 py-3">
-                          <Badge variant={reviewStatusColors[review.status] as 'gray' | 'warning' | 'info' | 'success'}>
-                            {reviewStatusLabels[review.status]}
+                          <Badge variant={reviewStatusColors[review.status] ?? 'gray'}>
+                            {reviewStatusLabels[review.status] ?? review.status}
                           </Badge>
                         </td>
                         <td className="px-4 py-3 text-warm-600">
                           {review.reviewer ? `${review.reviewer.firstName} ${review.reviewer.lastName}` : '-'}
                         </td>
                         <td className="px-4 py-3">{renderStars(review.selfRating)}</td>
-                        <td className="px-4 py-3">{renderStars(review.managerRating)}</td>
-                        <td className="px-4 py-3">{renderStars(review.overallRating)}</td>
+                        <td className="px-4 py-3">
+                          {review.released ? (
+                            renderStars(review.finalRating)
+                          ) : (
+                            <span className="text-xs text-warm-400">Awaiting release</span>
+                          )}
+                        </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
-                            {review.status === 'PENDING' && (
+                            {review.status === 'PENDING' && !review.released && (
                               <Button variant="primary" onClick={() => openSelfReview(review)}>
                                 Submit Self Review
                               </Button>
                             )}
-                            {(review.status === 'COMPLETED' || review.status === 'SELF_REVIEW' || review.status === 'MANAGER_REVIEW') && (
+                            {(review.status !== 'PENDING' || review.cycle?.peerFeedbackEnabled) && (
                               <button
                                 onClick={() => openViewReview(review)}
                                 className="text-warm-500 hover:text-warm-700"
@@ -362,13 +296,15 @@ export default function PerformancePage() {
       {activeTab === 'goals' && (
         <>
           <div className="flex justify-end">
-            <Button variant="primary" onClick={() => openGoalModal()} disabled={reviews.length === 0}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Goal
-            </Button>
+            <Link
+              href="/performance/goals"
+              className="inline-flex items-center rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white hover:bg-primary-700"
+            >
+              Manage goals
+            </Link>
           </div>
           <Card>
-            <CardContent className="p-0">
+            <CardContent className="p-4">
               {goalsLoading ? (
                 <div className="flex items-center justify-center py-12">
                   <RefreshCw className="h-6 w-6 animate-spin text-warm-400" />
@@ -380,75 +316,36 @@ export default function PerformancePage() {
                   <p className="text-sm">Add goals to track your performance objectives</p>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-warm-50">
-                        <th className="text-left px-4 py-3 font-medium text-warm-600">Title</th>
-                        <th className="text-left px-4 py-3 font-medium text-warm-600">Cycle</th>
-                        <th className="text-left px-4 py-3 font-medium text-warm-600">Target Date</th>
-                        <th className="text-left px-4 py-3 font-medium text-warm-600">Status</th>
-                        <th className="text-left px-4 py-3 font-medium text-warm-600">Progress</th>
-                        <th className="text-left px-4 py-3 font-medium text-warm-600">Weight</th>
-                        <th className="text-left px-4 py-3 font-medium text-warm-600">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {goals.map((goal) => (
-                        <tr key={goal.id} className="border-b hover:bg-warm-50">
-                          <td className="px-4 py-3">
-                            <p className="font-medium text-warm-900">{goal.title}</p>
-                            {goal.description && (
-                              <p className="text-xs text-warm-500 mt-0.5">{goal.description}</p>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-warm-600">
-                            {goal.review?.cycle?.name || '-'}
-                          </td>
-                          <td className="px-4 py-3 text-warm-600">
-                            {new Date(goal.targetDate).toLocaleDateString()}
-                          </td>
-                          <td className="px-4 py-3">
-                            <Badge variant={goalStatusColors[goal.status] as 'gray' | 'warning' | 'success'}>
-                              {goalStatusLabels[goal.status]}
-                            </Badge>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              <div className="w-20 bg-warm-200 rounded-full h-2">
-                                <div
-                                  className={`h-2 rounded-full transition-all ${goal.progress === 100 ? 'bg-emerald-500' : 'bg-primary-500'}`}
-                                  style={{ width: `${goal.progress}%` }}
-                                />
-                              </div>
-                              <span className="text-xs text-warm-500">{goal.progress}%</span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-warm-600">{goal.weight}</td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => openGoalModal(goal)}
-                                className="text-warm-500 hover:text-warm-700"
-                                title="Edit"
-                              >
-                                <Edit2 className="h-4 w-4" />
-                              </button>
-                              {goal.review?.status !== 'COMPLETED' && (
-                                <button
-                                  onClick={() => { setDeletingGoal(goal); setDeleteModal(true); }}
-                                  className="text-red-500 hover:text-red-700"
-                                  title="Delete"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="space-y-4">
+                  {goals.map((goal) => (
+                    <div key={goal.id} className="border border-warm-200 rounded-lg p-4 space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="font-medium text-warm-900">{goal.title}</p>
+                          {goal.description && <p className="text-xs text-warm-500 mt-0.5">{goal.description}</p>}
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <ProgressBar value={goal.progress} />
+                          <Badge variant={goalStatusColors[goal.status] ?? 'gray'}>
+                            {goalStatusLabels[goal.status] ?? goal.status}
+                          </Badge>
+                        </div>
+                      </div>
+                      {goal.keyResults.length > 0 && (
+                        <ul className="space-y-1 pl-3 border-l-2 border-warm-100">
+                          {goal.keyResults.map((kr) => (
+                            <li key={kr.id} className="flex items-center justify-between gap-3 text-sm">
+                              <span className="text-warm-700">{kr.title}</span>
+                              <span className="flex items-center gap-3">
+                                <span className="text-xs text-warm-500">{kr.currentValue} / {kr.targetValue}</span>
+                                <ProgressBar value={kr.progress} />
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </CardContent>
@@ -461,24 +358,17 @@ export default function PerformancePage() {
         isOpen={selfReviewModal}
         onClose={() => setSelfReviewModal(false)}
         title={`Self Review - ${selectedReview?.cycle?.name || ''}`}
+        size="lg"
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-warm-700 mb-2">
-              Self Rating *
-            </label>
+            <label className="block text-sm font-medium text-warm-700 mb-2">Self Rating *</label>
             <div className="flex items-center gap-1">
               {[1, 2, 3, 4, 5].map((i) => (
-                <button
-                  key={i}
-                  onClick={() => setSelfRating(i)}
-                  className="p-1"
-                >
+                <button key={i} onClick={() => setSelfRating(i)} className="p-1" aria-label={`Self rating ${i}`}>
                   <Star
                     className={`h-8 w-8 transition-colors ${
-                      i <= selfRating
-                        ? 'text-yellow-400 fill-yellow-400'
-                        : 'text-warm-300 hover:text-yellow-300'
+                      i <= selfRating ? 'text-yellow-400 fill-yellow-400' : 'text-warm-300 hover:text-yellow-300'
                     }`}
                   />
                 </button>
@@ -486,11 +376,17 @@ export default function PerformancePage() {
               <span className="ml-2 text-sm text-warm-500">{selfRating}/5</span>
             </div>
           </div>
+          <QuestionAnswersForm
+            questions={selfQuestions}
+            audience="SELF"
+            value={selfAnswers}
+            onChange={(answers) => setSelfAnswers(answers)}
+            disabled={submitting}
+          />
           <div>
-            <label className="block text-sm font-medium text-warm-700 mb-1">
-              Comments
-            </label>
+            <label htmlFor="self-comments" className="block text-sm font-medium text-warm-700 mb-1">Comments</label>
             <textarea
+              id="self-comments"
               value={selfComments}
               onChange={(e) => setSelfComments(e.target.value)}
               rows={4}
@@ -498,12 +394,15 @@ export default function PerformancePage() {
               className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
             />
           </div>
+          {!selfComplete && (
+            <p className="text-xs text-amber-600">Answer all required questions (*) to submit.</p>
+          )}
         </div>
         <ModalFooter>
           <Button variant="secondary" onClick={() => setSelfReviewModal(false)} disabled={submitting}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={handleSubmitSelfReview} disabled={submitting}>
+          <Button variant="primary" onClick={handleSubmitSelfReview} disabled={submitting || !selfComplete}>
             {submitting ? 'Submitting...' : 'Submit Self Review'}
           </Button>
         </ModalFooter>
@@ -521,8 +420,8 @@ export default function PerformancePage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <p className="text-xs text-warm-500">Status</p>
-                <Badge variant={reviewStatusColors[viewReview.status] as 'gray' | 'warning' | 'info' | 'success'}>
-                  {reviewStatusLabels[viewReview.status]}
+                <Badge variant={reviewStatusColors[viewReview.status] ?? 'gray'}>
+                  {reviewStatusLabels[viewReview.status] ?? viewReview.status}
                 </Badge>
               </div>
               <div>
@@ -532,45 +431,54 @@ export default function PerformancePage() {
                 </p>
               </div>
             </div>
+
             {viewReview.selfRating && (
-              <div className="border-t pt-4">
-                <h4 className="text-sm font-medium text-warm-900 mb-2">Self Review</h4>
-                <div className="flex items-center gap-2 mb-1">
+              <div className="border-t pt-4 space-y-2">
+                <h4 className="text-sm font-medium text-warm-900">Self Review</h4>
+                <div className="flex items-center gap-2">
                   <span className="text-sm text-warm-500">Rating:</span>
                   {renderStars(viewReview.selfRating)}
                 </div>
                 {viewReview.selfComments && (
                   <p className="text-sm text-warm-600 bg-warm-50 p-3 rounded">{viewReview.selfComments}</p>
                 )}
-              </div>
-            )}
-            {viewReview.managerRating && (
-              <div className="border-t pt-4">
-                <h4 className="text-sm font-medium text-warm-900 mb-2">Manager Review</h4>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm text-warm-500">Manager Rating:</span>
-                  {renderStars(viewReview.managerRating)}
-                </div>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm text-warm-500">Overall Rating:</span>
-                  {renderStars(viewReview.overallRating)}
-                </div>
-                {viewReview.managerComments && (
-                  <p className="text-sm text-warm-600 bg-warm-50 p-3 rounded">{viewReview.managerComments}</p>
+                {viewReview.answers && (
+                  <AnswersReadonly questions={viewQuestions} answers={viewReview.answers} audience="SELF" />
                 )}
               </div>
             )}
-            {viewReview.goals && viewReview.goals.length > 0 && (
+
+            {viewReview.cycle.peerFeedbackEnabled && viewIsOwn && (
               <div className="border-t pt-4">
-                <h4 className="text-sm font-medium text-warm-900 mb-2">Goals ({viewReview.goals.length})</h4>
+                <PeerNominations
+                  reviewId={viewReview.id}
+                  employeeId={viewReview.employeeId}
+                  reviewerId={viewReview.reviewerId}
+                  maxPeers={viewReview.cycle.maxPeers}
+                  canEdit={viewReview.cycle.status === 'ACTIVE'}
+                />
+              </div>
+            )}
+
+            <div className="border-t pt-4">
+              {viewReview.released ? (
+                <ReleasedResults review={viewReview} questions={viewQuestions} />
+              ) : (
+                <p className="text-sm text-warm-500">Submitted — awaiting release</p>
+              )}
+            </div>
+
+            {viewGoals.length > 0 && (
+              <div className="border-t pt-4">
+                <h4 className="text-sm font-medium text-warm-900 mb-2">Goals ({viewGoals.length})</h4>
                 <div className="space-y-2">
-                  {viewReview.goals.map((g) => (
+                  {viewGoals.map((g) => (
                     <div key={g.id} className="flex items-center justify-between bg-warm-50 p-2 rounded">
                       <span className="text-sm">{g.title}</span>
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-warm-500">{g.progress}%</span>
-                        <Badge variant={goalStatusColors[g.status] as 'gray' | 'warning' | 'success'}>
-                          {goalStatusLabels[g.status]}
+                        <Badge variant={goalStatusColors[g.status] ?? 'gray'}>
+                          {goalStatusLabels[g.status] ?? g.status}
                         </Badge>
                       </div>
                     </div>
@@ -583,137 +491,6 @@ export default function PerformancePage() {
         <ModalFooter>
           <Button variant="secondary" onClick={() => setViewModal(false)}>
             Close
-          </Button>
-        </ModalFooter>
-      </Modal>
-
-      {/* Goal Modal */}
-      <Modal
-        isOpen={goalModal}
-        onClose={() => setGoalModal(false)}
-        title={editingGoal ? 'Edit Goal' : 'Add Goal'}
-      >
-        <div className="space-y-4">
-          {!editingGoal && (
-            <div>
-              <label className="block text-sm font-medium text-warm-700 mb-1">Review Cycle *</label>
-              <select
-                value={goalForm.reviewId}
-                onChange={(e) => setGoalForm({ ...goalForm, reviewId: e.target.value })}
-                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-              >
-                <option value="">Select review...</option>
-                {reviews
-                  .filter((r) => r.status !== 'COMPLETED')
-                  .map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.cycle?.name || r.id}
-                    </option>
-                  ))}
-              </select>
-            </div>
-          )}
-          <div>
-            <label className="block text-sm font-medium text-warm-700 mb-1">Title *</label>
-            <input
-              type="text"
-              value={goalForm.title}
-              onChange={(e) => setGoalForm({ ...goalForm, title: e.target.value })}
-              placeholder="e.g. Complete AWS certification"
-              className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-warm-700 mb-1">Description</label>
-            <textarea
-              value={goalForm.description}
-              onChange={(e) => setGoalForm({ ...goalForm, description: e.target.value })}
-              rows={3}
-              className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-warm-700 mb-1">Target Date *</label>
-              <input
-                type="date"
-                value={goalForm.targetDate}
-                onChange={(e) => setGoalForm({ ...goalForm, targetDate: e.target.value })}
-                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-warm-700 mb-1">Weight (0-1)</label>
-              <input
-                type="number"
-                step="0.1"
-                min="0"
-                max="1"
-                value={goalForm.weight}
-                onChange={(e) => setGoalForm({ ...goalForm, weight: parseFloat(e.target.value) || 0 })}
-                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-              />
-            </div>
-          </div>
-          {editingGoal && (
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-warm-700 mb-1">Status</label>
-                <select
-                  value={goalForm.status}
-                  onChange={(e) => setGoalForm({ ...goalForm, status: e.target.value as GoalStatus })}
-                  className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-                >
-                  <option value="NOT_STARTED">Not Started</option>
-                  <option value="IN_PROGRESS">In Progress</option>
-                  <option value="COMPLETED">Completed</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-warm-700 mb-1">
-                  Progress ({goalForm.progress}%)
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={goalForm.progress}
-                  onChange={(e) => setGoalForm({ ...goalForm, progress: parseInt(e.target.value) })}
-                  className="w-full"
-                />
-              </div>
-            </div>
-          )}
-        </div>
-        <ModalFooter>
-          <Button variant="secondary" onClick={() => setGoalModal(false)} disabled={savingGoal}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            onClick={handleSaveGoal}
-            disabled={savingGoal || !goalForm.title || !goalForm.targetDate || (!editingGoal && !goalForm.reviewId)}
-          >
-            {savingGoal ? 'Saving...' : editingGoal ? 'Update Goal' : 'Create Goal'}
-          </Button>
-        </ModalFooter>
-      </Modal>
-
-      {/* Delete Goal Modal */}
-      <Modal
-        isOpen={deleteModal}
-        onClose={() => setDeleteModal(false)}
-        title="Delete Goal"
-      >
-        <p className="text-sm text-warm-600">
-          Are you sure you want to delete &quot;{deletingGoal?.title}&quot;? This action cannot be undone.
-        </p>
-        <ModalFooter>
-          <Button variant="secondary" onClick={() => setDeleteModal(false)}>
-            Cancel
-          </Button>
-          <Button variant="danger" onClick={handleDeleteGoal}>
-            Delete
           </Button>
         </ModalFooter>
       </Modal>
