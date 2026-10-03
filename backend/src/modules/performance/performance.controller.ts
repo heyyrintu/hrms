@@ -25,6 +25,7 @@ import {
   SubmitSelfReviewDto,
   SubmitManagerReviewDto,
   ReviewQueryDto,
+  SetPotentialDto,
 } from './dto/performance.dto';
 
 @ApiTags('performance')
@@ -158,17 +159,24 @@ export class PerformanceController {
   @ApiResponse({ status: 200, description: 'Success' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
-  @ApiResponse({ status: 404, description: 'Not found' })
+  @ApiResponse({ status: 404, description: 'Not found (also when the caller may not view it)' })
   async getReview(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
   ) {
-    return this.performanceService.getReview(
-      user.tenantId,
-      id,
-      user.employeeId,
-      user.role,
-    );
+    return this.performanceService.getReview(user, id);
+  }
+
+  @Get('reviews/:id/questions')
+  @ApiOperation({ summary: 'Get the cycle questions the caller may see for a review' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Not found (also when the caller may not view it)' })
+  async getReviewQuestions(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.performanceService.getReviewQuestions(user, id);
   }
 
   @Post('reviews/:id/self-review')
@@ -233,5 +241,21 @@ export class PerformanceController {
       user.role,
       dto,
     );
+  }
+
+  @Put('reviews/:id/potential')
+  @ApiOperation({ summary: 'Set the potential rating (1-3) of a review while the cycle is active' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 400, description: 'Cycle is not active' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 403, description: 'Forbidden' })
+  @ApiResponse({ status: 404, description: 'Not found' })
+  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
+  async setPotential(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Body() dto: SetPotentialDto,
+  ) {
+    return this.performanceService.setPotential(user, id, dto.potentialRating);
   }
 }

@@ -4,6 +4,7 @@ import { PerformanceController } from './performance.controller';
 import { PerformanceService } from './performance.service';
 import { AuthenticatedUser } from '../../common/types/jwt-payload.type';
 import { UserRole } from '@prisma/client';
+import { ROLES_KEY } from '../../common/decorators/roles.decorator';
 
 const mockService = {
   getCycles: jest.fn(),
@@ -18,6 +19,8 @@ const mockService = {
   submitSelfReview: jest.fn(),
   getTeamReviews: jest.fn(),
   submitManagerReview: jest.fn(),
+  getReviewQuestions: jest.fn(),
+  setPotential: jest.fn(),
 };
 
 describe('PerformanceController', () => {
@@ -222,25 +225,44 @@ describe('PerformanceController', () => {
       const result = await controller.getReview(employeeUser, 'rev-1');
 
       expect(result).toEqual(expected);
-      expect(service.getReview).toHaveBeenCalledWith(
-        employeeUser.tenantId,
-        'rev-1',
-        employeeUser.employeeId,
-        employeeUser.role,
-      );
+      expect(service.getReview).toHaveBeenCalledWith(employeeUser, 'rev-1');
     });
 
-    it('should pass manager role and employeeId', async () => {
+    it('should pass the whole user so the service can resolve the relation', async () => {
       service.getReview.mockResolvedValue({ id: 'rev-1' });
 
       await controller.getReview(managerUser, 'rev-1');
 
-      expect(service.getReview).toHaveBeenCalledWith(
-        managerUser.tenantId,
-        'rev-1',
-        managerUser.employeeId,
-        managerUser.role,
-      );
+      expect(service.getReview).toHaveBeenCalledWith(managerUser, 'rev-1');
+    });
+
+    it('lets a user without an employee record through (admins have none)', async () => {
+      service.getReview.mockResolvedValue({ id: 'rev-1' });
+      await controller.getReview(userNoEmployee, 'rev-1');
+      expect(service.getReview).toHaveBeenCalledWith(userNoEmployee, 'rev-1');
+    });
+  });
+
+  describe('getReviewQuestions', () => {
+    it('delegates with the whole user and is open to every role', async () => {
+      service.getReviewQuestions.mockResolvedValue([]);
+      await controller.getReviewQuestions(employeeUser, 'rev-1');
+      expect(service.getReviewQuestions).toHaveBeenCalledWith(employeeUser, 'rev-1');
+      expect(Reflect.getMetadata(ROLES_KEY, PerformanceController.prototype.getReviewQuestions)).toBeUndefined();
+    });
+  });
+
+  describe('setPotential', () => {
+    it('delegates the rating with the whole user', async () => {
+      service.setPotential.mockResolvedValue({ id: 'rev-1' });
+      await controller.setPotential(managerUser, 'rev-1', { potentialRating: 3 });
+      expect(service.setPotential).toHaveBeenCalledWith(managerUser, 'rev-1', 3);
+    });
+
+    it('is restricted to managers and admins', () => {
+      expect(Reflect.getMetadata(ROLES_KEY, PerformanceController.prototype.setPotential)).toEqual([
+        UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER,
+      ]);
     });
   });
 
