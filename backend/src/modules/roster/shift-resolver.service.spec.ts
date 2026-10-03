@@ -8,7 +8,7 @@ const TENANT = 't-1';
 const dayShift = { id: 's-day', code: 'GEN', isActive: true, isOvernight: false };
 const nightShift = { id: 's-night', code: 'NGT', isActive: true, isOvernight: true };
 
-describe('ShiftResolverService (scaffold: assignments only)', () => {
+describe('ShiftResolverService', () => {
   let service: ShiftResolverService;
   let prisma: any;
 
@@ -192,6 +192,117 @@ describe('ShiftResolverService (scaffold: assignments only)', () => {
         service.daysFor(TENANT, [], new Date('2026-03-16T12:00:00Z'), new Date('2026-03-17T12:00:00Z')),
       ).resolves.toEqual([]);
       expect(prisma.shiftAssignment.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('roster entries (Keka wave G)', () => {
+    const date = new Date('2026-03-16T00:00:00.000Z');
+
+    it('a roster entry with an active shift wins over an assignment', async () => {
+      prisma.rosterEntry.findUnique.mockResolvedValue({ isOff: false, shift: nightShift });
+      prisma.shiftAssignment.findFirst.mockResolvedValue({ id: 'sa-1', shift: dayShift });
+
+      await expect(service.dayOn(TENANT, 'e-1', date)).resolves.toEqual({
+        employeeId: 'e-1',
+        date,
+        shift: nightShift,
+        isOff: false,
+        source: 'ROSTER',
+      });
+      expect(prisma.rosterEntry.findUnique).toHaveBeenCalledWith({
+        where: { tenantId_employeeId_date: { tenantId: TENANT, employeeId: 'e-1', date } },
+        include: { shift: true },
+      });
+      expect(prisma.shiftAssignment.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('a rostered OFF day has no shift', async () => {
+      prisma.rosterEntry.findUnique.mockResolvedValue({ isOff: true, shift: null });
+
+      await expect(service.dayOn(TENANT, 'e-1', date)).resolves.toEqual({
+        employeeId: 'e-1',
+        date,
+        shift: null,
+        isOff: true,
+        source: 'ROSTER',
+      });
+    });
+
+    it('an inactive rostered shift is no shift and does not fall back to the assignment', async () => {
+      prisma.rosterEntry.findUnique.mockResolvedValue({
+        isOff: false,
+        shift: { ...nightShift, isActive: false },
+      });
+      prisma.shiftAssignment.findFirst.mockResolvedValue({ id: 'sa-1', shift: dayShift });
+
+      await expect(service.dayOn(TENANT, 'e-1', date)).resolves.toEqual({
+        employeeId: 'e-1',
+        date,
+        shift: null,
+        isOff: false,
+        source: 'ROSTER',
+      });
+      expect(prisma.shiftAssignment.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the assignment, then NONE, when there is no roster entry', async () => {
+      prisma.rosterEntry.findUnique.mockResolvedValue(null);
+      prisma.shiftAssignment.findFirst.mockResolvedValueOnce({ id: 'sa-1', shift: dayShift });
+      expect((await service.dayOn(TENANT, 'e-1', date)).source).toBe('ASSIGNMENT');
+
+      prisma.shiftAssignment.findFirst.mockResolvedValueOnce(null);
+      expect((await service.dayOn(TENANT, 'e-1', date)).source).toBe('NONE');
+    });
+
+    it('shiftOn delegates to dayOn(...).shift', async () => {
+      prisma.rosterEntry.findUnique.mockResolvedValue({ isOff: false, shift: nightShift });
+      await expect(service.shiftOn(TENANT, 'e-1', date)).resolves.toBe(nightShift);
+
+      prisma.rosterEntry.findUnique.mockResolvedValue({ isOff: true, shift: null });
+      await expect(service.shiftOn(TENANT, 'e-1', date)).resolves.toBeNull();
+    });
+
+    it('daysFor merges roster entries over assignments with two queries', async () => {
+      prisma.rosterEntry.findMany.mockResolvedValue([
+        { employeeId: 'e1', date: new Date('2026-03-17T00:00:00.000Z'), isOff: true, shift: null },
+        { employeeId: 'e1', date: new Date('2026-03-18T00:00:00.000Z'), isOff: false, shift: nightShift },
+        { employeeId: 'e2', date: new Date('2026-03-16T00:00:00.000Z'), isOff: false, shift: nightShift },
+      ]);
+      prisma.shiftAssignment.findMany.mockResolvedValue([
+        { employeeId: 'e1', startDate: new Date('2026-03-01T00:00:00.000Z'), endDate: null, shift: dayShift },
+      ]);
+
+      const days = await service.daysFor(
+        TENANT,
+        ['e1', 'e2'],
+        new Date('2026-03-16T12:00:00Z'),
+        new Date('2026-03-22T12:00:00Z'),
+      );
+
+      expect(days).toHaveLength(14);
+      expect(prisma.rosterEntry.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.rosterEntry.findMany).toHaveBeenCalledWith({
+        where: {
+          tenantId: TENANT,
+          employeeId: { in: ['e1', 'e2'] },
+          date: {
+            gte: new Date('2026-03-16T00:00:00.000Z'),
+            lte: new Date('2026-03-22T00:00:00.000Z'),
+          },
+        },
+        include: { shift: true },
+      });
+      expect(prisma.shiftAssignment.findMany).toHaveBeenCalledTimes(1);
+
+      const at = (e: string, d: string) =>
+        days.find((x) => x.employeeId === e && x.date.toISOString().slice(0, 10) === d)!;
+      expect(at('e1', '2026-03-16')).toMatchObject({ source: 'ASSIGNMENT', isOff: false });
+      expect(at('e1', '2026-03-16').shift?.id).toBe('s-day');
+      expect(at('e1', '2026-03-17')).toMatchObject({ source: 'ROSTER', isOff: true, shift: null });
+      expect(at('e1', '2026-03-18')).toMatchObject({ source: 'ROSTER', isOff: false });
+      expect(at('e1', '2026-03-18').shift?.id).toBe('s-night');
+      expect(at('e2', '2026-03-16').source).toBe('ROSTER');
+      expect(at('e2', '2026-03-17').source).toBe('NONE');
     });
   });
 });
