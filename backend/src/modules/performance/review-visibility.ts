@@ -28,48 +28,61 @@ export function resolveRelation(
   return null;
 }
 
-/** Never shown to the reviewed employee, before or after release. */
-const NEVER_TO_SELF = [
-  'managerRating',
-  'overallRating',
-  'calibratedRating',
-  'calibrationReason',
-  'calibratedById',
-  'calibratedAt',
-  'potentialRating',
+/**
+ * SELF is built from an explicit allow-list, never by deleting fields from a
+ * full row, so a column added to the model later stays hidden until it is
+ * listed here. Never listed: updatedAt, tenantId, managerRating,
+ * overallRating, potentialRating, calibratedRating, calibrationReason,
+ * calibratedById, calibratedAt.
+ */
+const SELF_ALLOWED = [
+  'id',
+  'cycleId',
+  'employeeId',
+  'reviewerId',
+  'status',
+  'selfRating',
+  'selfComments',
+  'selfSubmittedAt',
+  'createdAt',
+  'cycle',
+  'employee',
+  'reviewer',
+  'goals',
 ];
 
-/** Shown to the reviewed employee only once the cycle is COMPLETED. */
-const HIDDEN_FROM_SELF_UNTIL_RELEASE = [
-  'managerComments',
-  'managerSubmittedAt',
-  'competencyRatings',
-];
+/** Added to the SELF view only once the cycle is COMPLETED. */
+const SELF_ALLOWED_AFTER_RELEASE = ['managerComments', 'managerSubmittedAt', 'competencyRatings'];
 
-/** `review` must include cycle {status}. Omits (deletes) fields per the spec F4 table. */
+function pick(source: Record<string, any>, keys: string[], into: Record<string, unknown>) {
+  for (const k of keys) if (k in source) into[k] = source[k];
+}
+
+/** `review` must include cycle {status}. SELF is an allow-list; REVIEWER and ADMIN get the full row. */
 export function toReviewView<T extends Record<string, any>>(
   review: T,
   relation: ViewerRelation,
 ): Record<string, unknown> {
   const released = review.cycle?.status === 'COMPLETED';
-  const view: Record<string, unknown> = {
-    ...review,
-    relation,
-    released,
-    finalRating: finalRatingOf(review as any),
-  };
+  const finalRating = finalRatingOf(review as any);
 
   if (relation === 'SELF') {
-    for (const k of NEVER_TO_SELF) delete view[k];
+    const view: Record<string, unknown> = {};
+    pick(review, SELF_ALLOWED, view);
     view.answers = ((review.answers ?? []) as Array<{ audience: string }>).filter(
       (a) => released || a.audience === 'SELF',
     );
-    if (!released) {
-      for (const k of HIDDEN_FROM_SELF_UNTIL_RELEASE) delete view[k];
-      delete view.finalRating;
+    view.relation = relation;
+    view.released = released;
+    if (released) {
+      pick(review, SELF_ALLOWED_AFTER_RELEASE, view);
+      view.finalRating = finalRating;
     }
+    // Peer feedback is added by the caller.
+    return view;
   }
 
+  const view: Record<string, unknown> = { ...review, relation, released, finalRating };
   // Peer data is added by the caller, shaped per relation.
   delete view.peerReviews;
   return view;

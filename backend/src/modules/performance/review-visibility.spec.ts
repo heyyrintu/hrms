@@ -105,6 +105,40 @@ describe('toReviewView', () => {
     });
   });
 
+  describe('SELF allow-list', () => {
+    const extra = { updatedAt: new Date(), tenantId: 't1', someFutureColumn: 'secret' };
+
+    it('drops updatedAt, tenantId and any unknown field, before and after release', () => {
+      for (const r of [review(extra), released(extra)]) {
+        const view = toReviewView(r, 'SELF') as any;
+        for (const k of ['updatedAt', 'tenantId', 'someFutureColumn']) expect(k in view).toBe(false);
+      }
+    });
+
+    it('keeps exactly the allow-listed keys before release', () => {
+      const view = toReviewView(review(extra), 'SELF') as any;
+      expect(Object.keys(view).sort()).toEqual(
+        ['answers', 'cycle', 'goals', 'relation', 'released', 'selfComments', 'selfRating', 'selfSubmittedAt', 'id', 'employeeId', 'reviewerId', 'status'].sort(),
+      );
+    });
+
+    it('adds the release-gated keys after release', () => {
+      const view = toReviewView(released(extra), 'SELF') as any;
+      for (const k of ['managerComments', 'managerSubmittedAt', 'competencyRatings', 'finalRating']) {
+        expect(k in view).toBe(true);
+      }
+    });
+
+    it('REVIEWER and ADMIN views are unchanged: they keep unknown fields and updatedAt', () => {
+      for (const rel of ['REVIEWER', 'ADMIN'] as const) {
+        const view = toReviewView(review(extra), rel) as any;
+        expect(view.updatedAt).toBe(extra.updatedAt);
+        expect(view.someFutureColumn).toBe('secret');
+        expect(view.managerRating).toBe(4);
+      }
+    });
+  });
+
   describe('SELF after release', () => {
     const view = toReviewView(released(), 'SELF') as any;
 
