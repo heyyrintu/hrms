@@ -11,6 +11,7 @@ const TYPE_ICON: Record<FeedItem['type'], string> = {
   WORK_ANNIVERSARY: '🎊',
   ANNOUNCEMENT: '📣',
   RECOGNITION: '👏',
+  GOAL_COMPLETED: '🎯',
 };
 
 function iconFor(item: FeedItem): string {

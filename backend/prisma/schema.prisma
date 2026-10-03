@@ -173,6 +173,18 @@ model Tenant {
   securitySettings          TenantSecuritySettings?
   ssoProviders              TenantSsoProvider[]
   customRoles               CustomRole[]
+  // Keka wave F (performance depth)
+  keyResults                KeyResult[]
+  reviewQuestions           ReviewQuestion[]
+  reviewTemplates           ReviewTemplate[]
+  reviewTemplateQuestions   ReviewTemplateQuestion[]
+  reviewCycleQuestions      ReviewCycleQuestion[]
+  reviewAnswers             ReviewAnswer[]
+  competencies              Competency[]
+  designationCompetencies   DesignationCompetency[]
+  reviewCompetencyRatings   ReviewCompetencyRating[]
+  peerReviews               PeerReview[]
+  peerReviewAnswers         PeerReviewAnswer[]
 
   @@map("tenants")
 }
@@ -252,6 +264,8 @@ model Department {
   jobRequisitions JobRequisition[]
   jobOpenings     JobOpening[]
   jobOffers       JobOffer[]
+  // Keka wave F
+  goals           Goal[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -271,6 +285,8 @@ model Designation {
   jobRequisitions JobRequisition[]
   jobOpenings     JobOpening[]
   jobOffers       JobOffer[]
+  // Keka wave F
+  competencies    DesignationCompetency[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -454,6 +470,9 @@ model Employee {
   oneOnOnesCreated       OneOnOneMeeting[]      @relation("OneOnOneCreatedBy")
   oneOnOneActionItems    OneOnOneActionItem[]   @relation("OneOnOneActionAssignee")
   oneOnOnePrivateNotes   OneOnOnePrivateNote[]  @relation("OneOnOnePrivateNoteAuthor")
+  // Keka wave F
+  peerReviewsAsPeer      PeerReview[]           @relation("PeerReviewPeer")
+  peerReviewsNominated   PeerReview[]           @relation("PeerReviewNominatedBy")
 
   @@unique([tenantId, employeeCode])
   @@unique([tenantId, email])
@@ -1079,6 +1098,11 @@ enum NotificationType {
   // Wave E follow-ups
   ENGAGEMENT_RELEASE_FAILED
   GENERAL
+  // Keka wave F
+  REVIEW_RESULTS_RELEASED
+  PEER_NOMINATION_PENDING
+  PEER_FEEDBACK_REQUESTED
+  REVIEW_CALIBRATED
 }
 
 model Notification {
@@ -1553,10 +1577,17 @@ model ReviewCycle {
   status      ReviewCycleStatus @default(DRAFT)
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
+  // Keka wave F
+  templateId          String?
+  peerFeedbackEnabled Boolean @default(false)
+  maxPeers            Int     @default(5)
 
   // Relations
   tenant  Tenant              @relation(fields: [tenantId], references: [id])
   reviews PerformanceReview[]
+  // Keka wave F
+  template  ReviewTemplate?       @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  questions ReviewCycleQuestion[]
 
   @@unique([tenantId, name])
   @@index([tenantId])
@@ -1580,6 +1611,12 @@ model PerformanceReview {
   managerSubmittedAt DateTime?
   createdAt          DateTime                @default(now())
   updatedAt          DateTime                @updatedAt
+  // Keka wave F. finalRating = calibratedRating ?? overallRating (computed).
+  potentialRating   Int?
+  calibratedRating  Int?
+  calibrationReason String?   @db.Text
+  calibratedById    String?
+  calibratedAt      DateTime?
 
   // Relations
   tenant   Tenant      @relation(fields: [tenantId], references: [id])
@@ -1587,6 +1624,10 @@ model PerformanceReview {
   employee Employee    @relation("ReviewEmployee", fields: [employeeId], references: [id])
   reviewer Employee    @relation("ReviewReviewer", fields: [reviewerId], references: [id])
   goals    Goal[]
+  // Keka wave F
+  answers           ReviewAnswer[]
+  competencyRatings ReviewCompetencyRating[]
+  peerReviews       PeerReview[]
 
   @@unique([cycleId, employeeId])
   @@index([tenantId])
@@ -1600,8 +1641,8 @@ model PerformanceReview {
 model Goal {
   id          String     @id @default(uuid())
   tenantId    String
-  reviewId    String
-  employeeId  String
+  reviewId    String?
+  employeeId  String?
   title       String
   description String?
   targetDate  DateTime   @db.Date
@@ -1610,17 +1651,295 @@ model Goal {
   weight      Decimal    @default(1.0) @db.Decimal(3, 2)
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
+  // Keka wave F (goals depth). employeeId is required iff ownerType =
+  // EMPLOYEE; departmentId iff ownerType = DEPARTMENT.
+  ownerType       GoalOwnerType @default(EMPLOYEE)
+  departmentId    String?
+  parentGoalId    String?
+  shareOnFeed     Boolean       @default(false)
+  completedAt     DateTime?
+  createdByUserId String?
 
   // Relations
   tenant   Tenant            @relation(fields: [tenantId], references: [id])
-  review   PerformanceReview @relation(fields: [reviewId], references: [id])
-  employee Employee          @relation(fields: [employeeId], references: [id])
+  review   PerformanceReview? @relation(fields: [reviewId], references: [id], onDelete: Restrict)
+  employee Employee?         @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  // Keka wave F
+  department Department? @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  parent     Goal?       @relation("GoalAlignment", fields: [parentGoalId], references: [id], onDelete: Restrict)
+  children   Goal[]      @relation("GoalAlignment")
+  keyResults KeyResult[]
 
   @@index([tenantId])
   @@index([reviewId])
   @@index([employeeId])
   @@index([status])
+  @@index([tenantId, ownerType])
+  @@index([parentGoalId])
+  @@index([departmentId])
   @@map("goals")
+}
+
+// ============================================
+// PERFORMANCE DEPTH (Wave F)
+// ============================================
+
+enum GoalOwnerType {
+  COMPANY
+  DEPARTMENT
+  EMPLOYEE
+}
+
+enum KeyResultMetricType {
+  NUMBER
+  PERCENT
+  CURRENCY
+  BOOLEAN
+}
+
+enum ReviewQuestionType {
+  RATING
+  TEXT
+}
+
+enum ReviewAudience {
+  SELF
+  MANAGER
+  PEER
+}
+
+enum PeerReviewStatus {
+  NOMINATED
+  APPROVED
+  REJECTED
+  SUBMITTED
+  DECLINED
+}
+
+model KeyResult {
+  id           String              @id @default(uuid())
+  tenantId     String
+  goalId       String
+  title        String
+  metricType   KeyResultMetricType @default(NUMBER)
+  startValue   Decimal             @default(0) @db.Decimal(14, 2)
+  targetValue  Decimal             @db.Decimal(14, 2)
+  currentValue Decimal             @default(0) @db.Decimal(14, 2)
+  unit         String?
+  weight       Decimal             @default(1.0) @db.Decimal(3, 2)
+  progress     Int                 @default(0)
+  sortOrder    Int                 @default(0)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  goal   Goal   @relation(fields: [goalId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([goalId])
+  @@map("key_results")
+}
+
+model ReviewQuestion {
+  id        String             @id @default(uuid())
+  tenantId  String
+  text      String
+  type      ReviewQuestionType
+  category  String?
+  isActive  Boolean            @default(true)
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  tenant            Tenant                   @relation(fields: [tenantId], references: [id])
+  templateQuestions ReviewTemplateQuestion[]
+
+  @@index([tenantId])
+  @@map("review_questions")
+}
+
+model ReviewTemplate {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant    Tenant                   @relation(fields: [tenantId], references: [id])
+  questions ReviewTemplateQuestion[]
+  cycles    ReviewCycle[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("review_templates")
+}
+
+model ReviewTemplateQuestion {
+  id         String         @id @default(uuid())
+  tenantId   String
+  templateId String
+  questionId String
+  audience   ReviewAudience
+  isRequired Boolean        @default(true)
+  sortOrder  Int            @default(0)
+
+  tenant   Tenant         @relation(fields: [tenantId], references: [id])
+  template ReviewTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  question ReviewQuestion @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  @@unique([templateId, questionId, audience])
+  @@index([tenantId])
+  @@index([questionId])
+  @@map("review_template_questions")
+}
+
+/// Snapshot of the cycle's template, taken at launch.
+model ReviewCycleQuestion {
+  id         String             @id @default(uuid())
+  tenantId   String
+  cycleId    String
+  /// Plain id of the source ReviewQuestion (no FK).
+  questionId String?
+  text       String
+  type       ReviewQuestionType
+  audience   ReviewAudience
+  isRequired Boolean
+  sortOrder  Int
+
+  tenant      Tenant             @relation(fields: [tenantId], references: [id])
+  cycle       ReviewCycle        @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  answers     ReviewAnswer[]
+  peerAnswers PeerReviewAnswer[]
+
+  @@index([tenantId])
+  @@index([cycleId])
+  @@map("review_cycle_questions")
+}
+
+/// Self and manager answers.
+model ReviewAnswer {
+  id              String         @id @default(uuid())
+  tenantId        String
+  reviewId        String
+  cycleQuestionId String
+  audience        ReviewAudience
+  rating          Int?
+  text            String?        @db.Text
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  tenant        Tenant              @relation(fields: [tenantId], references: [id])
+  review        PerformanceReview   @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  cycleQuestion ReviewCycleQuestion @relation(fields: [cycleQuestionId], references: [id], onDelete: Cascade)
+
+  @@unique([reviewId, cycleQuestionId])
+  @@index([tenantId])
+  @@index([cycleQuestionId])
+  @@map("review_answers")
+}
+
+model Competency {
+  id          String   @id @default(uuid())
+  tenantId    String
+  name        String
+  description String?
+  category    String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant       Tenant                  @relation(fields: [tenantId], references: [id])
+  designations DesignationCompetency[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("competencies")
+}
+
+model DesignationCompetency {
+  id            String @id @default(uuid())
+  tenantId      String
+  designationId String
+  competencyId  String
+  /// 1–5
+  expectedLevel Int
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id])
+  designation Designation @relation(fields: [designationId], references: [id], onDelete: Cascade)
+  competency  Competency  @relation(fields: [competencyId], references: [id], onDelete: Restrict)
+
+  @@unique([designationId, competencyId])
+  @@index([tenantId])
+  @@index([competencyId])
+  @@map("designation_competencies")
+}
+
+/// Snapshot per review, taken at launch.
+model ReviewCompetencyRating {
+  id            String   @id @default(uuid())
+  tenantId      String
+  reviewId      String
+  /// Plain id of the source Competency (no FK).
+  competencyId  String?
+  name          String
+  expectedLevel Int
+  managerRating Int?
+  comment       String?  @db.Text
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant Tenant            @relation(fields: [tenantId], references: [id])
+  review PerformanceReview @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([reviewId])
+  @@map("review_competency_ratings")
+}
+
+model PeerReview {
+  id                    String           @id @default(uuid())
+  tenantId              String
+  reviewId              String
+  peerEmployeeId        String
+  nominatedByEmployeeId String?
+  status                PeerReviewStatus @default(NOMINATED)
+  decidedAt             DateTime?
+  /// Plain user id (no FK).
+  decidedByUserId       String?
+  submittedAt           DateTime?
+  overallComment        String?          @db.Text
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
+
+  tenant      Tenant             @relation(fields: [tenantId], references: [id])
+  review      PerformanceReview  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  peer        Employee           @relation("PeerReviewPeer", fields: [peerEmployeeId], references: [id])
+  nominatedBy Employee?          @relation("PeerReviewNominatedBy", fields: [nominatedByEmployeeId], references: [id], onDelete: SetNull)
+  answers     PeerReviewAnswer[]
+
+  @@unique([reviewId, peerEmployeeId])
+  @@index([tenantId])
+  @@index([tenantId, peerEmployeeId, status])
+  @@map("peer_reviews")
+}
+
+model PeerReviewAnswer {
+  id              String  @id @default(uuid())
+  tenantId        String
+  peerReviewId    String
+  cycleQuestionId String
+  rating          Int?
+  text            String? @db.Text
+
+  tenant        Tenant              @relation(fields: [tenantId], references: [id])
+  peerReview    PeerReview          @relation(fields: [peerReviewId], references: [id], onDelete: Cascade)
+  cycleQuestion ReviewCycleQuestion @relation(fields: [cycleQuestionId], references: [id], onDelete: Cascade)
+
+  @@unique([peerReviewId, cycleQuestionId])
+  @@index([tenantId])
+  @@index([cycleQuestionId])
+  @@map("peer_review_answers")
 }
 
 // ============================================

@@ -16,7 +16,7 @@ export interface FeedReactionCounts {
 
 export interface FeedItem {
   id: string;
-  type: 'RECOGNITION' | 'ANNOUNCEMENT' | 'BIRTHDAY' | 'WORK_ANNIVERSARY';
+  type: 'RECOGNITION' | 'ANNOUNCEMENT' | 'BIRTHDAY' | 'WORK_ANNIVERSARY' | 'GOAL_COMPLETED';
   sourceType: string;
   sourceId: string | null;
   title: string;

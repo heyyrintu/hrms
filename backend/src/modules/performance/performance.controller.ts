@@ -25,8 +25,6 @@ import {
   SubmitSelfReviewDto,
   SubmitManagerReviewDto,
   ReviewQueryDto,
-  CreateGoalDto,
-  UpdateGoalDto,
 } from './dto/performance.dto';
 
 @ApiTags('performance')
@@ -235,72 +233,5 @@ export class PerformanceController {
       user.role,
       dto,
     );
-  }
-
-  // ============================================
-  // Goals (All authenticated users - own goals)
-  // ============================================
-
-  @Get('my-goals')
-  @ApiOperation({ summary: 'Get my performance goals' })
-  @ApiResponse({ status: 200, description: 'Success' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async getMyGoals(@CurrentUser() user: AuthenticatedUser) {
-    if (!user.employeeId) {
-      throw new BadRequestException('No employee profile linked to your account');
-    }
-    return this.performanceService.getMyGoals(user.tenantId, user.employeeId);
-  }
-
-  @Post('goals')
-  @ApiOperation({ summary: 'Create performance goal' })
-  @ApiResponse({ status: 201, description: 'Created' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async createGoal(
-    @CurrentUser() user: AuthenticatedUser,
-    @Body() dto: CreateGoalDto,
-  ) {
-    if (!user.employeeId) {
-      throw new BadRequestException('No employee profile linked to your account');
-    }
-    return this.performanceService.createGoal(user.tenantId, user.employeeId, dto);
-  }
-
-  @Put('goals/:id')
-  @ApiOperation({ summary: 'Update performance goal' })
-  @ApiResponse({ status: 200, description: 'Success' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden' })
-  @ApiResponse({ status: 404, description: 'Not found' })
-  async updateGoal(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
-    @Body() dto: UpdateGoalDto,
-  ) {
-    if (!user.employeeId) {
-      throw new BadRequestException('No employee profile linked to your account');
-    }
-    return this.performanceService.updateGoal(
-      user.tenantId,
-      id,
-      user.employeeId,
-      dto,
-    );
-  }
-
-  @Delete('goals/:id')
-  @ApiOperation({ summary: 'Delete performance goal' })
-  @ApiResponse({ status: 200, description: 'Success' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden' })
-  @ApiResponse({ status: 404, description: 'Not found' })
-  async deleteGoal(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
-  ) {
-    if (!user.employeeId) {
-      throw new BadRequestException('No employee profile linked to your account');
-    }
-    return this.performanceService.deleteGoal(user.tenantId, id, user.employeeId);
   }
 }
