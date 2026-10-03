@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import GoalsPage from './page';
 import { goalsApi } from '@/lib/api-performance-goals';
 
@@ -104,9 +104,9 @@ describe('GoalsPage', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Company' }));
     fireEvent.click(screen.getByRole('tab', { name: 'Department' }));
     await waitFor(() => expect(screen.getByText('Department goal row')).toBeInTheDocument());
-    resolveCompany({ data: [{ ...base, id: 'gc', title: 'Stale company row' }] });
-    await Promise.resolve();
-    await Promise.resolve();
+    await act(async () => {
+      resolveCompany({ data: [{ ...base, id: 'gc', title: 'Stale company row' }] });
+    });
     expect(screen.queryByText('Stale company row')).not.toBeInTheDocument();
     expect(screen.getByText('Department goal row')).toBeInTheDocument();
   });
