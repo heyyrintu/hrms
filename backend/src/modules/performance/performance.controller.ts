@@ -25,8 +25,7 @@ import {
   SubmitSelfReviewDto,
   SubmitManagerReviewDto,
   ReviewQueryDto,
-  CreateGoalDto,
-  UpdateGoalDto,
+  SetPotentialDto,
 } from './dto/performance.dto';
 
 @ApiTags('performance')
@@ -160,17 +159,24 @@ export class PerformanceController {
   @ApiResponse({ status: 200, description: 'Success' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
-  @ApiResponse({ status: 404, description: 'Not found' })
+  @ApiResponse({ status: 404, description: 'Not found (also when the caller may not view it)' })
   async getReview(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
   ) {
-    return this.performanceService.getReview(
-      user.tenantId,
-      id,
-      user.employeeId,
-      user.role,
-    );
+    return this.performanceService.getReview(user, id);
+  }
+
+  @Get('reviews/:id/questions')
+  @ApiOperation({ summary: 'Get the cycle questions the caller may see for a review' })
+  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  @ApiResponse({ status: 404, description: 'Not found (also when the caller may not view it)' })
+  async getReviewQuestions(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return this.performanceService.getReviewQuestions(user, id);
   }
 
   @Post('reviews/:id/self-review')
@@ -237,70 +243,19 @@ export class PerformanceController {
     );
   }
 
-  // ============================================
-  // Goals (All authenticated users - own goals)
-  // ============================================
-
-  @Get('my-goals')
-  @ApiOperation({ summary: 'Get my performance goals' })
+  @Put('reviews/:id/potential')
+  @ApiOperation({ summary: 'Set the potential rating (1-3) of a review while the cycle is active' })
   @ApiResponse({ status: 200, description: 'Success' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async getMyGoals(@CurrentUser() user: AuthenticatedUser) {
-    if (!user.employeeId) {
-      throw new BadRequestException('No employee profile linked to your account');
-    }
-    return this.performanceService.getMyGoals(user.tenantId, user.employeeId);
-  }
-
-  @Post('goals')
-  @ApiOperation({ summary: 'Create performance goal' })
-  @ApiResponse({ status: 201, description: 'Created' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async createGoal(
-    @CurrentUser() user: AuthenticatedUser,
-    @Body() dto: CreateGoalDto,
-  ) {
-    if (!user.employeeId) {
-      throw new BadRequestException('No employee profile linked to your account');
-    }
-    return this.performanceService.createGoal(user.tenantId, user.employeeId, dto);
-  }
-
-  @Put('goals/:id')
-  @ApiOperation({ summary: 'Update performance goal' })
-  @ApiResponse({ status: 200, description: 'Success' })
+  @ApiResponse({ status: 400, description: 'Cycle is not active' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   @ApiResponse({ status: 403, description: 'Forbidden' })
   @ApiResponse({ status: 404, description: 'Not found' })
-  async updateGoal(
+  @Roles(UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.MANAGER)
+  async setPotential(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
-    @Body() dto: UpdateGoalDto,
+    @Body() dto: SetPotentialDto,
   ) {
-    if (!user.employeeId) {
-      throw new BadRequestException('No employee profile linked to your account');
-    }
-    return this.performanceService.updateGoal(
-      user.tenantId,
-      id,
-      user.employeeId,
-      dto,
-    );
-  }
-
-  @Delete('goals/:id')
-  @ApiOperation({ summary: 'Delete performance goal' })
-  @ApiResponse({ status: 200, description: 'Success' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  @ApiResponse({ status: 403, description: 'Forbidden' })
-  @ApiResponse({ status: 404, description: 'Not found' })
-  async deleteGoal(
-    @CurrentUser() user: AuthenticatedUser,
-    @Param('id') id: string,
-  ) {
-    if (!user.employeeId) {
-      throw new BadRequestException('No employee profile linked to your account');
-    }
-    return this.performanceService.deleteGoal(user.tenantId, id, user.employeeId);
+    return this.performanceService.setPotential(user, id, dto.potentialRating);
   }
 }

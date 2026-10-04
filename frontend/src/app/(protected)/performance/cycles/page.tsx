@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { performanceApi } from '@/lib/api';
-import { ReviewCycle, ReviewCycleStatus } from '@/types';
+import { templatesApi, type ReviewTemplate } from '@/lib/api-performance-templates';
+import { ReviewCycle as BaseReviewCycle, ReviewCycleStatus } from '@/types';
 import toast from 'react-hot-toast';
 import {
   Target,
@@ -16,7 +17,15 @@ import {
   Trash2,
   Rocket,
   CheckCircle,
+  Eye,
 } from 'lucide-react';
+
+// Wave F fields returned by the cycles API.
+type ReviewCycle = BaseReviewCycle & {
+  templateId?: string | null;
+  peerFeedbackEnabled?: boolean;
+  maxPeers?: number;
+};
 
 const statusColors: Record<ReviewCycleStatus, string> = {
   DRAFT: 'gray',
@@ -35,6 +44,9 @@ const emptyForm = {
   description: '',
   startDate: '',
   endDate: '',
+  templateId: '',
+  peerFeedbackEnabled: false,
+  maxPeers: 5,
 };
 
 export default function ReviewCyclesPage() {
@@ -48,6 +60,10 @@ export default function ReviewCyclesPage() {
   const [editingCycle, setEditingCycle] = useState<ReviewCycle | null>(null);
   const [formData, setFormData] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [templates, setTemplates] = useState<ReviewTemplate[]>([]);
+
+  // Template, peer and date settings can only change while the cycle is a draft.
+  const locked = !!editingCycle && editingCycle.status !== 'DRAFT';
 
   // Delete / Launch / Complete modals
   const [deleteModal, setDeleteModal] = useState(false);
@@ -80,6 +96,13 @@ export default function ReviewCyclesPage() {
     loadCycles(1);
   }, [loadCycles]);
 
+  useEffect(() => {
+    templatesApi
+      .list()
+      .then((res) => setTemplates(res.data))
+      .catch(() => toast.error('Failed to load review templates'));
+  }, []);
+
   const openModal = (cycle?: ReviewCycle) => {
     if (cycle) {
       setEditingCycle(cycle);
@@ -88,6 +111,9 @@ export default function ReviewCyclesPage() {
         description: cycle.description || '',
         startDate: cycle.startDate.split('T')[0],
         endDate: cycle.endDate.split('T')[0],
+        templateId: cycle.templateId ?? '',
+        peerFeedbackEnabled: cycle.peerFeedbackEnabled ?? false,
+        maxPeers: cycle.maxPeers ?? 5,
       });
     } else {
       setEditingCycle(null);
@@ -99,11 +125,20 @@ export default function ReviewCyclesPage() {
   const handleSave = async () => {
     setSaving(true);
     try {
+      const payload = {
+        name: formData.name,
+        description: formData.description,
+        startDate: formData.startDate,
+        endDate: formData.endDate,
+        templateId: formData.templateId || (editingCycle ? null : undefined),
+        peerFeedbackEnabled: formData.peerFeedbackEnabled,
+        maxPeers: formData.peerFeedbackEnabled ? formData.maxPeers : undefined,
+      };
       if (editingCycle) {
-        await performanceApi.updateCycle(editingCycle.id, formData);
+        await performanceApi.updateCycle(editingCycle.id, payload);
         toast.success('Cycle updated');
       } else {
-        await performanceApi.createCycle(formData);
+        await performanceApi.createCycle(payload);
         toast.success('Cycle created');
       }
       setModalOpen(false);
@@ -283,6 +318,15 @@ export default function ReviewCyclesPage() {
                               </button>
                             </>
                           )}
+                          {cycle.status !== 'DRAFT' && (
+                            <button
+                              onClick={() => openModal(cycle)}
+                              className="text-warm-500 hover:text-warm-700"
+                              title="View settings"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </button>
+                          )}
                           {cycle.status === 'ACTIVE' && (
                             <button
                               onClick={() => { setCompletingCycle(cycle); setCompleteModal(true); }}
@@ -307,7 +351,7 @@ export default function ReviewCyclesPage() {
       <Modal
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
-        title={editingCycle ? 'Edit Review Cycle' : 'Create Review Cycle'}
+        title={locked ? 'Review Cycle Settings' : editingCycle ? 'Edit Review Cycle' : 'Create Review Cycle'}
       >
         <div className="space-y-4">
           <div>
@@ -317,6 +361,7 @@ export default function ReviewCyclesPage() {
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               placeholder="e.g. Q1 2026 Review"
+              disabled={locked}
               className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
             />
           </div>
@@ -326,6 +371,7 @@ export default function ReviewCyclesPage() {
               value={formData.description}
               onChange={(e) => setFormData({ ...formData, description: e.target.value })}
               rows={3}
+              disabled={locked}
               className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
             />
           </div>
@@ -334,6 +380,7 @@ export default function ReviewCyclesPage() {
               <label className="block text-sm font-medium text-warm-700 mb-1">Start Date *</label>
               <input
                 type="date"
+                disabled={locked}
                 value={formData.startDate}
                 onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
                 className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
@@ -343,12 +390,67 @@ export default function ReviewCyclesPage() {
               <label className="block text-sm font-medium text-warm-700 mb-1">End Date *</label>
               <input
                 type="date"
+                disabled={locked}
                 value={formData.endDate}
                 onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
                 className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
               />
             </div>
           </div>
+          <div>
+            <label htmlFor="cycle-template" className="block text-sm font-medium text-warm-700 mb-1">
+              Review template
+            </label>
+            <select
+              id="cycle-template"
+              value={formData.templateId}
+              disabled={locked}
+              onChange={(e) => setFormData({ ...formData, templateId: e.target.value })}
+              className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+            >
+              <option value="">No template</option>
+              {templates
+                .filter((t) => t.isActive || t.id === formData.templateId)
+                .map((t) => (
+                <option key={t.id} value={t.id}>{t.isActive ? t.name : `${t.name} (inactive)`}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              id="cycle-peer-enabled"
+              type="checkbox"
+              checked={formData.peerFeedbackEnabled}
+              disabled={locked}
+              onChange={(e) => setFormData({ ...formData, peerFeedbackEnabled: e.target.checked })}
+              className="h-4 w-4"
+            />
+            <label htmlFor="cycle-peer-enabled" className="text-sm font-medium text-warm-700">
+              Enable 360 peer feedback
+            </label>
+          </div>
+          {formData.peerFeedbackEnabled && (
+            <div>
+              <label htmlFor="cycle-max-peers" className="block text-sm font-medium text-warm-700 mb-1">
+                Max peers
+              </label>
+              <input
+                id="cycle-max-peers"
+                type="number"
+                min={1}
+                max={10}
+                value={formData.maxPeers}
+                disabled={locked}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    maxPeers: Math.min(10, Math.max(1, parseInt(e.target.value, 10) || 1)),
+                  })
+                }
+                className="w-full px-3 py-2 border border-warm-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+              />
+            </div>
+          )}
         </div>
         <ModalFooter>
           <Button variant="secondary" onClick={() => setModalOpen(false)} disabled={saving}>
@@ -357,7 +459,7 @@ export default function ReviewCyclesPage() {
           <Button
             variant="primary"
             onClick={handleSave}
-            disabled={saving || !formData.name || !formData.startDate || !formData.endDate}
+            disabled={locked || saving || !formData.name || !formData.startDate || !formData.endDate}
           >
             {saving ? 'Saving...' : editingCycle ? 'Update' : 'Create'}
           </Button>

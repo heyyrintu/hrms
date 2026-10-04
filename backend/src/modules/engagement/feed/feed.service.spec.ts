@@ -36,8 +36,8 @@ describe('FeedService (write side)', () => {
   describe('post', () => {
     it('throws on an unknown type without touching the database', async () => {
       await expect(
-        service.post({ ...input, type: 'GOAL_COMPLETED' as any }),
-      ).rejects.toThrow('Unknown feed item type: GOAL_COMPLETED');
+        service.post({ ...input, type: 'NOT_A_FEED_TYPE' as any }),
+      ).rejects.toThrow('Unknown feed item type: NOT_A_FEED_TYPE');
       expect(prisma.feedItem.findUnique).not.toHaveBeenCalled();
       expect(prisma.feedItem.create).not.toHaveBeenCalled();
     });
@@ -178,8 +178,8 @@ describe('FeedService (write side)', () => {
     };
 
     it('throws on an unknown type without touching the database', async () => {
-      await expect(service.refresh({ ...input, type: 'GOAL_COMPLETED' as any })).rejects.toThrow(
-        'Unknown feed item type: GOAL_COMPLETED',
+      await expect(service.refresh({ ...input, type: 'NOT_A_FEED_TYPE' as any })).rejects.toThrow(
+        'Unknown feed item type: NOT_A_FEED_TYPE',
       );
       expect(prisma.feedItem.upsert).not.toHaveBeenCalled();
     });

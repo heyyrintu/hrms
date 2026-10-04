@@ -4,13 +4,14 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { getRelativeTime } from '@/lib/date-utils';
 import type { FeedItem, FeedReactionKind } from '@/lib/api-feed';
-import { EyeOff } from 'lucide-react';
+import { EyeOff, Target } from 'lucide-react';
 
 const TYPE_ICON: Record<FeedItem['type'], string> = {
   BIRTHDAY: '🎉',
   WORK_ANNIVERSARY: '🎊',
   ANNOUNCEMENT: '📣',
   RECOGNITION: '👏',
+  GOAL_COMPLETED: '🎯',
 };
 
 function iconFor(item: FeedItem): string {
@@ -19,6 +20,12 @@ function iconFor(item: FeedItem): string {
     return badge?.icon || '👏';
   }
   return TYPE_ICON[item.type] ?? '📌';
+}
+
+function goalCompletedText(item: FeedItem, subjectName: string | null): string {
+  if (subjectName) return `${subjectName} completed a goal: ${item.title}`;
+  const ownerType = (item.payload as { ownerType?: string } | undefined)?.ownerType;
+  return `${ownerType === 'DEPARTMENT' ? 'Department' : 'Company'} goal completed: ${item.title}`;
 }
 
 function personName(person: FeedItem['actor']): string | null {
@@ -35,16 +42,23 @@ interface FeedItemCardProps {
 
 export function FeedItemCard({ item, canHide, onReact, onHide }: FeedItemCardProps) {
   const actorName = personName(item.actor);
+  const isGoal = item.type === 'GOAL_COMPLETED';
+  const departmentName = isGoal
+    ? ((item.payload as { departmentName?: string | null } | undefined)?.departmentName ?? null)
+    : null;
 
   return (
     <Card data-testid={`feed-item-${item.id}`}>
       <CardContent className="p-4">
         <div className="flex items-start gap-3">
           <div className="text-2xl leading-none" aria-hidden>
-            {iconFor(item)}
+            {isGoal ? <Target className="h-6 w-6 text-primary-600" /> : iconFor(item)}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-medium text-warm-900">{item.title}</p>
+            <p className="font-medium text-warm-900">
+              {isGoal ? goalCompletedText(item, personName(item.subject)) : item.title}
+            </p>
+            {departmentName && <p className="text-xs text-warm-500 mt-0.5">{departmentName}</p>}
             {item.body && <p className="text-sm text-warm-600 mt-1">{item.body}</p>}
             <div className="flex items-center gap-2 mt-1 text-xs text-warm-400">
               {actorName && <span>{actorName}</span>}
